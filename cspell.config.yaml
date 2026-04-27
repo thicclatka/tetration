@@ -2,6 +2,11 @@ version: "0.2"
 ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
-words: []
+words:
+  - bytemuck
+  - rkyv
+  - Tetration
+  - thiserror
+  - zstd
 ignoreWords: []
 import: []
