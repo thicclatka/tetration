@@ -1,19 +1,23 @@
 # Tetration
 
-[![Crates.io](https://img.shields.io/crates/v/zahirscan.svg)](https://crates.io/crates/zahirscan)
-[![docs.rs](https://img.shields.io/docsrs/zahirscan)](https://docs.rs/zahirscan)
-![Build](https://github.com/thicclatka/zahirscan/workflows/Build/badge.svg)
+[![Crates.io](https://img.shields.io/crates/v/tetration.svg)](https://crates.io/crates/tetration)
+[![docs.rs](https://img.shields.io/docsrs/tetration)](https://docs.rs/tetration)
+![Build](https://github.com/thicclatka/tetration/workflows/Build/badge.svg)
 ![Rust](https://img.shields.io/badge/rust-1.95-orange.svg)
 
 [_For those who are more cur_](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
 
-New file format for tensors.
+New file format for tensors: **HDF5-shaped** in the stack (one durable home for many large arrays and metadata), **Zarr-shaped** in mechanics (regular chunk grid, per-chunk compression, parallel-friendly I/O)—but **one mmap-friendly file** instead of a directory store of chunk blobs.
 
 **Naming:** the Rust **library** on crates.io is **`tetration`** (`use tetration::…` in code, `tetration` in `Cargo.toml` dependencies). The **command-line tool** that ships in the same package is **`tet`**—short, typed often, and distinct from the library name so docs and issues can say “fix in tetration” vs “run `tet query`” without ambiguity.
 
 ## Vision: a modern, mmap-first n-dimensional store
 
-The goal is not to clone HDF5’s API or feature matrix, but to occupy a similar _role_ in the stack: a **durable container for large, structured numeric data** (tensors, grids, tables-as-arrays) that you can treat as part of the address space instead of always streaming through a library. Where classic HDF5 leans on rich metadata trees, plugins, and a long compatibility tail, this project aims at **predictable on-disk layout, cheap random access, and parallelism-friendly chunking** from day one.
+The goal is not to clone HDF5’s API or feature matrix, but to occupy a similar _role_ in the stack: a **durable container for large, structured numeric data** (tensors, grids, tables-as-arrays) that you can treat as part of the address space instead of always streaming through a library. Conceptually it is also close to **[Zarr](https://zarr.dev/)**: **chunk-addressed arrays** with **metadata-first** ergonomics—but **bundled into a single artifact** for mmap, versioning, and “email this file” workflows, rather than exposing chunk files across a filesystem or object-prefix layout. Where classic HDF5 leans on rich metadata trees, plugins, and a long compatibility tail, this project aims at **predictable on-disk layout, cheap random access, and parallelism-friendly chunking** from day one.
+
+### What “too big to read” means here
+
+Often a dataset is called “impossible to read” because something in the stack tries to **load the entire array into RAM** or **scan it end-to-end** when the work only needs a **hyperslab** or a **subset of chunks**. Tetration treats **partial access as the normal case**: **memory-map** large payload regions so the **OS page cache** supplies working sets, **map logical slices to chunk coordinates** so I/O tracks what you touched, and use **parallel reads** across disjoint chunks. That is the main performance story for **very large n-D numeric bulk**. Relational workloads (multiple tables, **join** semantics, SQL-style queries across datasets) stay **orthogonal**—they belong in callers or optional layers—not as distractions from **making huge files routinely usable**.
 
 ### What “like HDF5” means here
 
@@ -23,6 +27,10 @@ The goal is not to clone HDF5’s API or feature matrix, but to occupy a similar
 - **mmap-friendly** — a reader can **memory-map** payload (and key index regions) and dereference slices that correspond to chunks or sub-chunks, relying on the OS page cache instead of bespoke buffering for many access patterns.
 - **Multi-threaded by construction** — because chunk boundaries are known and stable, **different threads (or tasks) can touch disjoint chunk ranges** without coordinating on a mutable global cursor; writers still need clear rules (e.g. exclusive file creation, append-only regions, or per-chunk serialization) so the format stays coherent.
 - **JSON-described queries and basic operations** — callers can **submit JSON documents** that name a dataset, describe **slices / hyperslabs / stepping**, request **metadata**, or ask for a small, fixed set of **built-in operations** (aggregations, dtype views, bounds checks, etc.). That gives you a language-agnostic control plane—HTTP bodies, CLI stdin, worker queues—without requiring a custom binary protocol for everyday reads and light server-side work.
+
+### Single-file Zarr (mental model)
+
+[Zarr](https://zarr.dev/) is usually experienced as **chunked arrays plus JSON (or similar) metadata**, often spread across **many files or keys** in a store. Tetration keeps that **chunk grid and per-chunk compression story**—deterministic chunk indices, embarrassingly parallel reads, optional filters—but puts **payload, chunk index, and rich headers in one `.tet` file** you can mmap end-to-end. The JSON **query** layer is not a replacement for Zarr’s on-disk metadata tree; it is the **control plane** (“what to read or compute”) sitting above a **binary** layout, similar in spirit to how Zarr users think in JSON for structure while bytes live in separate chunk objects.
 
 ### JSON query plane (how it fits)
 
@@ -34,12 +42,12 @@ The on-disk layout stays binary and mmap-oriented; JSON sits **above** it as a *
 2. **Deterministic chunking** — chunk shape (or chunk grid) is part of the dataset definition; clients can **precompute** which file bytes back a logical hyperslab. That enables **Rayon**-style parallel decode or memcpy over disjoint regions without a central “chunk allocator” at read time.
 3. **Compression as a per-chunk decision** — e.g. **zstd** on chunk payloads keeps cold data small while preserving mmap + parallel decode for uncompressed or lightly compressed cases; the index must store compressed vs raw sizes so mmap views can target decompressed staging buffers when needed.
 4. **Serialization / interchange** — **rkyv** and **serde** carry not only schema, shapes, dtypes, and user attributes but also **optional, structured provenance**: links between datasets (derivation, “morphed from”), ordered **history** or append-only **event lists**, and process blobs small enough to sit in header space or spill to dedicated metadata chunks. The numeric bulk stays **hot** and mmap-simple; metadata can be **cold** yet still rich enough for reproducibility and for UIs or services that explain _why_ two arrays belong together.
-5. **Ergonomics vs HDF5** — explicit non-goals early on (arbitrary plugin ecosystem, full SQL-on-files, etc.) in favor of **Rust-first safety**, **reproducible byte layout**, and **documentation of concurrency semantics** (who may write which chunks, when).
+5. **Ergonomics vs HDF5 / directory Zarr** — explicit non-goals early on (arbitrary plugin ecosystem, full SQL-on-files, etc.) in favor of **Rust-first safety**, **reproducible byte layout**, **one-file distribution**, and **documentation of concurrency semantics** (who may write which chunks, when).
 6. **JSON query spec** — a **documented JSON schema** (or equivalent contract) for query and operation requests: parsing via **serde**, strict validation, clear error responses, and mapping from logical selections to physical chunk reads—again enabling **Rayon** where the plan says the work is embarrassingly parallel.
 
 ### Who this is for
 
-Teams that want **HDF5-like persistence** (big arrays, partial I/O, shared analysis) but are willing to adopt a **smaller, opinionated format** optimized for **mmap + parallel chunk read/write** on local disks or object-store–backed block devices, with a clear path to binding in Rust (and later other languages via a documented layout spec).
+Teams that hit **datasets larger than RAM** (or larger than patience for full-file reads) and want **HDF5-like persistence** (big arrays, partial I/O, shared analysis) or **Zarr-like chunking** without managing a **directory or key-prefix store** of shards—instead a **single file** optimized for **mmap + parallel chunk read/write** on local disks or object-store–backed block devices, with a clear path to binding in Rust (and later other languages via a documented layout spec).
 
 ### Multi-language embedding (calling into Tetration from Python and beyond)
 
