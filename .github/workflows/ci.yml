@@ -149,5 +149,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: nefaxer-${{ matrix.os }}
-          path: target/release/nefaxer*
+          name: tet-${{ matrix.os }}
+          path: target/release/tet*

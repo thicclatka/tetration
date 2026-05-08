@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 authors = ["AHurowitz <thicclatka@users.noreply.github.com>"]
-description = "new file format for tensors"
+description = "Tetration tensor file format: Rust library (tetration) and tet CLI"
 license = "MIT or Apache-2.0"
 repository = "https://github.com/thicclatka/tetration"
 homepage = "https://github.com/thicclatka/tetration"
@@ -12,12 +12,19 @@ documentation = "https://docs.rs/tetration"
 readme = "README.md"
 keywords = []
 categories = []
+default-run = "tet"
+
+[[bin]]
+name = "tet"
+path = "src/bin/tet.rs"
 
 [dependencies]
 bytemuck = "1.25.0"
+clap = { version = "4.5.51", features = ["derive"] }
 memmap2 = "0.9.10"
 rayon = "1.12.0"
 rkyv = "0.8.16"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 thiserror = "2.0.18"
 zstd = "0.13.3"
