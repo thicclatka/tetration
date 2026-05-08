@@ -9,7 +9,11 @@ use clap::{Parser, Subcommand};
 use tetration::{parse_query_json, plan_query, validate_query};
 
 #[derive(Parser)]
-#[command(name = "tet", version, about = "Tetration CLI: JSON queries and format conversion")]
+#[command(
+    name = "tet",
+    version,
+    about = "Tetration CLI: JSON queries and format conversion"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -33,15 +37,9 @@ enum Commands {
 #[derive(Subcommand)]
 enum ConvertTarget {
     /// HDF5 → Tetration (not implemented until `.tet` writer + HDF5 reader are linked).
-    H5 {
-        input: PathBuf,
-        output: PathBuf,
-    },
+    H5 { input: PathBuf, output: PathBuf },
     /// NetCDF → Tetration (not implemented until `.tet` writer + NetCDF reader are linked).
-    Netcdf {
-        input: PathBuf,
-        output: PathBuf,
-    },
+    Netcdf { input: PathBuf, output: PathBuf },
 }
 
 fn read_stdin_string() -> io::Result<String> {

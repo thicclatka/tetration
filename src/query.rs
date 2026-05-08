@@ -75,12 +75,12 @@ pub fn validate_query(doc: &QueryDocument) -> Result<(), TetError> {
     }
     if let Some(axes) = &doc.selection {
         for (i, sl) in axes.iter().enumerate() {
-            if let Some(step) = sl.step {
-                if step == 0 {
-                    return Err(TetError::Validation(format!(
-                        "selection[{i}].step must be >= 1, got 0"
-                    )));
-                }
+            if let Some(step) = sl.step
+                && step == 0
+            {
+                return Err(TetError::Validation(format!(
+                    "selection[{i}].step must be >= 1, got 0"
+                )));
             }
             match (sl.start, sl.stop) {
                 (Some(a), Some(b)) if a >= b => {

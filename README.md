@@ -41,6 +41,20 @@ The on-disk layout stays binary and mmap-oriented; JSON sits **above** it as a *
 
 Teams that want **HDF5-like persistence** (big arrays, partial I/O, shared analysis) but are willing to adopt a **smaller, opinionated format** optimized for **mmap + parallel chunk read/write** on local disks or object-store–backed block devices, with a clear path to binding in Rust (and later other languages via a documented layout spec).
 
+### Multi-language embedding (calling into Tetration from Python and beyond)
+
+The Rust crate **`tetration`** stays the **reference implementation**, but other languages are first-class targets. The plan is layered so bindings stay maintainable:
+
+1. **Documented on-disk layout** — A versioned **file spec** (magic, endianness, header, chunk index, compression flags) lets any language implement a **standalone reader** if needed; it also locks semantics so FFI and Rust cannot drift silently.
+
+2. **Small, stable C ABI** — Expose a **`cdylib`** with a narrow C API (e.g. open path, list or resolve datasets, read chunk bytes into caller-owned memory, query last error, close). C is the **portable FFI floor**: Python, Julia, Go, JVM, .NET, R, etc. can all call it via their usual native interop without depending on Rust ABI stability across toolchains.
+
+3. **Python next** — A **`tetration`-py** style package (PyO3 / maturin) links the same core library and ships wheels that bundle the shared object. NumPy-friendly buffer protocols and thin wrappers follow from that stack.
+
+4. **Control plane without in-process Rust** — The **JSON query** format and the **`tet`** CLI remain valid integration paths: other runtimes can shell out or HTTP-post JSON when a native binding is not worth shipping yet.
+
+Together, **spec + C ABI + Python** cover “used as a library from other langs” without promising that every language gets a hand-written idiomatic wrapper on day one.
+
 ### CLI: `tet`
 
 The **`tetration`** crate compiles both the library and a binary named **`tet`**. `cargo install tetration` (or `cargo build --release`) produces a `tet` executable; `default-run` is set to **`tet`**, so `cargo run -- …` runs the CLI without `--bin tet`. The CLI is the ergonomic front door for **JSON querying** and, later, **foreign-format conversion**; embedders link **`tetration`** as a normal dependency.
