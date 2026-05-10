@@ -49,6 +49,32 @@ The on-disk layout stays binary and mmap-oriented; JSON sits **above** it as a *
 
 Teams that hit **datasets larger than RAM** (or larger than patience for full-file reads) and want **HDF5-like persistence** (big arrays, partial I/O, shared analysis) or **Zarr-like chunking** without managing a **directory or key-prefix store** of shards—instead a **single file** optimized for **mmap + parallel chunk read/write** on local disks or object-store–backed block devices, with a clear path to binding in Rust (and later other languages via a documented layout spec).
 
+### GPUs and tensors (same file, optional path)
+
+N-dimensional tensors and GPUs often show up together. Tetration does **not** need a separate “GPU file format.” The **on-disk layout stays mmap-first** for partial I/O and the OS page cache: you map what you need, touch the pages you read, and avoid pretending the whole array must sit in RAM at once.
+
+When it is **time to use** a selection, a reader **materializes** it: read or mmap the relevant bytes, **decompress per chunk if needed**, then either **keep the result on the CPU** or **copy it to a GPU** (host-to-device). That is a **binding / library choice**, not a different wire format—one `.tet`, one index; only the **destination** changes.
+
+**Why that helps:** workloads where the **file is much larger than RAM** but each step only needs a **hyperslab or batch of chunks** get cheap I/O on the CPU side, then can land the working set on a GPU for training or inference without an extra hand-rolled pipeline for “file → tensor → CUDA.”
+
+**What moving to a GPU actually optimizes:** compute can read **device memory** at the bandwidth your kernels need; you can **overlap** transfers with work (for example async host-to-device while the previous batch still runs); frameworks can run fused ops on device tensors without shuttling through host memory again. **What it does not fix by itself:** decompression is still usually **CPU work** unless you add optional GPU-oriented codecs later; **GPU memory is finite**, so you still stream batches rather than loading unlimited data into VRAM.
+
+**Choosing CPU vs GPU:** the practical rule is **explicit beats magic**—for example a `device` argument or an environment variable so users say “CUDA device 0” or “CPU only.” An **automatic** mode can **probe** whether GPU infrastructure is available (initialize CUDA or ask PyTorch, and so on) and **fall back to CPU** if not. Optional heuristics can skip the GPU for **tiny** selections where transfer overhead dominates. None of that belongs in the byte-for-byte file header as hard requirements; it lives in **APIs and docs**.
+
+**Guardrails:** sensible defaults can cap **how much** is in flight to the GPU at once, limit **concurrent** copies, check **free VRAM** before committing, and **fall back** on out-of-memory. Power users should still get **knobs** (limits, thresholds, opt-in-only GPU) so production jobs stay predictable.
+
+**Format details that play nicely with GPUs** (over time, in the spec): predictable **row-major** contiguous chunk payloads, **dtype** support that matches ML stacks (for example `f32` / `f16`), and **alignment** rules that make copies and optional fast paths (such as vendor direct-storage setups) less painful. Those help **everyone** who wants zero-copy or memcpy-friendly bytes, not only GPU users.
+
+### Recording lineage (sessions and wrappers)
+
+The format already treats **rich headers** and **optional history** as first-class (see **Serialization / interchange** above). A practical way to populate them—**in Rust and in Python**—is a **first-party writer or session type**: it wraps the real open / read / write APIs, **appends structured provenance events** in memory (what ran, with what parameters, parent dataset ids, and so on), and on **`commit` / `close`** serializes that list into the **file or dataset metadata** (or into **dedicated metadata chunks** if the log outgrows a small header).
+
+**What “automatic” can mean here:** reliably **automatic only for work that goes through that API**—for example “wrote these chunks,” “applied this transform,” “copied lineage from parent.” **Cheap extras** on write are still worth doing without tracing: **tool versions**, **timestamps**, **git commit**, **hostname**, narrow **environment** snapshots.
+
+**What is not a goal:** silently recording **every** statement in an arbitrary user script across arbitrary libraries; that needs heavy, fragile instrumentation and still misses subprocesses and side effects.
+
+**Product discipline:** cap or **spill** long event lists so metadata stays bounded; use a **versioned, forward-compatible** event shape so old readers skip unknown fields; treat the log as **best-effort audit and reproducibility**, not tamper-proof provenance unless you add signing as a separate concern. Optional **explicit** hooks (`log_step`, context managers) sit well next to session defaults so power users can name steps the library cannot infer.
+
 ### Multi-language embedding (calling into Tetration from Python and beyond)
 
 The Rust crate **`tetration`** stays the **reference implementation**, but other languages are first-class targets. The plan is layered so bindings stay maintainable:
