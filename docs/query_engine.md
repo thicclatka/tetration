@@ -62,15 +62,15 @@ flowchart TD
 
 ## Module map
 
-| Module | File | Responsibility |
-| ------ | ---- | -------------- |
-| **run** | `run.rs` | Public entrypoints: `plan_query_empty`, `plan_query_with_tet_mmap`; builds `QueryResponse`; dataset match / miss. |
-| **selection** | `selection.rs` | JSON `selection` → half-open global box `[g0, g1)` and per-axis `step` (default full tensor, step 1). |
-| **read_plan** | `read_plan.rs` | `ReadPlan`: chunk I/O rows + selection geometry (`logical_selection_shape`, `logical_f32_element_count`). |
-| **indexing** | `indexing.rs` | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions). |
+| Module          | File             | Responsibility                                                                                                                                                                                        |
+| --------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **run**         | `run.rs`         | Public entrypoints: `plan_query_empty`, `plan_query_with_tet_mmap`; builds `QueryResponse`; dataset match / miss.                                                                                     |
+| **selection**   | `selection.rs`   | JSON `selection` → half-open global box `[g0, g1)` and per-axis `step` (default full tensor, step 1).                                                                                                 |
+| **read_plan**   | `read_plan.rs`   | `ReadPlan`: chunk I/O rows + selection geometry (`logical_selection_shape`, `logical_f32_element_count`).                                                                                             |
+| **indexing**    | `indexing.rs`    | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions).                                                                                                             |
 | **materialize** | `materialize.rs` | Mmap slice + codec decode (raw **0**, zstd **1**); scatter into **logical row-major** `f32` buffer; `materialize_read_plan_f32_le` / `_into`. Shared per-chunk scatter via `scatter_chunk_into_plan`. |
-| **parallel** | `parallel.rs` | Rayon `par_iter` over `ReadPlan.chunks`; `materialize_read_plan_f32_le_parallel` / `_into_parallel` (same semantics as sequential; disjoint logical-index writes). |
-| **operations** | `operations.rs` | `sum` / `mean` over decoded tensor; scalar (`axes: []`) or partial (`axes: ["0", …]` decimal indices); `build_execution_preview`. Uses **sequential** materialize today. |
+| **parallel**    | `parallel.rs`    | Rayon `par_iter` over `ReadPlan.chunks`; `materialize_read_plan_f32_le_parallel` / `_into_parallel` (same semantics as sequential; disjoint logical-index writes).                                    |
+| **operations**  | `operations.rs`  | `sum` / `mean` over decoded tensor; scalar (`axes: []`) or partial (`axes: ["0", …]` decimal indices); `build_execution_preview`. Uses **sequential** materialize today.                              |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `materialize_read_plan_f32_le`, `materialize_read_plan_f32_le_parallel`, …).
 
@@ -122,13 +122,13 @@ flowchart TD
 
 ## `QueryResponse` fields (engine-produced)
 
-| Field | When set |
-| ----- | -------- |
-| `catalog` | Always with `--tet` / `plan_query_with_tet_mmap`. |
-| `read_plan` | Dataset matched; lists touched chunks and selection geometry. |
-| `execution` | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set). |
-| `execution.f32_preview` | First `n` logical row-major floats (`n = 0` → empty vec). |
-| `execution.operation_*` | Full decode + `sum` / `mean`; preview cap does not truncate aggregates. |
+| Field                   | When set                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `catalog`               | Always with `--tet` / `plan_query_with_tet_mmap`.                               |
+| `read_plan`             | Dataset matched; lists touched chunks and selection geometry.                   |
+| `execution`             | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set). |
+| `execution.f32_preview` | First `n` logical row-major floats (`n = 0` → empty vec).                       |
+| `execution.operation_*` | Full decode + `sum` / `mean`; preview cap does not truncate aggregates.         |
 
 ## Chunk-touch policy strings
 
@@ -140,7 +140,6 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 ## Related docs
 
 - On-disk layout: [`layout_v1.md`](layout_v1.md)
-- Contributor ops: [`AGENT.md`](../AGENT.md)
 - Roadmap checklist: [`GETTING_STARTED.md`](../GETTING_STARTED.md)
 
 ## Intentional gaps (v1)

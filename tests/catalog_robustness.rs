@@ -42,9 +42,11 @@ fn materialize_rejects_corrupt_zstd_payload() {
     write_multichunk_2x3_zero_zstd(&path, "z");
 
     let mut bytes = std::fs::read(&path).unwrap();
-    let mmap0 = mmap_file_read(&path).unwrap();
-    let s = read_tet_summary_v1(&mmap0).unwrap();
-    let p0 = usize::try_from(s.chunks[0].payload_offset).unwrap();
+    let p0 = {
+        let mmap0 = mmap_file_read(&path).unwrap();
+        let s = read_tet_summary_v1(&mmap0).unwrap();
+        usize::try_from(s.chunks[0].payload_offset).unwrap()
+    };
     bytes[p0] ^= 0xff;
     std::fs::write(&path, &bytes).unwrap();
 
@@ -72,10 +74,12 @@ fn materialize_rejects_zstd_when_raw_byte_len_mismatches_decompressed_size() {
     let path = dir.path().join("liar_raw_len.tet");
     write_multichunk_2x3_zero_zstd(&path, "z");
 
-    let mmap0 = mmap_file_read(&path).unwrap();
-    let s = read_tet_summary_v1(&mmap0).unwrap();
-    let idx = usize::try_from(s.superblock.chunk_index_offset).unwrap();
-    let patch_at = idx + ENTRY0_RAW_LEN_OFFSET;
+    let patch_at = {
+        let mmap0 = mmap_file_read(&path).unwrap();
+        let s = read_tet_summary_v1(&mmap0).unwrap();
+        let idx = usize::try_from(s.superblock.chunk_index_offset).unwrap();
+        idx + ENTRY0_RAW_LEN_OFFSET
+    };
 
     let mut bytes = std::fs::read(&path).unwrap();
     assert!(

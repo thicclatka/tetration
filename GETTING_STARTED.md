@@ -50,7 +50,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Ongoing hygiene
 
 - [x] Integration tests: temp `.tet`, mmap, catalog roundtrip, query planning + `f32` materialization (see `tests/`).
-- [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`AGENT.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
+- [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
 ---
