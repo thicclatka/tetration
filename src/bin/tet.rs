@@ -7,8 +7,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use tetration::{
-    mmap_file_read, parse_query_json, plan_query, plan_query_with_tet_mmap, read_tet_summary_v1,
-    validate_query,
+    mmap_file_read, parse_query_json, plan_query_empty, plan_query_with_tet_mmap,
+    read_tet_summary_v1, validate_query,
 };
 
 #[derive(Parser)]
@@ -37,10 +37,10 @@ enum Commands {
         /// Optional `.tet` file: resolve `dataset` against the on-disk catalog (metadata only).
         #[arg(long = "tet", value_name = "PATH")]
         tet: Option<PathBuf>,
-        /// After planning, mmap-read raw `f32` payloads (codec 0) and attach a capped preview JSON (`execution`).
+        /// After planning, mmap-read planned chunk payloads (raw or zstd `f32`); attach `execution` with capped `f32_preview`. If the query JSON includes **`operation`** (`sum` / `mean` with `axes: []`), the full planned tensor is decoded for stats (see `operation_sum` / `operation_mean`).
         #[arg(long = "execute", default_value_t = false)]
         execute: bool,
-        /// Max decoded `f32` values in `execution` when using `--execute` (default 64).
+        /// Max decoded `f32` values in `execution` when using `--execute` (default 64). Use `0` with a query `operation` to skip preview floats while still aggregating.
         #[arg(long = "preview-f32", value_name = "N")]
         preview_f32: Option<usize>,
     },
@@ -123,7 +123,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 if execute {
                     return Err("`--execute` requires `--tet PATH` (mmap read needs a file)".into());
                 }
-                plan_query(&doc)
+                plan_query_empty(&doc)
             };
             let out = serde_json::to_string_pretty(&response).map_err(|e| e.to_string())?;
             println!("{out}");

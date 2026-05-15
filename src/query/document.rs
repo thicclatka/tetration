@@ -1,6 +1,6 @@
 //! Parse and validate JSON query documents.
 
-use super::types::{AxisSlice, QueryDocument, TetError};
+use super::types::{AxisSlice, Operation, QueryDocument, TetError};
 
 /// Parse a JSON query document from `text`.
 ///
@@ -44,6 +44,33 @@ pub fn validate_query(doc: &QueryDocument) -> Result<(), TetError> {
         for (i, sl) in axes.iter().enumerate() {
             validate_axis_slice_json(i, sl)?;
         }
+    }
+    if let Some(op) = &doc.operation {
+        validate_operation_axes_v1(op)?;
+    }
+    Ok(())
+}
+
+fn validate_operation_axis_token(s: &str) -> Result<(), TetError> {
+    if s.is_empty() {
+        return Err(TetError::Validation(
+            "operation axis label must not be empty".into(),
+        ));
+    }
+    if !s.chars().all(|c| c.is_ascii_digit()) {
+        return Err(TetError::Validation(
+            "operation axes must be decimal dimension indices (e.g. \"0\"); non-ASCII labels are not supported yet".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_operation_axes_v1(op: &Operation) -> Result<(), TetError> {
+    let axes = match op {
+        Operation::Sum { axes } | Operation::Mean { axes } => axes,
+    };
+    for a in axes {
+        validate_operation_axis_token(a)?;
     }
     Ok(())
 }

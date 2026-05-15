@@ -1,6 +1,6 @@
 use tetration::{
-    CHUNK_TOUCH_POLICY, DTYPE_F32, RawArrayWrite, mmap_file_read, parse_query_json,
-    plan_query_with_tet_mmap, validate_query, write_raw_array_file,
+    CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DTYPE_F32, RawArrayWrite, mmap_file_read,
+    parse_query_json, plan_query_with_tet_mmap, validate_query, write_raw_array_file,
 };
 
 #[test]
@@ -21,6 +21,7 @@ fn read_plan_strided_step_touches_fewer_chunks_than_dense() {
             dtype: DTYPE_F32,
             shape: &shape,
             chunk_shape: &chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
             data: &data,
         },
     )

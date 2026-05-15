@@ -1,4 +1,4 @@
-use tetration::{parse_query_json, plan_query, validate_query};
+use tetration::{parse_query_json, plan_query_empty, validate_query};
 
 #[test]
 fn sample_query_parses_and_plans() {
@@ -9,15 +9,30 @@ fn sample_query_parses_and_plans() {
             { "start": 0, "stop": 100, "step": 2 },
             { "start": null, "stop": null, "step": 1 }
         ],
-        "operation": { "mean": { "axes": ["time"] } },
+        "operation": { "mean": { "axes": [] } },
         "output": { "preferred": { "inline_json": null } }
     }"#;
     let doc = parse_query_json(json).unwrap();
     validate_query(&doc).unwrap();
-    let plan = plan_query(&doc);
+    let plan = plan_query_empty(&doc);
     assert!(plan.accepted);
     assert_eq!(plan.dataset, "temperature");
     assert_eq!(plan.selection_axes, Some(2));
+}
+
+#[test]
+fn rejects_invalid_operation_axis_token() {
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["x"]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("decimal"), "{err}");
+}
+
+#[test]
+fn accepts_decimal_operation_axis_indices() {
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["0"]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
 }
 
 #[test]

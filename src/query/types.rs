@@ -54,7 +54,7 @@ pub struct QueryDocument {
     pub output: Option<OutputHints>,
 }
 
-/// Per-chunk file regions needed to satisfy the current plan (raw payload bytes).
+/// Per-chunk file regions needed to satisfy the current plan (on-disk payload bytes; may be zstd-compressed).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PlannedChunkIo {
@@ -74,6 +74,18 @@ pub struct ReadPlan {
     pub chunk_count: usize,
     pub total_stored_bytes: u64,
     pub chunks: Vec<PlannedChunkIo>,
+    /// Dataset global shape (same rank as selection).
+    pub dataset_shape: Vec<u64>,
+    pub chunk_shape: Vec<u64>,
+    /// Half-open global index box used for chunk intersection (`stop` exclusive).
+    pub selection_box_start: Vec<u64>,
+    pub selection_box_stop_exclusive: Vec<u64>,
+    /// Per-axis step (≥ 1) for strided selection.
+    pub selection_step: Vec<u64>,
+    /// Extents of the strided selection grid (row-major order matches materialized `f32`).
+    pub logical_selection_shape: Vec<u64>,
+    /// Element count of the logical row-major buffer produced by [`crate::query::materialize_read_plan_f32_le`].
+    pub logical_f32_element_count: usize,
 }
 
 /// Stable string tokens for [`ReadPlan::chunk_touch_policy`] (JSON wire compatibility).
@@ -111,7 +123,12 @@ pub struct DatasetResolution {
     pub available_datasets: Option<Vec<String>>,
 }
 
-/// First `f32` values read from planned raw chunk payloads (little-endian), capped for JSON safety.
+/// First `f32` values read from planned chunk payloads (little-endian), capped for JSON safety.
+/// When an [`Operation`] is present and execution runs, **`operation_*`** fields summarize the
+/// **full** decoded logical tensor (row-major over the strided selection); see
+/// `plan_query_with_tet_mmap`. Scalar reductions (`axes: []`) use `operation_sum` /
+/// `operation_mean`. Partial reductions use `operation_reduced_shape` with
+/// `operation_reduced_sum` or `operation_reduced_mean` (axes are decimal dimension indices).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct QueryExecutionPreview {
@@ -119,6 +136,21 @@ pub struct QueryExecutionPreview {
     pub total_bytes_read_from_disk: u64,
     pub f32_preview: Vec<f32>,
     pub f32_preview_truncated: bool,
+    /// Set when an operation ran: number of `f32` values aggregated (full planned decode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_element_count: Option<usize>,
+    /// Scalar result when `operation.axes` is empty (reduce all elements).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_sum: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_mean: Option<f64>,
+    /// Shape after reducing along `operation.axes` (decimal dimension indices); row-major flattened payloads follow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_shape: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_sum: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_mean: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

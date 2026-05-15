@@ -19,8 +19,10 @@ pub use layout::{
     create_empty_v1_file, mmap_file_read, open_superblock_v1, read_superblock_v1,
 };
 pub use query::{
-    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, Operation, OutputHint,
-    OutputHints, PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryResponse, ReadPlan,
-    materialize_read_plan_f32_le, parse_query_json, plan_query, plan_query_with_tet_mmap,
-    planned_chunk_mmap_slices, validate_query,
+    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution,
+    MaterializeReadPlanF32IntoOutcome, Operation, OutputHint, OutputHints, PlannedChunkIo,
+    QueryDocument, QueryExecutionPreview, QueryResponse, ReadPlan, materialize_read_plan_f32_le,
+    materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
+    materialize_read_plan_f32_le_parallel, parse_query_json, plan_query_empty,
+    plan_query_with_tet_mmap, planned_chunk_mmap_slices, validate_query,
 };
