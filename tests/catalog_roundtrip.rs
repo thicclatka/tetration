@@ -1,11 +1,15 @@
 mod fixture;
 
 use tetration::{
-    DTYPE_F32, OneChunkRawWrite, create_empty_v1_file, mmap_file_read, read_tet_summary_v1,
-    write_one_chunk_raw_file,
+    CHUNK_PAYLOAD_CODEC_V1, DTYPE_F32, OneChunkRawWrite, RawArrayWrite, create_empty_v1_file,
+    materialize_read_plan_f32_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
+    read_tet_summary_v1, validate_query, write_one_chunk_raw_file, write_raw_array_file,
 };
 
-use fixture::{SHAPE_2X3, le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_tiles};
+use fixture::{
+    CHUNK_2X2, SHAPE_2X3, le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_tiles,
+    write_multichunk_2x3_zero_zstd,
+};
 
 #[test]
 fn empty_file_summary() {
@@ -74,4 +78,60 @@ fn multi_chunk_f32_roundtrip() {
     }
     assert_eq!(&mmap[o0..o0 + 16], expect0.as_slice());
     assert_eq!(&mmap[o1..o1 + 8], expect1.as_slice());
+}
+
+#[test]
+fn multi_chunk_zstd_zeros_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zstd_zeros.tet");
+    write_multichunk_2x3_zero_zstd(&path, "z");
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.chunks.len(), 2);
+    for ch in &s.chunks {
+        assert_eq!(ch.codec, CHUNK_PAYLOAD_CODEC_V1.zstd);
+    }
+
+    let doc = parse_query_json(r#"{"dataset":"z","layout_version":1}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, None).unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    let (vals, truncated, disk) = materialize_read_plan_f32_le(&mmap, rp, None).unwrap();
+    assert!(!truncated);
+    assert_eq!(vals.len(), 6);
+    assert_eq!(
+        disk,
+        s.chunks[0].stored_byte_len + s.chunks[1].stored_byte_len
+    );
+    assert!(vals.iter().all(|&x| x == 0.0));
+}
+
+#[test]
+fn multi_chunk_zstd_write_explicit_raw_array() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zstd_explicit.tet");
+    let data = le_row_major_2x3_f32_one_to_six();
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "t",
+            dtype: DTYPE_F32,
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.zstd,
+            data: &data,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"t"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, None).unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    let (vals, _, _) = materialize_read_plan_f32_le(&mmap, rp, None).unwrap();
+    let want = [1f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    for (a, b) in vals.iter().zip(want.iter()) {
+        assert!((a - b).abs() < 1e-5);
+    }
 }

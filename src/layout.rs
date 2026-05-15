@@ -10,7 +10,7 @@ use memmap2::{Mmap, MmapOptions};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::wire;
+use crate::utils::wire;
 
 /// File magic: ASCII `TETR`.
 pub const MAGIC: &[u8; 4] = b"TETR";

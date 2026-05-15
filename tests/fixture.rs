@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use tetration::{DTYPE_F32, RawArrayWrite, write_raw_array_file};
+use tetration::{CHUNK_PAYLOAD_CODEC_V1, DTYPE_F32, RawArrayWrite, write_raw_array_file};
 
 /// Shape `[2, 3]` used across multi-chunk examples.
 pub const SHAPE_2X3: [u64; 2] = [2, 3];
@@ -28,6 +28,25 @@ pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
             dtype: DTYPE_F32,
             shape: &SHAPE_2X3,
             chunk_shape: &CHUNK_2X2,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            data: &data,
+        },
+    )
+    .unwrap();
+}
+
+/// Same geometry as [`write_multichunk_2x3_tiles`], but chunk payloads are **zstd**-compressed
+/// (all-zero `f32` tensor so frames shrink on disk).
+pub fn write_multichunk_2x3_zero_zstd(path: &Path, dataset_name: &str) {
+    let data = vec![0u8; 24];
+    write_raw_array_file(
+        path,
+        &RawArrayWrite {
+            name: dataset_name,
+            dtype: DTYPE_F32,
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.zstd,
             data: &data,
         },
     )

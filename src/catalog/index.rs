@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 
-use crate::wire;
+use crate::utils::wire;
 
-use super::{CatalogError, MAX_NDIM};
+use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, MAX_NDIM};
 
 /// Wire-fixed fields for the chunk index region header (layout v1).
 ///
@@ -33,7 +33,8 @@ pub struct ChunkIndexEntryV1 {
     pub payload_offset: u64,
     pub raw_byte_len: u64,
     pub stored_byte_len: u64,
-    /// `0` = uncompressed raw bytes (`stored_byte_len == raw_byte_len`).
+    /// Payload codec (`u32`): compare to [`CHUNK_PAYLOAD_CODEC_V1`](crate::catalog::CHUNK_PAYLOAD_CODEC_V1)
+    /// ([`ChunkPayloadCodecV1`](crate::catalog::ChunkPayloadCodecV1)).
     pub codec: u32,
 }
 
@@ -142,10 +143,10 @@ pub(super) fn validate_chunk_payloads(
     file_len: u64,
 ) -> Result<(), CatalogError> {
     for c in chunks {
-        if c.codec != 0 {
+        if !CHUNK_PAYLOAD_CODEC_V1.is_supported(c.codec) {
             return Err(CatalogError::UnsupportedCodec { codec: c.codec });
         }
-        if c.raw_byte_len != c.stored_byte_len {
+        if CHUNK_PAYLOAD_CODEC_V1.is_raw(c.codec) && c.raw_byte_len != c.stored_byte_len {
             return Err(CatalogError::RawStoredMismatch {
                 raw: c.raw_byte_len,
                 stored: c.stored_byte_len,

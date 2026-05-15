@@ -4,7 +4,7 @@
 
 mod dataset;
 mod index;
-mod tile;
+pub(crate) mod tile;
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -14,10 +14,60 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::layout::{self, LAYOUT_VERSION_V1, SuperblockV1};
-use crate::wire;
+use crate::utils::wire;
 
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
+
+/// v1 chunk payload codec wire tags (`u32` values written per chunk in the index).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkPayloadCodecV1 {
+    /// Raw little-endian tensor bytes (`stored_byte_len == raw_byte_len`).
+    pub raw: u32,
+    /// **zstd**–compressed bytes at `payload_offset`; decompressed size is `raw_byte_len`.
+    pub zstd: u32,
+}
+
+/// Defined chunk payload codecs for layout v1 (see `docs/layout_v1.md`).
+pub const CHUNK_PAYLOAD_CODEC_V1: ChunkPayloadCodecV1 = ChunkPayloadCodecV1 { raw: 0, zstd: 1 };
+
+impl ChunkPayloadCodecV1 {
+    #[must_use]
+    pub const fn is_raw(self, codec: u32) -> bool {
+        codec == self.raw
+    }
+
+    #[must_use]
+    pub const fn is_zstd(self, codec: u32) -> bool {
+        codec == self.zstd
+    }
+
+    #[must_use]
+    pub const fn is_supported(self, codec: u32) -> bool {
+        self.is_raw(codec) || self.is_zstd(codec)
+    }
+
+    /// Encode one tile’s uncompressed `f32` row-major bytes for the given wire `codec`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::UnsupportedCodec`] when `codec` is neither [`ChunkPayloadCodecV1::raw`]
+    /// nor [`ChunkPayloadCodecV1::zstd`] for this table, and [`CatalogError::Io`] when zstd
+    /// compression fails.
+    pub fn encode_tile_payload(
+        self,
+        codec: u32,
+        tile_bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, CatalogError> {
+        if self.is_raw(codec) {
+            return Ok(tile_bytes);
+        }
+        if self.is_zstd(codec) {
+            return zstd::encode_all(tile_bytes.as_slice(), 0).map_err(CatalogError::Io);
+        }
+        Err(CatalogError::UnsupportedCodec { codec })
+    }
+}
 
 /// Chunk grid coordinates whose tiles intersect the half-open global index box (see
 /// [`tile::chunk_coords_intersecting_global_box`]).
@@ -91,7 +141,7 @@ pub enum CatalogError {
     BadIndexLength { count: u64, region: u64 },
     #[error("chunk payload [{start}, {end}) out of bounds for file length {file_len}")]
     PayloadOutOfBounds { file_len: u64, start: u64, end: u64 },
-    #[error("unsupported codec {codec} (only 0 = raw is supported in this build)")]
+    #[error("unsupported codec {codec} (supported: 0 = raw, 1 = zstd)")]
     UnsupportedCodec { codec: u32 },
     #[error("raw/stored length mismatch for codec=0: raw={raw}, stored={stored}")]
     RawStoredMismatch { raw: u64, stored: u64 },
@@ -202,7 +252,9 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
     })
 }
 
-/// Write a `.tet` with one dataset and any number of **raw** (`codec = 0`) `f32` chunks.
+/// Write a `.tet` with one dataset and any number of **`f32` chunks** (`4` bytes per element,
+/// row-major), each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](ChunkPayloadCodecV1::raw) or
+/// [`zstd`](ChunkPayloadCodecV1::zstd) per `spec.chunk_codec`.
 ///
 /// `data` must be the full tensor in **row-major** order (`4 * product(shape)` bytes).
 ///
@@ -255,6 +307,13 @@ fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(
                 field: "chunk_payload_len",
                 value: u64::MAX,
             })?;
+        let stored_vec =
+            CHUNK_PAYLOAD_CODEC_V1.encode_tile_payload(spec.chunk_codec, tile_bytes)?;
+        let stored_len =
+            u64::try_from(stored_vec.len()).map_err(|_| CatalogError::TooLargeForPlatform {
+                field: "chunk_stored_len",
+                value: u64::MAX,
+            })?;
         let mut chunk_index = [0u64; MAX_NDIM];
         chunk_index[..ndim].copy_from_slice(&coord[..ndim]);
         entries.push(ChunkIndexEntryV1 {
@@ -262,13 +321,13 @@ fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(
             chunk_index,
             payload_offset: cursor,
             raw_byte_len: raw_len,
-            stored_byte_len: raw_len,
-            codec: 0,
+            stored_byte_len: stored_len,
+            codec: spec.chunk_codec,
         });
         cursor = cursor
-            .checked_add(raw_len)
+            .checked_add(stored_len)
             .ok_or(CatalogError::InvalidWriteSpec("payload cursor overflow"))?;
-        payloads.push(tile_bytes);
+        payloads.push(stored_vec);
     }
 
     let sb = SuperblockV1 {
@@ -332,6 +391,7 @@ pub fn write_one_chunk_raw_file(
             dtype: spec.dtype,
             shape: spec.shape,
             chunk_shape: spec.chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
             data: spec.payload,
         },
     )
