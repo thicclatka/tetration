@@ -1,6 +1,25 @@
 //! **tetration** — Rust library for the Tetration mmap-oriented chunked tensor format.
 //! The companion CLI binary is **`tet`** (see `src/bin/tet.rs`).
 
+mod wire;
+
+pub mod catalog;
+pub mod layout;
 pub mod query;
 
-pub use query::{QueryDocument, QueryResponse, parse_query_json, plan_query, validate_query};
+pub use catalog::{
+    CHUNK_INDEX_HEADER_V1, CatalogError, ChunkIndexEntryV1, ChunkIndexHeaderV1, DTYPE_F32,
+    DatasetRecordV1, MAX_NDIM, OneChunkRawWrite, RawArrayWrite, TetFileSummaryV1,
+    chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided, read_tet_summary_v1,
+    write_one_chunk_raw_file, write_raw_array_file,
+};
+pub use layout::{
+    LAYOUT_VERSION_V1, LayoutError, LayoutOpenError, MAGIC, SUPERBLOCK_V1_LEN, SuperblockV1,
+    create_empty_v1_file, mmap_file_read, open_superblock_v1, read_superblock_v1,
+};
+pub use query::{
+    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, Operation, OutputHint,
+    OutputHints, PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryResponse, ReadPlan,
+    materialize_read_plan_f32_le, parse_query_json, plan_query, plan_query_with_tet_mmap,
+    planned_chunk_mmap_slices, validate_query,
+};

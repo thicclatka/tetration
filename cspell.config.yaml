@@ -4,9 +4,15 @@ dictionaryDefinitions: []
 dictionaries: []
 words:
   - bytemuck
+  - DTYPE
+  - elems
+  - ndim
+  - nelem
   - rkyv
+  - TETR
   - Tetration
   - thiserror
+  - TIDX
   - zstd
 ignoreWords: []
 import: []
