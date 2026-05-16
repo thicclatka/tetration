@@ -310,6 +310,25 @@ fn plan_query_operation_sum_along_axis_zero() {
 }
 
 #[test]
+fn plan_query_execute_multi_chunk_matches_parallel_materialize() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("exec_par.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(64)).unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    assert!(rp.chunk_count > 1, "fixture must touch multiple chunks");
+    let ex = plan.execution.as_ref().unwrap();
+    let (par, par_trunc, par_bytes) =
+        materialize_read_plan_f32_le_parallel(&mmap, rp, Some(64)).unwrap();
+    assert_eq!(ex.f32_preview, par);
+    assert_eq!(ex.f32_preview_truncated, par_trunc);
+    assert_eq!(ex.total_bytes_read_from_disk, par_bytes);
+}
+
+#[test]
 fn materialize_read_plan_f32_parallel_matches_sequential() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("par.tet");

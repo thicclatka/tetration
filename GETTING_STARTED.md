@@ -32,7 +32,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Phase 3 — Compression and robustness
 
 - [x] **Per-chunk zstd** (`codec = 1`): `RawArrayWrite::chunk_codec` vs **`CHUNK_PAYLOAD_CODEC_V1`** (`raw` / `zstd`); index stores `raw_byte_len` vs `stored_byte_len`; query materialization decompresses for `f32` preview.
-- [ ] Fuzz or property-test **index bounds** vs file length; expand negative tests for truncation/corruption. (`tests/catalog_robustness.rs` covers truncation, corrupt zstd, `raw_byte_len` vs decoded size, and a short mmap slice vs `ReadPlan`.)
+- [ ] Fuzz or property-test **index bounds** vs file length (broader than hand-patched fixtures). (`tests/catalog_robustness.rs` covers truncation, corrupt zstd, lying `raw_byte_len`, inflated `stored_byte_len`, raw `stored`/`raw` mismatch, unsupported codec, and a short mmap slice vs `ReadPlan`.)
 - [ ] Optional: **`bytemuck`** views only where alignment + dtype rules are guaranteed.
 
 ## Phase 4 — Query execution
