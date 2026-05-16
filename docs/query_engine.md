@@ -70,7 +70,7 @@ flowchart TD
 | **indexing**    | `indexing.rs`    | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions).                                                                                                             |
 | **materialize** | `materialize.rs` | Mmap slice + codec decode (raw **0**, zstd **1**); scatter into **logical row-major** `f32` buffer; `materialize_read_plan_f32_le` / `_into`. Shared per-chunk scatter via `scatter_chunk_into_plan`. |
 | **parallel**    | `parallel.rs`    | Rayon `par_iter` over `ReadPlan.chunks`; `materialize_read_plan_f32_le_parallel` / `_into_parallel` (same semantics as sequential; disjoint logical-index writes).                                    |
-| **operations**  | `operations.rs`  | `sum` / `mean` over decoded tensor; scalar (`axes: []`) or partial (`axes: ["0", …]` decimal indices); `build_execution_preview`. Uses **sequential** materialize today.                              |
+| **operations**  | `operations.rs`  | `sum` / `mean` over decoded tensor; scalar (`axes: []`) or partial (`axes: ["0", …]` decimal indices); `build_execution_preview`. Uses **parallel** materialize when `read_plan.chunks.len() > 1`. |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `materialize_read_plan_f32_le`, `materialize_read_plan_f32_le_parallel`, …).
 
@@ -117,7 +117,7 @@ flowchart TD
 
 - **`materialize_read_plan_f32_le(mmap, plan, None)`** — full logical tensor (caller must size for `logical_f32_element_count`).
 - **`materialize_read_plan_f32_le_into`** — same decode path into a caller-owned `&mut [f32]` (no `Vec` allocation for the output).
-- **`materialize_read_plan_f32_le_parallel`** / **`materialize_read_plan_f32_le_into_parallel`** — same APIs; Rayon over planned chunks (raw and zstd). Not wired into `tet query --execute` yet.
+- **`materialize_read_plan_f32_le_parallel`** / **`materialize_read_plan_f32_le_into_parallel`** — same APIs; Rayon over planned chunks (raw and zstd). **`build_execution_preview`** (and thus **`tet query --execute`**) uses parallel decode when the read plan touches more than one chunk.
 - **`planned_chunk_mmap_slices`** — zero-copy raw codec slices only (no zstd).
 
 ## `QueryResponse` fields (engine-produced)
@@ -144,7 +144,7 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 
 ## Intentional gaps (v1)
 
-- **`tet query --execute`** and **`build_execution_preview`** still call **sequential** materialize; use **`materialize_read_plan_f32_le_parallel`** directly for parallel decode.
+- Direct callers can still use **`materialize_read_plan_f32_le`** (always sequential) or **`_parallel`** (always Rayon); execution picks parallel only for multi-chunk plans.
 - Materialization and operations are **`f32`** / `DTYPE_F32` only.
 - `operation.axes` uses **decimal dimension indices**, not dataset name labels.
 - No spill-to-disk or streaming API for tensors larger than RAM.

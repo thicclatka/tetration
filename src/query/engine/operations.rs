@@ -5,7 +5,21 @@ use crate::query::types::{Operation, QueryExecutionPreview, ReadPlan, TetError};
 
 use super::indexing::{coords_from_linear_row_major, linear_rm_index};
 use super::materialize::materialize_read_plan_f32_le;
+use super::parallel::materialize_read_plan_f32_le_parallel;
 use super::read_plan::shape_product_usize;
+
+/// Decode planned chunks for execution preview (parallel when more than one chunk).
+fn materialize_read_plan_f32_le_for_execution(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_elements: Option<usize>,
+) -> Result<(Vec<f32>, bool, u64), TetError> {
+    if plan.chunks.len() <= 1 {
+        materialize_read_plan_f32_le(mmap, plan, max_elements)
+    } else {
+        materialize_read_plan_f32_le_parallel(mmap, plan, max_elements)
+    }
+}
 
 fn parse_reduction_axes(labels: &[String], ndim: usize) -> Result<Vec<usize>, TetError> {
     let mut seen = BTreeSet::new();
@@ -186,7 +200,7 @@ pub(super) fn build_execution_preview(
     match operation {
         None => {
             let (f32_preview, f32_preview_truncated, total_bytes_read_from_disk) =
-                materialize_read_plan_f32_le(mmap, plan, Some(max_f32))?;
+                materialize_read_plan_f32_le_for_execution(mmap, plan, Some(max_f32))?;
             Ok(QueryExecutionPreview {
                 total_bytes_read_from_disk,
                 f32_preview,
@@ -201,7 +215,7 @@ pub(super) fn build_execution_preview(
         }
         Some(op) => {
             let (full, _, total_bytes_read_from_disk) =
-                materialize_read_plan_f32_le(mmap, plan, None)?;
+                materialize_read_plan_f32_le_for_execution(mmap, plan, None)?;
             let agg = apply_operation(op, &full, &plan.logical_selection_shape)?;
             let f32_preview_truncated = full.len() > max_f32;
             let f32_preview: Vec<f32> = full.iter().take(max_f32).copied().collect();

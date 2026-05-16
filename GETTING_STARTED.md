@@ -26,7 +26,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Phase 2 — Chunk addressing
 
 - [x] **Logical slice → chunk coordinates:** `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided` (see `catalog/tile.rs`).
-- [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`** in `query/engine/parallel.rs` (library API; CLI preview path still sequential).
+- [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**; **`build_execution_preview`** uses parallel decode when the read plan has more than one chunk (`tet query --execute`).
 - [x] **`plan_query_with_tet_mmap`:** produces **`ReadPlan`** (payload offsets, `stored_byte_len`, `raw_byte_len`, `codec` per touched chunk).
 
 ## Phase 3 — Compression and robustness
@@ -38,7 +38,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Phase 4 — Query execution
 
 - [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum` / `mean` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (decimal dimension indices; partial reductions → **`operation_reduced_*`**).
-- [ ] **Full materialization** ergonomics (streaming / disk spill) for very large selections; richer **`Operation`** kinds; wire parallel materialize into **`--execute`** when worthwhile.
+- [ ] **Full materialization** ergonomics (streaming / disk spill) for very large selections; richer **`Operation`** kinds.
 - [ ] Return richer **`QueryResponse`** / **`execution`** fields as operations grow (e.g. named-axis reductions, non-`f32` dtypes).
 
 ## Phase 5 — Interop and bindings (later)
@@ -57,6 +57,6 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Execution depth:** wire parallel materialize into **`--execute`**; streaming or spill-to-disk for huge logical tensors; **`Operation`** beyond sum/mean or beyond decimal axis indices.
+1. **Execution depth:** streaming or spill-to-disk for huge logical tensors; **`Operation`** beyond sum/mean or beyond decimal axis indices.
 2. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch.
 3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
