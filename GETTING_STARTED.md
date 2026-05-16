@@ -29,11 +29,11 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**; **`build_execution_preview`** uses parallel decode when the read plan has more than one chunk (`tet query --execute`).
 - [x] **`plan_query_with_tet_mmap`:** produces **`ReadPlan`** (payload offsets, `stored_byte_len`, `raw_byte_len`, `codec` per touched chunk).
 
-## Phase 3 — Compression and robustness
+## Phase 3 — Compression and robustness (complete)
 
 - [x] **Per-chunk zstd** (`codec = 1`): `RawArrayWrite::chunk_codec` vs **`CHUNK_PAYLOAD_CODEC_V1`** (`raw` / `zstd`); index stores `raw_byte_len` vs `stored_byte_len`; query materialization decompresses for `f32` preview.
-- [ ] Fuzz or property-test **index bounds** vs file length (broader than hand-patched fixtures). (`tests/catalog_robustness.rs` covers truncation, corrupt zstd, lying `raw_byte_len`, inflated `stored_byte_len`, raw `stored`/`raw` mismatch, unsupported codec, and a short mmap slice vs `ReadPlan`.)
-- [ ] Optional: **`bytemuck`** views only where alignment + dtype rules are guaranteed.
+- [x] Fuzz or property-test **index bounds** vs file length: `tests/catalog.rs` (property tests + hand-patched robustness cases).
+- [x] **`bytemuck`** for `f32` payloads: `src/utils/f32_le.rs` (`read_f32_le_at` / `try_cast_f32_le` when 4-byte aligned); materialize uses unaligned-safe reads; covered in `tests/catalog.rs`.
 
 ## Phase 4 — Query execution
 
@@ -50,8 +50,9 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 ## Ongoing hygiene
 
-- [x] Integration tests: temp `.tet`, mmap, catalog roundtrip, query planning + `f32` materialization (see `tests/`).
+- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), layout (`tests/layout_roundtrip.rs`); shared fixtures in `tests/fixture.rs`.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
+- [ ] Harden JSON control plane per [query engine — JSON security](docs/query_engine.md#json-security-input-and-output): input size/depth limits, `deny_unknown_fields`, dataset/axis length caps, fuzzing; document caller rules for safe output consumption (no injection either direction).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
 ---

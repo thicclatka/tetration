@@ -4,6 +4,8 @@ The **query engine** (`src/query/engine/`) turns a validated JSON [`QueryDocumen
 
 JSON parsing and schema validation live in **`document.rs`**; wire types and error enums live in **`types.rs`**. The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
 
+See [JSON security (input and output)](#json-security-input-and-output) for trust boundaries and hardening notes.
+
 ## End-to-end flow
 
 ```mermaid
@@ -57,15 +59,15 @@ flowchart TD
 
 ## Module map
 
-| Module          | File             | Responsibility                                                                                                                                                                                                                                 |
-| --------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **run**         | `run.rs`         | Public entrypoints: `plan_query_empty`, `plan_query_with_tet_mmap`; builds `QueryResponse`; dataset match / miss.                                                                                                                              |
-| **selection**   | `selection.rs`   | JSON `selection` → half-open global box `[g0, g1)` and per-axis `step` (default full tensor, step 1).                                                                                                                                          |
-| **read_plan**   | `read_plan.rs`   | `ReadPlan`: chunk I/O rows + selection geometry (`logical_selection_shape`, `logical_f32_element_count`).                                                                                                                                      |
-| **indexing**    | `indexing.rs`    | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions).                                                                                                                                                      |
-| **materialize** | `materialize.rs` | Mmap slice + codec decode (raw **0**, zstd **1**); scatter into **logical row-major** `f32` buffer; `materialize_read_plan_f32_le` / `_into`. Shared per-chunk scatter via `scatter_chunk_into_plan`.                                          |
-| **parallel**    | `parallel.rs`    | Rayon `par_iter` over `ReadPlan.chunks`; `materialize_read_plan_f32_le_parallel` / `_into_parallel` (same semantics as sequential; disjoint logical-index writes).                                                                             |
-| **reduction**   | `reduction.rs`   | `ReductionKind`, `ScalarAccum`, `ScalarReductionResult`; shared scalar fold + preview field mapping.                                                                                                                                           |
+| Module          | File             | Responsibility                                                                                                                                                                                                                                                       |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **run**         | `run.rs`         | Public entrypoints: `plan_query_empty`, `plan_query_with_tet_mmap`; builds `QueryResponse`; dataset match / miss.                                                                                                                                                    |
+| **selection**   | `selection.rs`   | JSON `selection` → half-open global box `[g0, g1)` and per-axis `step` (default full tensor, step 1).                                                                                                                                                                |
+| **read_plan**   | `read_plan.rs`   | `ReadPlan`: chunk I/O rows + selection geometry (`logical_selection_shape`, `logical_f32_element_count`).                                                                                                                                                            |
+| **indexing**    | `indexing.rs`    | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions).                                                                                                                                                                            |
+| **materialize** | `materialize.rs` | Mmap slice + codec decode (raw **0**, zstd **1**); scatter into **logical row-major** `f32` buffer; `materialize_read_plan_f32_le` / `_into`. Shared per-chunk scatter via `scatter_chunk_into_plan`.                                                                |
+| **parallel**    | `parallel.rs`    | Rayon `par_iter` over `ReadPlan.chunks`; `materialize_read_plan_f32_le_parallel` / `_into_parallel` (same semantics as sequential; disjoint logical-index writes).                                                                                                   |
+| **reduction**   | `reduction.rs`   | `ReductionKind`, `ScalarAccum`, `ScalarReductionResult`; shared scalar fold + preview field mapping.                                                                                                                                                                 |
 | **operations**  | `operations.rs`  | `build_execution_preview`, `apply_operation`, `reduce_along_axes`; scalar (`axes: []`) delegates to **`fold_read_plan_scalar_operation`**; partial axes full materialize then axis reduce. Multi-chunk decode uses **parallel** materialize when planning execution. |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `materialize_read_plan_f32_le`, `materialize_read_plan_f32_le_parallel`, …).
@@ -111,12 +113,12 @@ flowchart TD
 
 ## `QueryResponse` fields (engine-produced)
 
-| Field                   | When set                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `catalog`               | Always with `--tet` / `plan_query_with_tet_mmap`.                               |
-| `read_plan`             | Dataset matched; lists touched chunks and selection geometry.                   |
-| `execution`             | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set). |
-| `execution.f32_preview` | First `n` logical row-major floats (`n = 0` → empty vec).                       |
+| Field                   | When set                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `catalog`               | Always with `--tet` / `plan_query_with_tet_mmap`.                                                                  |
+| `read_plan`             | Dataset matched; lists touched chunks and selection geometry.                                                      |
+| `execution`             | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set).                                    |
+| `execution.f32_preview` | First `n` logical row-major floats (`n = 0` → empty vec).                                                          |
 | `execution.operation_*` | Aggregates over full logical selection (`sum`, `mean`, `min`, `max`, `count`); preview cap does not truncate them. |
 
 ## Chunk-touch policy strings
@@ -163,12 +165,12 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Implementation tiers
 
-| Tier  | Name                             | When to use                                                | Engine pattern                                                                                      |
-| ----- | -------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | Extend **`fold_read_plan_scalar_operation`** / `visit_planned_chunk` (one pass, no full buffer).    |
+| Tier  | Name                             | When to use                                                | Engine pattern                                                                                                                               |
+| ----- | -------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | Extend **`fold_read_plan_scalar_operation`** / `visit_planned_chunk` (one pass, no full buffer).                                             |
 | **B** | **Axis reduce**                  | Non-empty `axes`, element-wise combine along dimensions    | Reuse **`reduce_along_axes`** in `operations.rs` after full materialize (today’s path for partial `sum` / `mean` / `min` / `max` / `count`). |
-| **C** | **Materialize-required**         | Needs full logical tensor order, sort, or index of extrema | Full decode (or future spill file); may add new `operation_*` response fields.                      |
-| **D** | **Out of scope for `Operation`** | Writers, dtype views, foreign format import                | Separate APIs (`materialize_*`, `tet convert`, metadata), not the JSON `operation` enum.            |
+| **C** | **Materialize-required**         | Needs full logical tensor order, sort, or index of extrema | Full decode (or future spill file); may add new `operation_*` response fields.                                                               |
+| **D** | **Out of scope for `Operation`** | Writers, dtype views, foreign format import                | Separate APIs (`materialize_*`, `tet convert`, metadata), not the JSON `operation` enum.                                                     |
 
 ### Tier 1 — next ops (same `axes` model as `sum` / `mean`)
 
@@ -220,9 +222,83 @@ These match the product vision but belong **beside** the reduction enum:
 
 When adding an op, update this table, [`Operation`](../src/query/types.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs`, and (if tier **A**) `materialize.rs` fold support.
 
+## JSON security (input and output)
+
+The JSON query plane is a **declarative control document**, not executable code. There is no query language interpreter, SQL engine, or “run this string from the JSON” path. Security still matters in **both directions**: untrusted input must not drive memory-unsafe or out-of-policy behavior, and untrusted consumers must not treat output JSON as shell/HTML/SQL without encoding.
+
+### Threat model (v1)
+
+| Surface             | Source                                                   | Risk if mishandled                                                                                       |
+| ------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Query JSON in**   | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep JSON), logic abuse (absurd selection), confused deputy (if a host passes paths from JSON) |
+| **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))          |
+| **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                    |
+| **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                            |
+
+The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
+
+### Input protections (today)
+
+Implemented in [`document.rs`](../src/query/document.rs) and planning:
+
+1. **Typed `serde` deserialization** — JSON maps into fixed structs/enums ([`QueryDocument`](../src/query/types.rs), [`Operation`](../src/query/types.rs)); there is no dynamic “operation name → callback” table fed by arbitrary strings.
+2. **Closed `operation` enum** — Only `sum`, `mean`, `min`, `max`, `count` deserialize; unknown tags fail at parse time.
+3. **Axis tokens restricted** — `operation.axes` entries must be non-empty **ASCII decimal** strings (e.g. `"0"`), not arbitrary expressions or Unicode axis names ([`validate_operation_axis_token`](../src/query/document.rs)).
+4. **Slice sanity** — `step != 0`; when both `start` and `stop` are set, `start < stop`.
+5. **Non-empty `dataset`** — Whitespace-only names rejected.
+6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/engine/selection.rs)); JSON cannot name chunk file offsets directly.
+7. **No string → path in v1 query JSON** — Opening a `.tet` file uses the **host** path (`--tet`, API argument), not a field inside the query document.
+
+**Not enforced yet (deployments should add limits):**
+
+- Maximum JSON byte size or parse depth before `parse_query_json`.
+- Maximum `selection` rank/length, `dataset` string length, or number of `operation.axes`.
+- `#[serde(deny_unknown_fields)]` on input types (unknown keys are currently **ignored** by default).
+- Canonical JSON / duplicate-key rejection (depends on `serde_json` behavior).
+- Rate limiting and authentication on any HTTP wrapper around `tet query`.
+
+### Output protections (today)
+
+1. **`serde_json` serialization** — Strings in `QueryResponse` are JSON-escaped when written (default `tet query` pretty-print).
+2. **Bounded preview arrays** — `execution.f32_preview` is capped by `--preview-f32` / `raw_f32_preview_max`; aggregates use full-tensor math but return numeric summaries, not opaque blobs.
+3. **Server-generated messages** — Most `message` text is produced by the engine; user strings appear mainly as echoed `dataset` / axis labels and in validation errors.
+
+### Caller responsibilities (either direction)
+
+#### Ingesting query JSON
+
+- Cap input size and parse time; reject documents above policy limits before calling the library.
+- Do not build shell commands, SQL, or file paths by string-concatenating raw JSON fields.
+- Keep the `.tet` path under caller control (allowlist directories, no user-supplied absolute paths in multi-tenant services unless intended).
+
+**Consuming `QueryResponse` JSON**
+
+- Treat the document as **data**, not instructions: never `eval`, `source`, or template-interpolate response JSON into code without a schema.
+- When embedding in HTML, email, or terminals, apply normal contextual escaping (JSON ≠ safe HTML).
+- For logs, prefer structured JSON logging or strip/control characters in echoed `dataset` names if logs are human-facing.
+
+### Hardening roadmap
+
+| Item                                       | Direction | Notes                                           |
+| ------------------------------------------ | --------- | ----------------------------------------------- |
+| Input size / depth limits                  | In        | Configurable max bytes; optional `serde` limits |
+| `deny_unknown_fields`                      | In        | Fail closed on unexpected keys                  |
+| Dataset / axis length caps                 | In        | Reject overlong strings early                   |
+| Spill path allowlist                       | In/out    | When `OutputHint::SpillArray` is implemented    |
+| Response schema version + stability        | Out       | Document breaking changes                       |
+| Fuzz `parse_query_json` / `validate_query` | In        | Random UTF-8, huge integers, nested arrays      |
+| Redaction mode for echoed fields           | Out       | Multi-tenant logging                            |
+
+## Robustness (catalog index)
+
+- Catalog robustness and index property tests: [`tests/catalog.rs`](../tests/catalog.rs).
+- Query planning, materialize, and operations: [`tests/query.rs`](../tests/query.rs).
+- `f32` payload decode uses [`src/utils/f32_le.rs`](../src/utils/f32_le.rs) (bytemuck; aligned cast when possible).
+
 ## Intentional gaps (v1)
 
 - Direct callers can still use **`materialize_read_plan_f32_le`** (always sequential) or **`_parallel`** (always Rayon); execution picks parallel only for multi-chunk **materialize** paths. Scalar **`operation`** with **`axes: []`** uses **`fold_read_plan_scalar_operation`** instead of allocating the full logical buffer.
 - Materialization and operations are **`f32`** / `DTYPE_F32` only.
 - `operation.axes` uses **decimal dimension indices**, not dataset name labels.
 - No spill-to-disk or streaming API for tensors larger than RAM.
+- JSON hardening items in [JSON security](#json-security-input-and-output) (size limits, `deny_unknown_fields`, spill path policy) are not fully implemented in the library yet.

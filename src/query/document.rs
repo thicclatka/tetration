@@ -1,4 +1,7 @@
 //! Parse and validate JSON query documents.
+//!
+//! Security boundaries and deployment guidance: see `docs/query_engine.md` (section
+//! “JSON security (input and output)”).
 
 use super::types::{AxisSlice, Operation, QueryDocument, TetError};
 

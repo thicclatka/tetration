@@ -1,14 +1,130 @@
+//! Query engine integration tests: JSON validation, mmap planning, materialize, operations.
+
 mod fixture;
 
+use fixture::{CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_tiles, write_multichunk_2x3_zero_zstd};
 use tetration::{
-    CHUNK_TOUCH_POLICY, DTYPE_F32, OneChunkRawWrite, create_empty_v1_file,
-    materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
+    CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DTYPE_F32, OneChunkRawWrite, RawArrayWrite,
+    create_empty_v1_file, materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
     materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
-    mmap_file_read, parse_query_json, plan_query_with_tet_mmap, read_tet_summary_v1,
-    validate_query, write_one_chunk_raw_file,
+    mmap_file_read, parse_query_json, plan_query_empty, plan_query_with_tet_mmap,
+    read_tet_summary_v1, validate_query, write_one_chunk_raw_file, write_raw_array_file,
 };
 
-use fixture::{CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_tiles, write_multichunk_2x3_zero_zstd};
+// --- JSON / plan-only ---
+
+#[test]
+fn sample_query_parses_and_plans() {
+    let json = r#"{
+        "layout_version": 1,
+        "dataset": "temperature",
+        "selection": [
+            { "start": 0, "stop": 100, "step": 2 },
+            { "start": null, "stop": null, "step": 1 }
+        ],
+        "operation": { "mean": { "axes": [] } },
+        "output": { "preferred": { "inline_json": null } }
+    }"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_empty(&doc);
+    assert!(plan.accepted);
+    assert_eq!(plan.dataset, "temperature");
+    assert_eq!(plan.selection_axes, Some(2));
+}
+
+#[test]
+fn rejects_invalid_operation_axis_token() {
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["x"]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("decimal"), "{err}");
+}
+
+#[test]
+fn accepts_decimal_operation_axis_indices() {
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["0"]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
+}
+
+#[test]
+fn accepts_min_max_count_operations() {
+    for json in [
+        r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"max":{"axes":["1"]}}}"#,
+        r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#,
+    ] {
+        let doc = parse_query_json(json).unwrap();
+        validate_query(&doc).unwrap();
+    }
+}
+
+#[test]
+fn rejects_empty_dataset() {
+    let json = r#"{"dataset": "   "}"#;
+    let doc = parse_query_json(json).unwrap();
+    assert!(validate_query(&doc).is_err());
+}
+
+// --- strided read plan ---
+
+#[test]
+fn read_plan_strided_step_touches_fewer_chunks_than_dense() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("strided.tet");
+    let shape = [4u64, 3];
+    let chunk_shape = [2u64, 3];
+    let mut data = vec![0u8; 4 * 12];
+    for (i, slot) in data.chunks_exact_mut(4).enumerate() {
+        let v = (i + 1) as f32;
+        slot.copy_from_slice(&v.to_le_bytes());
+    }
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            dtype: DTYPE_F32,
+            shape: &shape,
+            chunk_shape: &chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            data: &data,
+        },
+    )
+    .unwrap();
+
+    let mmap = mmap_file_read(&path).unwrap();
+
+    let doc_dense = parse_query_json(
+        r#"{"dataset":"a","selection":[{"start":1,"stop":3},{"start":0,"stop":3}]}"#,
+    )
+    .unwrap();
+    validate_query(&doc_dense).unwrap();
+    let dense = plan_query_with_tet_mmap(&doc_dense, None, &mmap, None).unwrap();
+    assert_eq!(
+        dense.read_plan.as_ref().unwrap().chunk_touch_policy,
+        CHUNK_TOUCH_POLICY.dense_half_open_unit_step
+    );
+    assert_eq!(dense.read_plan.as_ref().unwrap().chunk_count, 2);
+
+    let doc_strided = parse_query_json(
+        r#"{"dataset":"a","selection":[{"start":1,"stop":3,"step":2},{"start":0,"stop":3}]}"#,
+    )
+    .unwrap();
+    validate_query(&doc_strided).unwrap();
+    let strided = plan_query_with_tet_mmap(&doc_strided, None, &mmap, None).unwrap();
+    assert_eq!(
+        strided.read_plan.as_ref().unwrap().chunk_touch_policy,
+        CHUNK_TOUCH_POLICY.strided_half_open
+    );
+    assert_eq!(strided.read_plan.as_ref().unwrap().chunk_count, 1);
+    assert_eq!(
+        strided.read_plan.as_ref().unwrap().chunks[0].chunk_index,
+        vec![0, 0]
+    );
+}
+
+// --- mmap planning, materialize, operations ---
 
 #[test]
 fn plan_query_f32_preview_zstd_file() {

@@ -252,6 +252,17 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
     })
 }
 
+/// Validate chunk index payload spans against a file length (same rules as [`read_tet_summary_v1`]).
+///
+/// Exposed for integration tests in `tests/`.
+#[doc(hidden)]
+pub fn validate_chunk_payloads(
+    chunks: &[ChunkIndexEntryV1],
+    file_len: u64,
+) -> Result<(), CatalogError> {
+    index::validate_chunk_payloads(chunks, file_len)
+}
+
 /// Write a `.tet` with one dataset and any number of **`f32` chunks** (`4` bytes per element,
 /// row-major), each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](ChunkPayloadCodecV1::raw) or
 /// [`zstd`](ChunkPayloadCodecV1::zstd) per `spec.chunk_codec`.

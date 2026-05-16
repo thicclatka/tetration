@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use crate::catalog::{CHUNK_PAYLOAD_CODEC_V1, MAX_NDIM, tile};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
+use crate::utils::f32_le;
 
 use super::indexing::linear_rm_index;
 use super::reduction::{ReductionKind, ScalarAccum, ScalarReductionResult};
@@ -375,10 +376,7 @@ where
             lc.push(qi);
         }
         let li = linear_rm_index(&lc, &plan.logical_selection_shape)?;
-        let a: [u8; 4] = raw_bytes[k * 4..k * 4 + 4]
-            .try_into()
-            .map_err(|_| TetError::Validation("internal: f32 slice chunking".into()))?;
-        visit(li, f32::from_le_bytes(a))?;
+        visit(li, f32_le::read_f32_le_at(&raw_bytes, k))?;
     }
     Ok(bytes_read)
 }
