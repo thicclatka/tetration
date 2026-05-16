@@ -37,7 +37,7 @@ enum Commands {
         /// Optional `.tet` file: resolve `dataset` against the on-disk catalog (metadata only).
         #[arg(long = "tet", value_name = "PATH")]
         tet: Option<PathBuf>,
-        /// After planning, mmap-read planned chunk payloads (raw or zstd `f32`); attach `execution` with capped `f32_preview`. If the query JSON includes **`operation`** (`sum` / `mean` with `axes: []`), the full planned tensor is decoded for stats (see `operation_sum` / `operation_mean`).
+        /// After planning, mmap-read planned chunk payloads (raw or zstd `f32`); attach `execution` with capped `f32_preview`. With **`operation`** (`sum`, `mean`, `min`, `max`, `count`), aggregates use the full logical selection (`operation_*` / `operation_reduced_*`; scalar `axes: []` uses a single-pass fold).
         #[arg(long = "execute", default_value_t = false)]
         execute: bool,
         /// Max decoded `f32` values in `execution` when using `--execute` (default 64). Use `0` with a query `operation` to skip preview floats while still aggregating.

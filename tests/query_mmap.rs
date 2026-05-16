@@ -241,6 +241,69 @@ fn plan_query_preview_cap_zero_without_operation_errors() {
 }
 
 #[test]
+fn plan_query_operation_min_max_count_scalar() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("minmax.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+
+    let min_doc = parse_query_json(r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#).unwrap();
+    validate_query(&min_doc).unwrap();
+    let min_plan = plan_query_with_tet_mmap(&min_doc, None, &mmap, Some(8)).unwrap();
+    assert!((min_plan.execution.as_ref().unwrap().operation_min.unwrap() - 1.0).abs() < 1e-5);
+
+    let max_doc = parse_query_json(r#"{"dataset":"a","operation":{"max":{"axes":[]}}}"#).unwrap();
+    validate_query(&max_doc).unwrap();
+    let max_plan = plan_query_with_tet_mmap(&max_doc, None, &mmap, Some(8)).unwrap();
+    assert!((max_plan.execution.as_ref().unwrap().operation_max.unwrap() - 6.0).abs() < 1e-5);
+
+    let count_doc =
+        parse_query_json(r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#).unwrap();
+    validate_query(&count_doc).unwrap();
+    let count_plan = plan_query_with_tet_mmap(&count_doc, None, &mmap, Some(0)).unwrap();
+    let ex = count_plan.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_element_count, Some(6));
+    assert!(ex.f32_preview.is_empty());
+}
+
+#[test]
+fn plan_query_operation_min_along_axis_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("min_axis0.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a","operation":{"min":{"axes":["0"]}}}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_reduced_shape.as_deref(), Some(&[3u64][..]));
+    let mins = ex.operation_reduced_min.as_ref().unwrap();
+    assert_eq!(mins.len(), 3);
+    assert!((mins[0] - 1.0).abs() < 1e-5);
+    assert!((mins[1] - 2.0).abs() < 1e-5);
+    assert!((mins[2] - 3.0).abs() < 1e-5);
+}
+
+#[test]
+fn plan_query_scalar_sum_fold_matches_materialize_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fold_sum.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(8)).unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    let (full, _, _) = materialize_read_plan_f32_le(&mmap, rp, None).unwrap();
+    let manual_sum: f64 = full.iter().map(|&x| f64::from(x)).sum();
+    assert_eq!(ex.operation_element_count, Some(6));
+    assert!((ex.operation_sum.unwrap() - manual_sum).abs() < 1e-5);
+    assert_eq!(ex.f32_preview.len(), 6);
+    assert!(!ex.f32_preview_truncated);
+}
+
+#[test]
 fn plan_query_operation_sum_full_tensor() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("op_sum.tet");

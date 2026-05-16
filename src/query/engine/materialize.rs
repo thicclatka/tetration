@@ -6,6 +6,7 @@ use crate::catalog::{CHUNK_PAYLOAD_CODEC_V1, MAX_NDIM, tile};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 
 use super::indexing::linear_rm_index;
+use super::reduction::{ReductionKind, ScalarAccum, ScalarReductionResult};
 
 fn u64_to_usize(field: &'static str, v: u64) -> Result<usize, TetError> {
     usize::try_from(v)
@@ -244,15 +245,78 @@ pub(crate) fn validate_read_plan_geometry(plan: &ReadPlan, out_len: usize) -> Re
     Ok(())
 }
 
-/// Decode one planned chunk and scatter matching `f32` values into `out`.
+/// Result of [`fold_read_plan_scalar_operation`].
+#[derive(Debug, Clone)]
+pub(crate) struct FoldScalarPlanOutcome {
+    pub f32_preview: Vec<f32>,
+    pub f32_preview_truncated: bool,
+    pub total_bytes_read_from_disk: u64,
+    pub scalar: ScalarReductionResult,
+}
+
+/// Decode planned chunks once, aggregating a scalar reduction without allocating the full
+/// logical tensor. Fills `f32_preview` with the first `max_f32` logical row-major values.
+///
+/// # Errors
+///
+/// Same validation failures as materialization when chunk payloads disagree with the plan.
+pub(crate) fn fold_read_plan_scalar_operation(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_f32: usize,
+    kind: ReductionKind,
+) -> Result<FoldScalarPlanOutcome, TetError> {
+    let n = plan.logical_f32_element_count;
+    let preview_cap = max_f32.min(n);
+    let mut preview = vec![f32::NAN; preview_cap];
+    let mut acc = ScalarAccum::default();
+    let mut total_bytes_read_from_disk: u64 = 0;
+
+    for c in &plan.chunks {
+        let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
+            acc.push(v);
+            if li < preview_cap {
+                preview[li] = v;
+            }
+            Ok(())
+        })?;
+        total_bytes_read_from_disk = total_bytes_read_from_disk
+            .checked_add(chunk_bytes)
+            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+    }
+
+    if acc.is_empty() {
+        return Err(TetError::Validation(
+            "operation requires at least one decoded f32 from the read plan".into(),
+        ));
+    }
+    if preview_cap > 0 && preview.iter().any(|v| v.is_nan()) {
+        return Err(TetError::Validation(
+            "materialized selection has unset preview elements (chunk payloads vs selection mismatch)"
+                .into(),
+        ));
+    }
+
+    Ok(FoldScalarPlanOutcome {
+        f32_preview: if max_f32 == 0 { Vec::new() } else { preview },
+        f32_preview_truncated: n > max_f32,
+        total_bytes_read_from_disk,
+        scalar: acc.finish(kind),
+    })
+}
+
+/// Visit each selected `f32` in a planned chunk.
 ///
 /// Returns stored payload bytes read from `mmap` for this chunk.
-pub(crate) fn scatter_chunk_into_plan(
+fn visit_planned_chunk<F>(
     mmap: &[u8],
     plan: &ReadPlan,
     c: &PlannedChunkIo,
-    out: &mut [f32],
-) -> Result<u64, TetError> {
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f32) -> Result<(), TetError>,
+{
     let ndim = plan.dataset_shape.len();
     if c.chunk_index.len() != ndim {
         return Err(TetError::Validation(format!(
@@ -314,9 +378,24 @@ pub(crate) fn scatter_chunk_into_plan(
         let a: [u8; 4] = raw_bytes[k * 4..k * 4 + 4]
             .try_into()
             .map_err(|_| TetError::Validation("internal: f32 slice chunking".into()))?;
-        out[li] = f32::from_le_bytes(a);
+        visit(li, f32::from_le_bytes(a))?;
     }
     Ok(bytes_read)
+}
+
+/// Decode one planned chunk and scatter matching `f32` values into `out`.
+///
+/// Returns stored payload bytes read from `mmap` for this chunk.
+pub(crate) fn scatter_chunk_into_plan(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [f32],
+) -> Result<u64, TetError> {
+    visit_planned_chunk(mmap, plan, c, |li, v| {
+        out[li] = v;
+        Ok(())
+    })
 }
 
 pub(crate) fn materialize_scatter_fill(

@@ -5,6 +5,7 @@ mod materialize;
 mod operations;
 mod parallel;
 mod read_plan;
+mod reduction;
 mod run;
 mod selection;
 

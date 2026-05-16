@@ -66,10 +66,7 @@ fn validate_operation_axis_token(s: &str) -> Result<(), TetError> {
 }
 
 fn validate_operation_axes_v1(op: &Operation) -> Result<(), TetError> {
-    let axes = match op {
-        Operation::Sum { axes } | Operation::Mean { axes } => axes,
-    };
-    for a in axes {
+    for a in op.axes() {
         validate_operation_axis_token(a)?;
     }
     Ok(())

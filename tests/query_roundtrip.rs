@@ -36,6 +36,18 @@ fn accepts_decimal_operation_axis_indices() {
 }
 
 #[test]
+fn accepts_min_max_count_operations() {
+    for json in [
+        r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"max":{"axes":["1"]}}}"#,
+        r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#,
+    ] {
+        let doc = parse_query_json(json).unwrap();
+        validate_query(&doc).unwrap();
+    }
+}
+
+#[test]
 fn rejects_empty_dataset() {
     let json = r#"{"dataset": "   "}"#;
     let doc = parse_query_json(json).unwrap();

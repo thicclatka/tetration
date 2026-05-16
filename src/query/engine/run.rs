@@ -70,7 +70,7 @@ pub fn plan_query_empty(doc: &QueryDocument) -> QueryResponse {
 /// [`QueryDocument::operation`] is set: the full logical tensor is still decoded for aggregation,
 /// but `f32_preview` is empty. When [`QueryDocument::operation`] is set, a limit must be passed
 /// (use `0` to skip preview floats). Partial reductions populate `operation_reduced_*` fields;
-/// scalar reductions use `operation_sum` / `operation_mean` with `axes: []`.
+/// scalar reductions (`sum`, `mean`, `min`, `max`, `count` with `axes: []`) use single-pass fold fields such as `operation_sum` / `operation_min`.
 ///
 /// # Errors
 ///

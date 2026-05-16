@@ -33,7 +33,11 @@ fn patch_first_index_entry_u64(path: &std::path::Path, field_offset_in_entry: us
     std::fs::write(path, &bytes).unwrap();
 }
 
-fn patch_first_index_entry_raw_and_stored(path: &std::path::Path, raw_byte_len: u64, stored_byte_len: u64) {
+fn patch_first_index_entry_raw_and_stored(
+    path: &std::path::Path,
+    raw_byte_len: u64,
+    stored_byte_len: u64,
+) {
     let raw_at = first_index_field_offset(path, ENTRY_RAW_BYTE_LEN_OFFSET);
     let stored_at = first_index_field_offset(path, ENTRY_STORED_BYTE_LEN_OFFSET);
     let mut bytes = std::fs::read(path).unwrap();

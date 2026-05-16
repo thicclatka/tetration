@@ -37,8 +37,9 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 ## Phase 4 — Query execution
 
-- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum` / `mean` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (decimal dimension indices; partial reductions → **`operation_reduced_*`**).
-- [ ] **Full materialization** ergonomics (streaming / disk spill) for very large selections; richer **`Operation`** kinds.
+- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum`, `mean`, `min`, `max`, `count` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**).
+- [x] **Scalar reductions** (`sum`, `mean`, `min`, `max`, `count` with `axes: []`) without full logical tensor allocation (`reduction.rs` + `fold_read_plan_scalar_operation` in `materialize.rs`, orchestrated by `build_execution_preview`).
+- [ ] **Full materialization** ergonomics (disk spill, partial-axis streaming) for very large selections; richer **`Operation`** kinds (see [operations roadmap](docs/query_engine.md#operations-roadmap-planned)).
 - [ ] Return richer **`QueryResponse`** / **`execution`** fields as operations grow (e.g. named-axis reductions, non-`f32` dtypes).
 
 ## Phase 5 — Interop and bindings (later)
@@ -57,6 +58,6 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Execution depth:** streaming or spill-to-disk for huge logical tensors; **`Operation`** beyond sum/mean or beyond decimal axis indices.
+1. **Operations:** tier-1 ops in [query engine roadmap](docs/query_engine.md#operations-roadmap-planned) (`var` / `std`, `product`, …); or execution depth (spill / partial-axis streaming).
 2. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch.
 3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.

@@ -26,6 +26,23 @@ pub struct AxisSlice {
 pub enum Operation {
     Sum { axes: Vec<String> },
     Mean { axes: Vec<String> },
+    Min { axes: Vec<String> },
+    Max { axes: Vec<String> },
+    Count { axes: Vec<String> },
+}
+
+impl Operation {
+    /// Per-axis decimal dimension indices for this operation.
+    #[must_use]
+    pub fn axes(&self) -> &[String] {
+        match self {
+            Self::Sum { axes }
+            | Self::Mean { axes }
+            | Self::Min { axes }
+            | Self::Max { axes }
+            | Self::Count { axes } => axes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -123,13 +140,30 @@ pub struct DatasetResolution {
     pub available_datasets: Option<Vec<String>>,
 }
 
+/// Operation outputs merged into [`QueryExecutionPreview`] via [`From<OperationPreviewFields>`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OperationPreviewFields {
+    pub element_count: Option<usize>,
+    pub sum: Option<f64>,
+    pub mean: Option<f64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub reduced_shape: Option<Vec<u64>>,
+    pub reduced_sum: Option<Vec<f64>>,
+    pub reduced_mean: Option<Vec<f64>>,
+    pub reduced_min: Option<Vec<f64>>,
+    pub reduced_max: Option<Vec<f64>>,
+    pub reduced_count: Option<Vec<f64>>,
+}
+
 /// First `f32` values read from planned chunk payloads (little-endian), capped for JSON safety.
 /// When an [`Operation`] is present and execution runs, **`operation_*`** fields summarize the
 /// **full** decoded logical tensor (row-major over the strided selection); see
-/// `plan_query_with_tet_mmap`. Scalar reductions (`axes: []`) use `operation_sum` /
-/// `operation_mean`. Partial reductions use `operation_reduced_shape` with
-/// `operation_reduced_sum` or `operation_reduced_mean` (axes are decimal dimension indices).
-#[derive(Debug, Clone, Serialize)]
+/// `plan_query_with_tet_mmap`. Scalar reductions (`axes: []`) use `operation_sum`,
+/// `operation_mean`, `operation_min`, `operation_max`, or `operation_element_count` (for
+/// `count`). Partial reductions use `operation_reduced_shape` with matching
+/// `operation_reduced_*` vectors (axes are decimal dimension indices).
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct QueryExecutionPreview {
     /// Sum of `stored_byte_len` for all planned chunks (bytes touched on disk).
@@ -144,6 +178,10 @@ pub struct QueryExecutionPreview {
     pub operation_sum: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_max: Option<f64>,
     /// Shape after reducing along `operation.axes` (decimal dimension indices); row-major flattened payloads follow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_shape: Option<Vec<u64>>,
@@ -151,6 +189,64 @@ pub struct QueryExecutionPreview {
     pub operation_reduced_sum: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_mean: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_min: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_max: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_count: Option<Vec<f64>>,
+}
+
+impl From<OperationPreviewFields> for QueryExecutionPreview {
+    fn from(operation: OperationPreviewFields) -> Self {
+        Self {
+            operation_element_count: operation.element_count,
+            operation_sum: operation.sum,
+            operation_mean: operation.mean,
+            operation_min: operation.min,
+            operation_max: operation.max,
+            operation_reduced_shape: operation.reduced_shape,
+            operation_reduced_sum: operation.reduced_sum,
+            operation_reduced_mean: operation.reduced_mean,
+            operation_reduced_min: operation.reduced_min,
+            operation_reduced_max: operation.reduced_max,
+            operation_reduced_count: operation.reduced_count,
+            ..Self::default()
+        }
+    }
+}
+
+impl QueryExecutionPreview {
+    /// Decode preview only; all `operation_*` fields stay [`None`].
+    #[must_use]
+    pub fn decode_preview(
+        total_bytes_read_from_disk: u64,
+        f32_preview: Vec<f32>,
+        f32_preview_truncated: bool,
+    ) -> Self {
+        Self {
+            total_bytes_read_from_disk,
+            f32_preview,
+            f32_preview_truncated,
+            ..Self::default()
+        }
+    }
+
+    /// Preview bytes plus operation aggregates (`..operation.into()`).
+    #[must_use]
+    pub(crate) fn with_operation(
+        total_bytes_read_from_disk: u64,
+        f32_preview: Vec<f32>,
+        f32_preview_truncated: bool,
+        operation: OperationPreviewFields,
+    ) -> Self {
+        Self {
+            total_bytes_read_from_disk,
+            f32_preview,
+            f32_preview_truncated,
+            ..operation.into()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
