@@ -41,3 +41,9 @@ pub const fn f32_count(bytes_len: usize) -> Option<usize> {
         None
     }
 }
+
+/// Byte length for `count` little-endian `f32` values (`count * 4`), or `None` on overflow.
+#[must_use]
+pub const fn bytes_from_elem_count(count: u64) -> Option<u64> {
+    count.checked_mul(4)
+}

@@ -124,7 +124,12 @@ pub(crate) fn ap_intersects_half_open(
 /// When every `step[d] == 1`, this matches the dense half-open box `∏ [g0[d], g1[d])`.
 ///
 /// Results follow linear chunk index order (**last axis fastest**), matching the reference writer.
-pub(crate) fn chunk_coords_intersecting_strided(
+///
+/// # Errors
+///
+/// Returns [`CatalogError::InvalidWriteSpec`] when slice lengths disagree, the global box is
+/// empty or out of bounds, or chunk-grid arithmetic overflows.
+pub fn chunk_coords_intersecting_strided(
     shape: &[u64],
     chunk_shape: &[u64],
     g0: &[u64],
@@ -188,7 +193,11 @@ pub(crate) fn chunk_coords_intersecting_strided(
 ///
 /// Results are ordered by linear chunk index with **last axis varying fastest**, matching the
 /// reference writer iteration order.
-pub(crate) fn chunk_coords_intersecting_global_box(
+///
+/// # Errors
+///
+/// Same failure modes as [`chunk_coords_intersecting_strided`].
+pub fn chunk_coords_intersecting_global_box(
     shape: &[u64],
     chunk_shape: &[u64],
     g0: &[u64],

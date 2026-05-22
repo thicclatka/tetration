@@ -30,7 +30,6 @@ path = "src/bin/tet.rs"
 bytemuck = "1.25.0"
 clap = { version = "4.5.51", features = ["derive"] }
 memmap2 = "0.9.10"
-hdf5-pure-rust = "0.3.2"
 rayon = "1.12.0"
 rkyv = "0.8.16"
 serde = { version = "1.0.228", features = ["derive"] }

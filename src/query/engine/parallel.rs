@@ -6,9 +6,10 @@ use rayon::prelude::*;
 
 use crate::query::types::{ReadPlan, TetError};
 
+use super::chunk_decode::scatter_chunk_into_plan;
 use super::materialize::{
     MaterializeReadPlanF32IntoOutcome, materialize_read_plan_f32_le_core,
-    materialize_read_plan_f32_le_into_core, scatter_chunk_into_plan, validate_read_plan_geometry,
+    materialize_read_plan_f32_le_into_core, validate_read_plan_geometry,
 };
 
 pub(crate) fn materialize_scatter_fill_parallel(

@@ -9,13 +9,13 @@ Byte offsets increase left → right. All integers are **little-endian**.
 
 ### Regions at a glance
 
-| # | Region | Starts at | Size | When present |
-| - | ------ | --------- | ---- | ------------ |
-| 1 | **Superblock** | `0` | `32` B fixed | always |
-| 2 | **Dataset directory** | `32` | `8 + dataset_blob_len` | `dataset_count > 0` |
-| 3 | **Padding** | `40 + dataset_blob_len` | `0 … 7` B | only bytes needed so the next region is 8-byte aligned |
-| 4 | **Chunk index** | `chunk_index_offset` (= `align8(40 + dataset_blob_len)`) | `chunk_index_length` (= `32 + entry_count × 104`) | `dataset_count > 0` |
-| 5 | **Chunk payloads** | each `payload_offset` from index | each `stored_byte_len` | one span per index row; may be non-contiguous in general |
+| #   | Region                | Starts at                                                | Size                                              | When present                                             |
+| --- | --------------------- | -------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------- |
+| 1   | **Superblock**        | `0`                                                      | `32` B fixed                                      | always                                                   |
+| 2   | **Dataset directory** | `32`                                                     | `8 + dataset_blob_len`                            | `dataset_count > 0`                                      |
+| 3   | **Padding**           | `40 + dataset_blob_len`                                  | `0 … 7` B                                         | only bytes needed so the next region is 8-byte aligned   |
+| 4   | **Chunk index**       | `chunk_index_offset` (= `align8(40 + dataset_blob_len)`) | `chunk_index_length` (= `32 + entry_count × 104`) | `dataset_count > 0`                                      |
+| 5   | **Chunk payloads**    | each `payload_offset` from index                         | each `stored_byte_len`                            | one span per index row; may be non-contiguous in general |
 
 **Empty file** (`dataset_count = 0`): regions 2–5 are absent; `chunk_index_offset = 32`, `chunk_index_length = 0`; the file may end at byte 32.
 
@@ -89,12 +89,15 @@ Records are concatenated in catalog order; `dataset_id` in the chunk index is th
 
 ### Chunk index header (32 bytes)
 
-| Offset | Size | Field           | Notes                         |
-| ------ | ---- | --------------- | ----------------------------- |
-| 0      | 4    | magic           | ASCII **`TIDX`**.             |
-| 4      | 4    | `index_version` | `u32` LE; must be **1**.      |
-| 8      | 8    | `entry_count`   | Number of fixed-size entries. |
-| 16     | 16   | reserved        | Write **0**.                  |
+| Offset | Size | Field                       | Notes                                                                     |
+| ------ | ---- | --------------------------- | ------------------------------------------------------------------------- |
+| 0      | 4    | magic                       | ASCII **`TIDX`**.                                                         |
+| 4      | 4    | `index_version`             | `u32` LE; must be **1**.                                                  |
+| 8      | 8    | `entry_count`               | Number of fixed-size entries.                                             |
+| 16     | 2    | `memory_budget_percent_bps` | `u16` LE; basis points (10000 = 100%). **0** = engine default (25%).      |
+| 18     | 2    | reserved                    | Write **0**.                                                              |
+| 20     | 4    | `memory_budget_bytes`       | `u32` LE fixed RAM cap for dense decode; **0** = use percent of host RAM. |
+| 24     | 8    | reserved                    | Write **0**.                                                              |
 
 The total chunk index byte length must be exactly:
 
@@ -132,9 +135,9 @@ Each index row’s `payload_offset` selects the byte span in region ⑤.
 
 ### Per-chunk payload codecs
 
-| Codec | `stored_byte_len` vs `raw_byte_len` | On-disk bytes |
-| ----- | ----------------------------------- | ------------- |
-| **0** raw | must be equal | tensor payload (LE `f32` in v1 writers) |
+| Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                              |
+| ---------- | ------------------------------------------- | ------------------------------------------ |
+| **0** raw  | must be equal                               | tensor payload (LE `f32` in v1 writers)    |
 | **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes |
 
 See also [`query_engine.md`](query_engine.md) for how the query engine materializes planned chunks.

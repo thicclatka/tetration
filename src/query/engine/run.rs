@@ -1,11 +1,13 @@
 use crate::catalog::{
-    CatalogError, TetFileSummaryV1, chunk_coords_intersecting_strided, read_tet_summary_v1,
+    CatalogError, DTYPE_F32, TetFileSummaryV1, chunk_coords_intersecting_strided,
+    f32_tensor_bytes_from_shape, read_tet_summary_v1,
 };
 use crate::query::types::{
     CHUNK_TOUCH_POLICY, DatasetResolution, QueryDocument, QueryExecutionPreview, QueryResponse,
     ReadPlan, TetError,
 };
 
+use super::budget::ExecutionBudget;
 use super::operations::build_execution_preview;
 use super::read_plan::{ReadPlanGeometry, build_read_plan};
 use super::selection::resolved_dense_global_box;
@@ -70,7 +72,7 @@ pub fn plan_query_empty(doc: &QueryDocument) -> QueryResponse {
 /// [`QueryDocument::operation`] is set: the full logical tensor is still decoded for aggregation,
 /// but `f32_preview` is empty. When [`QueryDocument::operation`] is set, a limit must be passed
 /// (use `0` to skip preview floats). Partial reductions populate `operation_reduced_*` fields;
-/// scalar reductions (`sum`, `mean`, `min`, `max`, `count` with `axes: []`) use single-pass fold fields such as `operation_sum` / `operation_min`.
+/// scalar reductions (`sum`, `mean`, `min`, `max`, `count`, `var`, `std` with `axes: []`) use single-pass fold fields such as `operation_sum` / `operation_var`.
 ///
 /// # Errors
 ///
@@ -152,11 +154,13 @@ fn plan_query_matched_dataset(
                 &read_plan,
                 rec.dtype,
                 doc.operation.as_ref(),
+                doc.output.as_ref(),
                 limit,
+                ExecutionBudget::resolve(&summary.file_execution, doc.execution.as_ref()),
             )?;
             if doc.operation.is_some() {
                 message.push_str(
-                    "; full tensor decoded for operation (see execution.operation_*); f32_preview is capped",
+                    "; operation uses streaming fold (see execution.memory_strategy and operation_*)",
                 );
             } else {
                 message.push_str("; mmap f32 preview attached (see execution)");
@@ -175,6 +179,10 @@ fn plan_query_matched_dataset(
             shape: Some(rec.shape.clone()),
             chunk_shape: Some(rec.chunk_shape.clone()),
             chunk_index_rows: Some(rows),
+            dataset_f32_bytes: (rec.dtype == DTYPE_F32)
+                .then(|| f32_tensor_bytes_from_shape(&rec.shape))
+                .flatten(),
+            file_execution: Some(summary.file_execution),
             available_datasets: None,
         }),
         Some(read_plan),
@@ -199,6 +207,8 @@ fn plan_query_unmatched_dataset(
             shape: None,
             chunk_shape: None,
             chunk_index_rows: None,
+            dataset_f32_bytes: None,
+            file_execution: Some(summary.file_execution),
             available_datasets: Some(names),
         }),
         None,

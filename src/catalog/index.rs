@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::utils::wire;
 
+use super::execution::FileExecutionSettingsV1;
 use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, MAX_NDIM};
 
 /// Wire-fixed fields for the chunk index region header (layout v1).
@@ -40,6 +41,14 @@ pub struct ChunkIndexEntryV1 {
 
 impl ChunkIndexEntryV1 {
     pub const WIRE_LEN: usize = 8 + MAX_NDIM * 8 + 8 + 8 + 8 + 4 + 4;
+    /// Byte offset of `payload_offset` within a wire entry.
+    pub const WIRE_PAYLOAD_OFFSET: usize = 8 + MAX_NDIM * 8;
+    /// Byte offset of `raw_byte_len` within a wire entry.
+    pub const WIRE_RAW_BYTE_LEN_OFFSET: usize = Self::WIRE_PAYLOAD_OFFSET + 8;
+    /// Byte offset of `stored_byte_len` within a wire entry.
+    pub const WIRE_STORED_BYTE_LEN_OFFSET: usize = Self::WIRE_RAW_BYTE_LEN_OFFSET + 8;
+    /// Byte offset of `codec` within a wire entry.
+    pub const WIRE_CODEC_OFFSET: usize = Self::WIRE_STORED_BYTE_LEN_OFFSET + 8;
 
     pub(super) fn to_bytes(&self) -> [u8; Self::WIRE_LEN] {
         let mut out = [0u8; Self::WIRE_LEN];
@@ -87,7 +96,9 @@ impl ChunkIndexEntryV1 {
     }
 }
 
-pub(super) fn parse_chunk_index(idx_bytes: &[u8]) -> Result<Vec<ChunkIndexEntryV1>, CatalogError> {
+pub(super) fn parse_chunk_index(
+    idx_bytes: &[u8],
+) -> Result<(Vec<ChunkIndexEntryV1>, FileExecutionSettingsV1), CatalogError> {
     let hdr = CHUNK_INDEX_HEADER_V1;
     if idx_bytes.len() < hdr.header_len {
         return Err(CatalogError::TooShort {
@@ -104,6 +115,8 @@ pub(super) fn parse_chunk_index(idx_bytes: &[u8]) -> Result<Vec<ChunkIndexEntryV
     if ver != hdr.version {
         return Err(CatalogError::UnsupportedIndexVersion(ver));
     }
+    let file_execution =
+        FileExecutionSettingsV1::from_index_header_tail(&idx_bytes[16..hdr.header_len]);
     let count = wire::u64_le_at(idx_bytes, 8);
     let entries_bytes = count
         .checked_mul(ChunkIndexEntryV1::WIRE_LEN as u64)
@@ -135,10 +148,29 @@ pub(super) fn parse_chunk_index(idx_bytes: &[u8]) -> Result<Vec<ChunkIndexEntryV
         off += ChunkIndexEntryV1::WIRE_LEN;
         out.push(e);
     }
-    Ok(out)
+    Ok((out, file_execution))
 }
 
-pub(super) fn validate_chunk_payloads(
+pub(super) fn write_chunk_index_header(
+    out: &mut Vec<u8>,
+    entry_count: u64,
+    file_execution: FileExecutionSettingsV1,
+) {
+    let hdr = CHUNK_INDEX_HEADER_V1;
+    out.extend_from_slice(hdr.magic);
+    out.extend_from_slice(&hdr.version.to_le_bytes());
+    out.extend_from_slice(&entry_count.to_le_bytes());
+    out.resize(hdr.header_len, 0);
+    file_execution.write_index_header_tail(&mut out[16..hdr.header_len]);
+}
+
+/// Validate chunk index payload spans against a file length.
+///
+/// # Errors
+///
+/// Returns [`CatalogError`] when a codec is unsupported, raw/stored lengths disagree for codec 0,
+/// or a payload span extends past `file_len`.
+pub fn validate_chunk_payloads(
     chunks: &[ChunkIndexEntryV1],
     file_len: u64,
 ) -> Result<(), CatalogError> {
@@ -158,19 +190,17 @@ pub(super) fn validate_chunk_payloads(
 }
 
 fn ensure_span_in_file(offset: u64, len: u64, file_len: u64) -> Result<(), CatalogError> {
-    let end = offset
-        .checked_add(len)
-        .ok_or(CatalogError::PayloadOutOfBounds {
+    match wire::checked_u64_byte_span(offset, len, file_len) {
+        Ok(()) => Ok(()),
+        Err(wire::SpanError::AddOverflow) => Err(CatalogError::PayloadOutOfBounds {
             file_len,
             start: offset,
             end: u64::MAX,
-        })?;
-    if end > file_len {
-        return Err(CatalogError::PayloadOutOfBounds {
+        }),
+        Err(wire::SpanError::OutOfBounds { end }) => Err(CatalogError::PayloadOutOfBounds {
             file_len,
             start: offset,
             end,
-        });
+        }),
     }
-    Ok(())
 }

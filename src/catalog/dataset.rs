@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::utils::wire;
 
+use super::execution::FileExecutionSettingsV1;
 use super::tile;
 use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, MAX_NDIM, OneChunkRawWrite};
 
@@ -19,6 +20,8 @@ pub struct RawArrayWrite<'a> {
     pub chunk_codec: u32,
     /// Row-major tensor bytes (`4 * product(shape)` for [`DTYPE_F32`]).
     pub data: &'a [u8],
+    /// Optional execution settings written into the chunk index header; `None` = engine defaults.
+    pub file_execution: Option<FileExecutionSettingsV1>,
 }
 
 /// Parsed dataset record from the on-disk catalog.
@@ -89,6 +92,7 @@ pub(super) fn validate_write_spec(spec: &OneChunkRawWrite<'_>) -> Result<(), Cat
         chunk_shape: spec.chunk_shape,
         chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
         data: spec.payload,
+        file_execution: None,
     })?;
     let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
     let n = tile::total_chunk_count(&counts)?;

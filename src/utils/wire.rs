@@ -1,6 +1,11 @@
 //! Little-endian fixed-width primitives shared by layout and catalog.
 
 #[inline]
+pub(crate) fn u16_le_at(data: &[u8], i: usize) -> u16 {
+    u16::from_le_bytes([data[i], data[i + 1]])
+}
+
+#[inline]
 pub(crate) fn u32_le_at(data: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]])
 }
@@ -34,6 +39,12 @@ pub(crate) fn take_u64_le(data: &[u8], cur: &mut usize) -> u64 {
 }
 
 #[inline]
+pub(crate) fn put_u16_le(buf: &mut [u8], o: &mut usize, v: u16) {
+    buf[*o..*o + 2].copy_from_slice(&v.to_le_bytes());
+    *o += 2;
+}
+
+#[inline]
 pub(crate) fn put_u32_le(buf: &mut [u8], o: &mut usize, v: u32) {
     buf[*o..*o + 4].copy_from_slice(&v.to_le_bytes());
     *o += 4;
@@ -54,4 +65,37 @@ pub(crate) fn padding_to_align8(len: usize) -> usize {
 #[inline]
 pub(crate) fn align8_u64(n: u64) -> u64 {
     (n + 7) & !7
+}
+
+/// Why a byte span `[offset, offset + len)` does not fit in a container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpanError {
+    AddOverflow,
+    OutOfBounds { end: u64 },
+}
+
+/// Validate `offset + len <= container_len` for a half-open byte span.
+pub(crate) fn checked_u64_byte_span(
+    offset: u64,
+    len: u64,
+    container_len: u64,
+) -> Result<(), SpanError> {
+    let end = offset.checked_add(len).ok_or(SpanError::AddOverflow)?;
+    if end > container_len {
+        return Err(SpanError::OutOfBounds { end });
+    }
+    Ok(())
+}
+
+/// Half-open subslice range when `offset + len` fits in `container_len`.
+pub(crate) fn checked_usize_subslice(
+    offset: usize,
+    len: usize,
+    container_len: usize,
+) -> Result<std::ops::Range<usize>, SpanError> {
+    let end = offset.checked_add(len).ok_or(SpanError::AddOverflow)?;
+    if end > container_len {
+        return Err(SpanError::OutOfBounds { end: end as u64 });
+    }
+    Ok(offset..end)
 }

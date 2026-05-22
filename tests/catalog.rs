@@ -3,7 +3,7 @@
 mod fixture;
 
 use fixture::{
-    CHUNK_2X2, SHAPE_2X3,
+    SHAPE_2X3,
     index_patch::{
         self, ENTRY_CODEC_OFFSET, ENTRY_PAYLOAD_OFFSET, ENTRY_RAW_BYTE_LEN_OFFSET,
         ENTRY_STORED_BYTE_LEN_OFFSET,
@@ -13,10 +13,9 @@ use fixture::{
 use proptest::prelude::*;
 use tetration::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DTYPE_F32, MAX_NDIM, OneChunkRawWrite,
-    RawArrayWrite, create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read,
-    parse_query_json, plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1,
-    try_cast_f32_le, validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
-    write_raw_array_file,
+    create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
+    plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
+    validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
 };
 
 // --- roundtrip ---
@@ -121,19 +120,7 @@ fn multi_chunk_zstd_zeros_roundtrip() {
 fn multi_chunk_zstd_write_explicit_raw_array() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("zstd_explicit.tet");
-    let data = le_row_major_2x3_f32_one_to_six();
-    write_raw_array_file(
-        &path,
-        &RawArrayWrite {
-            name: "t",
-            dtype: DTYPE_F32,
-            shape: &SHAPE_2X3,
-            chunk_shape: &CHUNK_2X2,
-            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.zstd,
-            data: &data,
-        },
-    )
-    .unwrap();
+    fixture::write_multichunk_2x3_zstd(&path, "t", &le_row_major_2x3_f32_one_to_six());
     let mmap = mmap_file_read(&path).unwrap();
     let doc = parse_query_json(r#"{"dataset":"t"}"#).unwrap();
     validate_query(&doc).unwrap();
@@ -215,6 +202,35 @@ fn materialize_rejects_corrupt_zstd_payload() {
 }
 
 #[test]
+fn materialize_rejects_truncated_zstd_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("trunc_zstd.tet");
+    write_multichunk_2x3_zero_zstd(&path, "z");
+
+    let stored = {
+        let mmap0 = mmap_file_read(&path).unwrap();
+        let s = read_tet_summary_v1(&mmap0).unwrap();
+        s.chunks[0].stored_byte_len
+    };
+    assert!(stored > 1, "fixture zstd payload unexpectedly tiny");
+    index_patch::patch_first_index_entry_u64(&path, ENTRY_STORED_BYTE_LEN_OFFSET, stored - 1);
+
+    let mmap = mmap_file_read(&path).unwrap();
+    read_tet_summary_v1(&mmap).expect("catalog parse should not eagerly validate zstd frames");
+
+    let doc = parse_query_json(r#"{"dataset":"z"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, None).unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    let err = materialize_read_plan_f32_le(&mmap, rp, None).unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("zstd decode") && msg.contains("chunk_index"),
+        "unexpected error (want zstd decode + chunk_index): {msg}"
+    );
+}
+
+#[test]
 fn materialize_rejects_zstd_when_raw_byte_len_mismatches_decompressed_size() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("liar_raw_len.tet");
@@ -232,7 +248,7 @@ fn materialize_rejects_zstd_when_raw_byte_len_mismatches_decompressed_size() {
     let err = materialize_read_plan_f32_le(&mmap, rp, None).unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("decoded length") && msg.contains("raw_byte_len"),
+        msg.contains("decoded") && msg.contains("raw_byte_len"),
         "unexpected error: {msg}"
     );
 }

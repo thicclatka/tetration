@@ -54,6 +54,9 @@ fn accepts_min_max_count_operations() {
         r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#,
         r#"{"dataset":"a","operation":{"max":{"axes":["1"]}}}"#,
         r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"var":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"std":{"axes":["0"]}}}"#,
+        r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#,
     ] {
         let doc = parse_query_json(json).unwrap();
         validate_query(&doc).unwrap();
@@ -65,6 +68,57 @@ fn rejects_empty_dataset() {
     let json = r#"{"dataset": "   "}"#;
     let doc = parse_query_json(json).unwrap();
     assert!(validate_query(&doc).is_err());
+}
+
+#[test]
+fn rejects_unknown_query_fields() {
+    let json = r#"{"dataset":"a","extra":1}"#;
+    let err = parse_query_json(json).unwrap_err();
+    assert!(err.to_string().contains("unknown"), "{err}");
+}
+
+#[test]
+fn rejects_oversized_query_json() {
+    let limits = tetration::QueryLimits::DEFAULT;
+    let pad = "x".repeat(limits.max_json_bytes);
+    let json = format!(r#"{{"dataset":"{pad}"}}"#);
+    let err = parse_query_json(&json).unwrap_err();
+    assert!(err.to_string().contains("maximum size"), "{err}");
+}
+
+#[test]
+fn rejects_oversized_dataset_name() {
+    let limits = tetration::QueryLimits::DEFAULT;
+    let name = "a".repeat(limits.max_dataset_name_len + 1);
+    let json = format!(r#"{{"dataset":"{name}"}}"#);
+    let doc = parse_query_json(&json).unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("dataset"), "{err}");
+}
+
+#[test]
+fn rejects_selection_rank_above_max_ndim() {
+    use tetration::MAX_NDIM;
+    let slices = (0..=MAX_NDIM)
+        .map(|_| r#"{ "start": 0, "stop": 1 }"#)
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(r#"{{"dataset":"a","selection":[{slices}]}}"#);
+    let doc = parse_query_json(&json).unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("selection rank"), "{err}");
+}
+
+#[test]
+fn rejects_deeply_nested_query_json() {
+    let limits = tetration::QueryLimits::DEFAULT;
+    let mut inner = "null".to_string();
+    for _ in 0..=limits.max_json_depth {
+        inner = format!(r#"{{"x":{inner}}}"#);
+    }
+    let json = format!(r#"{{"dataset":"a","junk":{inner}}}"#);
+    let err = parse_query_json(&json).unwrap_err();
+    assert!(err.to_string().contains("nesting depth"), "{err}");
 }
 
 // --- strided read plan ---
@@ -89,6 +143,7 @@ fn read_plan_strided_step_touches_fewer_chunks_than_dense() {
             chunk_shape: &chunk_shape,
             chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
             data: &data,
+            file_execution: None,
         },
     )
     .unwrap();
@@ -383,6 +438,67 @@ fn plan_query_operation_min_max_count_scalar() {
 }
 
 #[test]
+fn plan_query_operation_var_std_scalar_and_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("varstd.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+
+    let var_doc = parse_query_json(r#"{"dataset":"a","operation":{"var":{"axes":[]}}}"#).unwrap();
+    validate_query(&var_doc).unwrap();
+    let var_plan = plan_query_with_tet_mmap(&var_doc, None, &mmap, Some(0)).unwrap();
+    let var_ex = var_plan.execution.as_ref().unwrap();
+    // population var of 1..6
+    assert!((var_ex.operation_var.unwrap() - 2.916_666_7).abs() < 1e-5);
+
+    let std_doc = parse_query_json(r#"{"dataset":"a","operation":{"std":{"axes":[]}}}"#).unwrap();
+    validate_query(&std_doc).unwrap();
+    let std_plan = plan_query_with_tet_mmap(&std_doc, None, &mmap, Some(0)).unwrap();
+    let std_ex = std_plan.execution.as_ref().unwrap();
+    assert!((std_ex.operation_std.unwrap() - 1.707_825_1).abs() < 1e-5);
+
+    let partial_doc =
+        parse_query_json(r#"{"dataset":"a","operation":{"var":{"axes":["0"]}}}"#).unwrap();
+    validate_query(&partial_doc).unwrap();
+    let partial_plan = plan_query_with_tet_mmap(&partial_doc, None, &mmap, Some(4)).unwrap();
+    let partial_ex = partial_plan.execution.as_ref().unwrap();
+    assert_eq!(
+        partial_ex.operation_reduced_shape.as_deref(),
+        Some(&[3u64][..])
+    );
+    let vars = partial_ex.operation_reduced_var.as_ref().unwrap();
+    assert_eq!(vars.len(), 3);
+    for v in vars {
+        assert!((*v - 2.25).abs() < 1e-5, "expected 2.25, got {v}");
+    }
+}
+
+#[test]
+fn plan_query_operation_product_scalar_and_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("product.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+
+    let doc = parse_query_json(r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert!((plan.execution.as_ref().unwrap().operation_product.unwrap() - 720.0).abs() < 1e-5);
+
+    let partial_doc =
+        parse_query_json(r#"{"dataset":"a","operation":{"product":{"axes":["0"]}}}"#).unwrap();
+    validate_query(&partial_doc).unwrap();
+    let partial_plan = plan_query_with_tet_mmap(&partial_doc, None, &mmap, Some(4)).unwrap();
+    let ex = partial_plan.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_reduced_shape.as_deref(), Some(&[3u64][..]));
+    let products = ex.operation_reduced_product.as_ref().unwrap();
+    assert_eq!(products.len(), 3);
+    assert!((products[0] - 4.0).abs() < 1e-5);
+    assert!((products[1] - 10.0).abs() < 1e-5);
+    assert!((products[2] - 18.0).abs() < 1e-5);
+}
+
+#[test]
 fn plan_query_operation_min_along_axis_zero() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("min_axis0.tet");
@@ -576,4 +692,66 @@ fn materialize_read_plan_f32_le_into_matches_vec() {
     assert_eq!(out.elements_written, 6);
     assert!(!out.truncated);
     assert_eq!(buf, want);
+}
+
+// --- JSON hardening property tests ---
+
+use proptest::prelude::*;
+
+// --- file execution settings / memory budget ---
+
+#[test]
+fn file_execution_settings_roundtrip_in_index_header() {
+    use tetration::{FileExecutionSettingsV1, read_tet_summary_v1};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("exec.tet");
+    let settings = FileExecutionSettingsV1 {
+        memory_budget_percent_bps: 5000,
+        memory_budget_bytes: 64 * 1024 * 1024,
+    };
+    fixture::write_multichunk_2x3_with_execution(&path, "t", settings);
+    let mmap = mmap_file_read(&path).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.file_execution, settings);
+}
+
+#[test]
+fn query_execution_reports_dataset_and_budget_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "temperature");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"temperature","execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(4)).unwrap();
+    let catalog = resp.catalog.as_ref().unwrap();
+    assert_eq!(catalog.dataset_f32_bytes, Some(24));
+    assert_eq!(
+        catalog.file_execution,
+        Some(tetration::FileExecutionSettingsV1::default_engine())
+    );
+    let exec = resp.execution.as_ref().unwrap();
+    assert_eq!(exec.memory_budget_bytes, Some(999_999));
+    assert_eq!(exec.logical_selection_f32_bytes, Some(24));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 128,
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    fn parse_query_json_never_panics(raw in "\\PC{0,4096}") {
+        let _ = parse_query_json(&raw);
+    }
+
+    #[test]
+    fn validate_query_never_panics_after_parse(raw in "\\PC{0,4096}") {
+        if let Ok(doc) = parse_query_json(&raw) {
+            let _ = validate_query(&doc);
+        }
+    }
 }

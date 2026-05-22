@@ -1,101 +1,12 @@
 //! Decode planned chunk payloads into logical row-major `f32`.
 
-use std::borrow::Cow;
+use crate::query::types::{ReadPlan, TetError};
 
-use crate::catalog::{CHUNK_PAYLOAD_CODEC_V1, MAX_NDIM, tile};
-use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
-use crate::utils::f32_le;
+use super::chunk_decode::{scatter_chunk_into_plan, visit_planned_chunk};
+use super::fold::{build_fold_plan_outcome, validate_fold_preview};
+use super::reduction::{ReductionKind, ValueAccum};
 
-use super::indexing::linear_rm_index;
-use super::reduction::{ReductionKind, ScalarAccum, ScalarReductionResult};
-
-fn u64_to_usize(field: &'static str, v: u64) -> Result<usize, TetError> {
-    usize::try_from(v)
-        .map_err(|_| TetError::Validation(format!("{field}={v} is too large for this platform")))
-}
-
-pub(crate) fn planned_chunk_stored_slice<'a>(
-    mmap: &'a [u8],
-    c: &PlannedChunkIo,
-) -> Result<&'a [u8], TetError> {
-    let off = u64_to_usize("payload_offset", c.payload_offset)?;
-    let len = u64_to_usize("stored_byte_len", c.stored_byte_len)?;
-    let end = off
-        .checked_add(len)
-        .ok_or_else(|| TetError::Validation("payload byte range overflow".into()))?;
-    if end > mmap.len() {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?}: payload byte range [{off},{end}) extends past mmap length {}",
-            c.chunk_index,
-            mmap.len()
-        )));
-    }
-    Ok(&mmap[off..end])
-}
-
-pub(crate) fn decode_planned_chunk_bytes<'a>(
-    stored: &'a [u8],
-    c: &PlannedChunkIo,
-) -> Result<Cow<'a, [u8]>, TetError> {
-    if CHUNK_PAYLOAD_CODEC_V1.is_raw(c.codec) {
-        if c.stored_byte_len != c.raw_byte_len {
-            return Err(TetError::Validation(format!(
-                "raw codec requires stored_byte_len == raw_byte_len for chunk_index={:?}",
-                c.chunk_index
-            )));
-        }
-        return Ok(Cow::Borrowed(stored));
-    }
-    if CHUNK_PAYLOAD_CODEC_V1.is_zstd(c.codec) {
-        let dec = zstd::decode_all(stored).map_err(|e| {
-            TetError::Validation(format!(
-                "zstd decode failed for chunk_index={:?}: {e}",
-                c.chunk_index
-            ))
-        })?;
-        if dec.len() as u64 != c.raw_byte_len {
-            return Err(TetError::Validation(format!(
-                "zstd decoded length {} != raw_byte_len {} for chunk_index={:?}",
-                dec.len(),
-                c.raw_byte_len,
-                c.chunk_index
-            )));
-        }
-        return Ok(Cow::Owned(dec));
-    }
-    Err(TetError::Validation(format!(
-        "unsupported codec {} for chunk_index={:?} (supported: {} raw, {} zstd)",
-        c.codec, c.chunk_index, CHUNK_PAYLOAD_CODEC_V1.raw, CHUNK_PAYLOAD_CODEC_V1.zstd
-    )))
-}
-
-/// Map each planned chunk to a subslice of `mmap` (zero-copy).
-///
-/// # Errors
-///
-/// Returns [`TetError::Validation`] when a chunk is not mmap-readable as raw bytes (`codec` must be
-/// [`CHUNK_PAYLOAD_CODEC_V1.raw`](crate::catalog::ChunkPayloadCodecV1::raw)), lengths disagree, ranges overflow, or payload bytes fall outside `mmap`.
-///
-/// For [`CHUNK_PAYLOAD_CODEC_V1.zstd`](crate::catalog::ChunkPayloadCodecV1::zstd) payloads use [`materialize_read_plan_f32_le`] (or another decode path);
-/// compressed bytes are not returned as a single mmap slice here.
-pub fn planned_chunk_mmap_slices<'a>(
-    mmap: &'a [u8],
-    plan: &ReadPlan,
-) -> Result<Vec<&'a [u8]>, TetError> {
-    let mut out = Vec::with_capacity(plan.chunks.len());
-    for c in &plan.chunks {
-        if !CHUNK_PAYLOAD_CODEC_V1.is_raw(c.codec) {
-            return Err(TetError::Validation(format!(
-                "planned_chunk_mmap_slices requires codec {} (raw); got codec={} for chunk_index={:?}",
-                CHUNK_PAYLOAD_CODEC_V1.raw, c.codec, c.chunk_index
-            )));
-        }
-        let stored = planned_chunk_stored_slice(mmap, c)?;
-        decode_planned_chunk_bytes(stored, c)?;
-        out.push(stored);
-    }
-    Ok(out)
-}
+pub(crate) use super::fold::FoldPlanOutcome;
 
 type ScatterFillFn = fn(&[u8], &ReadPlan, &mut [f32]) -> Result<u64, TetError>;
 
@@ -215,16 +126,6 @@ pub fn materialize_read_plan_f32_le_into(
     materialize_read_plan_f32_le_into_core(mmap, plan, max_elements, dst, materialize_scatter_fill)
 }
 
-fn global_matches_strided_selection(g: &[u64], plan: &ReadPlan) -> bool {
-    (0..g.len()).all(|d| {
-        let x = g[d];
-        let st = plan.selection_box_start[d];
-        let hi = plan.selection_box_stop_exclusive[d];
-        let step = plan.selection_step[d];
-        x >= st && x < hi && (x - st).is_multiple_of(step)
-    })
-}
-
 pub(crate) fn validate_read_plan_geometry(plan: &ReadPlan, out_len: usize) -> Result<(), TetError> {
     let ndim = plan.dataset_shape.len();
     if plan.chunk_shape.len() != ndim
@@ -246,15 +147,6 @@ pub(crate) fn validate_read_plan_geometry(plan: &ReadPlan, out_len: usize) -> Re
     Ok(())
 }
 
-/// Result of [`fold_read_plan_scalar_operation`].
-#[derive(Debug, Clone)]
-pub(crate) struct FoldScalarPlanOutcome {
-    pub f32_preview: Vec<f32>,
-    pub f32_preview_truncated: bool,
-    pub total_bytes_read_from_disk: u64,
-    pub scalar: ScalarReductionResult,
-}
-
 /// Decode planned chunks once, aggregating a scalar reduction without allocating the full
 /// logical tensor. Fills `f32_preview` with the first `max_f32` logical row-major values.
 ///
@@ -266,11 +158,11 @@ pub(crate) fn fold_read_plan_scalar_operation(
     plan: &ReadPlan,
     max_f32: usize,
     kind: ReductionKind,
-) -> Result<FoldScalarPlanOutcome, TetError> {
+) -> Result<FoldPlanOutcome, TetError> {
     let n = plan.logical_f32_element_count;
     let preview_cap = max_f32.min(n);
     let mut preview = vec![f32::NAN; preview_cap];
-    let mut acc = ScalarAccum::default();
+    let mut acc = ValueAccum::default();
     let mut total_bytes_read_from_disk: u64 = 0;
 
     for c in &plan.chunks {
@@ -286,114 +178,15 @@ pub(crate) fn fold_read_plan_scalar_operation(
             .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
     }
 
-    if acc.is_empty() {
-        return Err(TetError::Validation(
-            "operation requires at least one decoded f32 from the read plan".into(),
-        ));
-    }
-    if preview_cap > 0 && preview.iter().any(|v| v.is_nan()) {
-        return Err(TetError::Validation(
-            "materialized selection has unset preview elements (chunk payloads vs selection mismatch)"
-                .into(),
-        ));
-    }
+    validate_fold_preview(!acc.is_empty(), &preview, preview_cap)?;
 
-    Ok(FoldScalarPlanOutcome {
-        f32_preview: if max_f32 == 0 { Vec::new() } else { preview },
-        f32_preview_truncated: n > max_f32,
+    Ok(build_fold_plan_outcome(
+        preview,
+        max_f32,
+        n,
         total_bytes_read_from_disk,
-        scalar: acc.finish(kind),
-    })
-}
-
-/// Visit each selected `f32` in a planned chunk.
-///
-/// Returns stored payload bytes read from `mmap` for this chunk.
-fn visit_planned_chunk<F>(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    c: &PlannedChunkIo,
-    mut visit: F,
-) -> Result<u64, TetError>
-where
-    F: FnMut(usize, f32) -> Result<(), TetError>,
-{
-    let ndim = plan.dataset_shape.len();
-    if c.chunk_index.len() != ndim {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?} rank {} != dataset rank {}",
-            c.chunk_index,
-            c.chunk_index.len(),
-            ndim
-        )));
-    }
-    let stored = planned_chunk_stored_slice(mmap, c)?;
-    let bytes_read = stored.len() as u64;
-    let raw_bytes = decode_planned_chunk_bytes(stored, c)?;
-    if !raw_bytes.len().is_multiple_of(4) {
-        return Err(TetError::Validation(format!(
-            "chunk raw length {} is not a multiple of 4 for f32 (chunk_index={:?})",
-            raw_bytes.len(),
-            c.chunk_index
-        )));
-    }
-    let nelem_tile = raw_bytes.len() / 4;
-    let mut coord = [0u64; MAX_NDIM];
-    coord[..ndim].copy_from_slice(&c.chunk_index[..ndim]);
-    let tile = tile::tile_extent(&plan.dataset_shape, &plan.chunk_shape, &coord, ndim);
-    let tile_elems: u64 = tile
-        .iter()
-        .try_fold(1u64, |a, &b| a.checked_mul(b))
-        .ok_or_else(|| TetError::Validation("tile element count overflow".into()))?;
-    let tile_elems_us = usize::try_from(tile_elems)
-        .map_err(|_| TetError::Validation("tile element count too large for this host".into()))?;
-    if tile_elems_us != nelem_tile {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?}: tile has {tile_elems_us} f32 values but raw_byte_len implies {nelem_tile}",
-            c.chunk_index
-        )));
-    }
-    for k in 0..tile_elems_us {
-        let local = tile::local_coords_from_linear(k as u64, &tile, ndim);
-        let mut global = [0u64; MAX_NDIM];
-        for (d, gv) in global.iter_mut().enumerate().take(ndim) {
-            *gv = coord[d]
-                .saturating_mul(plan.chunk_shape[d])
-                .saturating_add(local[d]);
-        }
-        if !global_matches_strided_selection(&global[..ndim], plan) {
-            continue;
-        }
-        let mut lc = Vec::with_capacity(ndim);
-        for (d, &x) in global[..ndim].iter().enumerate() {
-            let st = plan.selection_box_start[d];
-            let q = (x - st) / plan.selection_step[d];
-            let qi = usize::try_from(q).map_err(|_| {
-                TetError::Validation(format!(
-                    "logical coordinate on axis {d} does not fit usize on this host"
-                ))
-            })?;
-            lc.push(qi);
-        }
-        let li = linear_rm_index(&lc, &plan.logical_selection_shape)?;
-        visit(li, f32_le::read_f32_le_at(&raw_bytes, k))?;
-    }
-    Ok(bytes_read)
-}
-
-/// Decode one planned chunk and scatter matching `f32` values into `out`.
-///
-/// Returns stored payload bytes read from `mmap` for this chunk.
-pub(crate) fn scatter_chunk_into_plan(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    c: &PlannedChunkIo,
-    out: &mut [f32],
-) -> Result<u64, TetError> {
-    visit_planned_chunk(mmap, plan, c, |li, v| {
-        out[li] = v;
-        Ok(())
-    })
+        acc.finish_scalar(kind).into(),
+    ))
 }
 
 pub(crate) fn materialize_scatter_fill(
@@ -410,4 +203,50 @@ pub(crate) fn materialize_scatter_fill(
             .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
     }
     Ok(total_bytes_read_from_disk)
+}
+
+/// Spill the full logical selection as row-major `f32` LE to `path` using a file-backed mmap
+/// (disk-resident; does not allocate a dense `Vec` in RAM).
+///
+/// # Errors
+///
+/// Same validation failures as [`materialize_read_plan_f32_le`], plus I/O or mmap errors on `path`.
+pub fn spill_read_plan_f32_le(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    path: &std::path::Path,
+) -> Result<u64, TetError> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    use memmap2::MmapMut;
+
+    let n = plan.logical_f32_element_count;
+    let byte_len = u64::try_from(n)
+        .map_err(|_| TetError::Validation("logical element count overflow".into()))?;
+    let byte_len = crate::utils::f32_le::bytes_from_elem_count(byte_len)
+        .ok_or_else(|| TetError::Validation("spill byte length overflow".into()))?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| TetError::Validation(format!("spill open failed: {e}")))?;
+    file.set_len(byte_len)
+        .map_err(|e| TetError::Validation(format!("spill set_len failed: {e}")))?;
+    file.flush()
+        .map_err(|e| TetError::Validation(format!("spill flush failed: {e}")))?;
+    let mut out_mmap = unsafe {
+        MmapMut::map_mut(&file)
+            .map_err(|e| TetError::Validation(format!("spill mmap failed: {e}")))?
+    };
+    let out = bytemuck::cast_slice_mut(out_mmap.as_mut());
+    validate_read_plan_geometry(plan, out.len())?;
+    let total = materialize_scatter_fill(mmap, plan, out)?;
+    check_materialized_complete(out)?;
+    out_mmap
+        .flush()
+        .map_err(|e| TetError::Validation(format!("spill mmap flush failed: {e}")))?;
+    Ok(total)
 }

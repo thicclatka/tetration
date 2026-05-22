@@ -37,8 +37,8 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 ## Phase 4 — Query execution
 
-- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum`, `mean`, `min`, `max`, `count` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**).
-- [x] **Scalar reductions** (`sum`, `mean`, `min`, `max`, `count` with `axes: []`) without full logical tensor allocation (`reduction.rs` + `fold_read_plan_scalar_operation` in `materialize.rs`, orchestrated by `build_execution_preview`).
+- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`).
+- [x] **Scalar reductions** (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` with `axes: []`) without full logical tensor allocation (`reduction.rs` + `fold_read_plan_scalar_operation` in `materialize.rs`, orchestrated by `build_execution_preview`).
 - [ ] **Full materialization** ergonomics (disk spill, partial-axis streaming) for very large selections; richer **`Operation`** kinds (see [operations roadmap](docs/query_engine.md#operations-roadmap-planned)).
 - [ ] Return richer **`QueryResponse`** / **`execution`** fields as operations grow (e.g. named-axis reductions, non-`f32` dtypes).
 
@@ -52,13 +52,13 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 - [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), layout (`tests/layout_roundtrip.rs`); shared fixtures in `tests/fixture.rs`.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
-- [ ] Harden JSON control plane per [query engine — JSON security](docs/query_engine.md#json-security-input-and-output): input size/depth limits, `deny_unknown_fields`, dataset/axis length caps, fuzzing; document caller rules for safe output consumption (no injection either direction).
+- [x] JSON hardening: `MAX_QUERY_JSON_BYTES`, `MAX_QUERY_JSON_DEPTH`, `deny_unknown_fields`, dataset/selection/axis caps, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
 ---
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Operations:** tier-1 ops in [query engine roadmap](docs/query_engine.md#operations-roadmap-planned) (`var` / `std`, `product`, …); or execution depth (spill / partial-axis streaming).
-2. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch.
+1. **Operations:** tier-1 ops in [query engine roadmap](docs/query_engine.md#operations-roadmap-planned) (`product`, …); or execution depth (spill / partial-axis streaming).
+2. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch (truncated zstd frame covered in `tests/catalog.rs`).
 3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.

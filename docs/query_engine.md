@@ -174,23 +174,15 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Tier 1 — next ops (same `axes` model as `sum` / `mean`)
 
-**Shipped (v1):** `sum`, `mean`, `min`, `max`, `count` (scalar + partial axes).
+**Shipped (v1):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` (scalar + partial axes; population **`var` / `std`**, `ddof = 0`).
 
 Good follow-ups: small JSON surface, mostly tier **A** / **B**.
 
-| Op                  | Tier (typical) | Notes                                                 |
-| ------------------- | -------------- | ----------------------------------------------------- |
-| **`product`**       | A + B          | Like `sum`; watch overflow → `f64` or explicit error. |
-| **`var` / `std`**   | A + B          | Welford or two-pass; pairs with existing **`mean`**.  |
-| **`norm`** (L1, L2) | A              | L1 = sum of abs; L2 = sqrt(sum of squares).           |
+| Op                  | Tier (typical) | Notes                                       |
+| ------------------- | -------------- | ------------------------------------------- |
+| **`norm`** (L1, L2) | A              | L1 = sum of abs; L2 = sqrt(sum of squares). |
 
-Example wire shape (not implemented yet):
-
-```json
-{ "operation": { "std": { "axes": ["1"] } } }
-```
-
-**Suggested PR order:** `var` / `std` → `product` → `all_finite` / `any_nan` (see tier 2).
+**Suggested PR order:** `norm` → `all_finite` / `any_nan` (see tier 2).
 
 ### Tier 2 — still tensor stats, heavier
 
@@ -242,18 +234,18 @@ The **dataset name** and **operation axis labels** in JSON are echoed in respons
 Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 1. **Typed `serde` deserialization** — JSON maps into fixed structs/enums ([`QueryDocument`](../src/query/types.rs), [`Operation`](../src/query/types.rs)); there is no dynamic “operation name → callback” table fed by arbitrary strings.
-2. **Closed `operation` enum** — Only `sum`, `mean`, `min`, `max`, `count` deserialize; unknown tags fail at parse time.
+2. **Closed `operation` enum** — Only `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` deserialize; unknown tags fail at parse time.
 3. **Axis tokens restricted** — `operation.axes` entries must be non-empty **ASCII decimal** strings (e.g. `"0"`), not arbitrary expressions or Unicode axis names ([`validate_operation_axis_token`](../src/query/document.rs)).
 4. **Slice sanity** — `step != 0`; when both `start` and `stop` are set, `start < stop`.
 5. **Non-empty `dataset`** — Whitespace-only names rejected.
 6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/engine/selection.rs)); JSON cannot name chunk file offsets directly.
 7. **No string → path in v1 query JSON** — Opening a `.tet` file uses the **host** path (`--tet`, API argument), not a field inside the query document.
+8. **Size and shape caps** — [`parse_query_json`](../src/query/document.rs) rejects payloads over [`MAX_QUERY_JSON_BYTES`](../src/query/document.rs) (1 MiB) and nesting depth over [`MAX_QUERY_JSON_DEPTH`](../src/query/document.rs) (64). [`validate_query`](../src/query/document.rs) caps `dataset` length ([`MAX_DATASET_NAME_LEN`](../src/query/document.rs)), `selection` rank and `operation.axes` count (≤ [`MAX_NDIM`](../src/catalog/mod.rs)), and per-axis label length.
+9. **`deny_unknown_fields`** — [`QueryDocument`](../src/query/types.rs) and nested input types reject unexpected JSON keys at parse time.
+10. **Fuzz / property tests** — `tests/query.rs` proptest: random UTF-8 must not panic in `parse_query_json` / `validate_query`.
 
 **Not enforced yet (deployments should add limits):**
 
-- Maximum JSON byte size or parse depth before `parse_query_json`.
-- Maximum `selection` rank/length, `dataset` string length, or number of `operation.axes`.
-- `#[serde(deny_unknown_fields)]` on input types (unknown keys are currently **ignored** by default).
 - Canonical JSON / duplicate-key rejection (depends on `serde_json` behavior).
 - Rate limiting and authentication on any HTTP wrapper around `tet query`.
 
@@ -279,15 +271,15 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ### Hardening roadmap
 
-| Item                                       | Direction | Notes                                           |
-| ------------------------------------------ | --------- | ----------------------------------------------- |
-| Input size / depth limits                  | In        | Configurable max bytes; optional `serde` limits |
-| `deny_unknown_fields`                      | In        | Fail closed on unexpected keys                  |
-| Dataset / axis length caps                 | In        | Reject overlong strings early                   |
-| Spill path allowlist                       | In/out    | When `OutputHint::SpillArray` is implemented    |
-| Response schema version + stability        | Out       | Document breaking changes                       |
-| Fuzz `parse_query_json` / `validate_query` | In        | Random UTF-8, huge integers, nested arrays      |
-| Redaction mode for echoed fields           | Out       | Multi-tenant logging                            |
+| Item                                       | Direction | Notes                                                     |
+| ------------------------------------------ | --------- | --------------------------------------------------------- |
+| Input size / depth limits                  | In        | **Done** — `MAX_QUERY_JSON_BYTES`, `MAX_QUERY_JSON_DEPTH` |
+| `deny_unknown_fields`                      | In        | **Done** on query input types                             |
+| Dataset / axis length caps                 | In        | **Done** in `validate_query` / document constants         |
+| Spill path allowlist                       | In/out    | When `OutputHint::SpillArray` is implemented              |
+| Response schema version + stability        | Out       | Document breaking changes                                 |
+| Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `tests/query.rs`                    |
+| Redaction mode for echoed fields           | Out       | Multi-tenant logging                                      |
 
 ## Robustness (catalog index)
 
@@ -301,4 +293,4 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Materialization and operations are **`f32`** / `DTYPE_F32` only.
 - `operation.axes` uses **decimal dimension indices**, not dataset name labels.
 - No spill-to-disk or streaming API for tensors larger than RAM.
-- JSON hardening items in [JSON security](#json-security-input-and-output) (size limits, `deny_unknown_fields`, spill path policy) are not fully implemented in the library yet.
+- JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented; spill path policy remains open (see [JSON security](#json-security-input-and-output)).

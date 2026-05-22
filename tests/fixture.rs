@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use tetration::{
-    CHUNK_PAYLOAD_CODEC_V1, DTYPE_F32, MAX_NDIM, RawArrayWrite, mmap_file_read,
-    read_tet_summary_v1, write_raw_array_file,
+    CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DTYPE_F32,
+    FileExecutionSettingsV1, RawArrayWrite, mmap_file_read, read_tet_summary_v1,
+    write_raw_array_file,
 };
 
 /// Patch helpers for corrupting chunk index entries in on-disk fixtures.
@@ -12,12 +13,12 @@ use tetration::{
 pub mod index_patch {
     use super::*;
 
-    pub const CHUNK_INDEX_HDR_LEN: usize = 32;
+    pub const CHUNK_INDEX_HDR_LEN: usize = CHUNK_INDEX_HEADER_V1.header_len;
     /// Byte offset of `raw_byte_len` within a chunk index entry.
-    pub const ENTRY_RAW_BYTE_LEN_OFFSET: usize = 8 + MAX_NDIM * 8 + 8;
-    pub const ENTRY_STORED_BYTE_LEN_OFFSET: usize = ENTRY_RAW_BYTE_LEN_OFFSET + 8;
-    pub const ENTRY_PAYLOAD_OFFSET: usize = 8 + MAX_NDIM * 8;
-    pub const ENTRY_CODEC_OFFSET: usize = ENTRY_STORED_BYTE_LEN_OFFSET + 8;
+    pub const ENTRY_RAW_BYTE_LEN_OFFSET: usize = ChunkIndexEntryV1::WIRE_RAW_BYTE_LEN_OFFSET;
+    pub const ENTRY_STORED_BYTE_LEN_OFFSET: usize = ChunkIndexEntryV1::WIRE_STORED_BYTE_LEN_OFFSET;
+    pub const ENTRY_PAYLOAD_OFFSET: usize = ChunkIndexEntryV1::WIRE_PAYLOAD_OFFSET;
+    pub const ENTRY_CODEC_OFFSET: usize = ChunkIndexEntryV1::WIRE_CODEC_OFFSET;
 
     pub fn first_index_field_offset(path: &Path, field_offset_in_entry: usize) -> usize {
         let mmap0 = mmap_file_read(path).unwrap();
@@ -75,9 +76,44 @@ pub fn le_row_major_2x3_f32_one_to_six() -> Vec<u8> {
     data
 }
 
+fn write_multichunk_2x3(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
+    write_raw_array_file(
+        path,
+        &RawArrayWrite {
+            name: dataset_name,
+            dtype: DTYPE_F32,
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            chunk_codec,
+            data,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+}
+
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f32` file (values 1..6).
 pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
-    let data = le_row_major_2x3_f32_one_to_six();
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        &le_row_major_2x3_f32_one_to_six(),
+    );
+}
+
+/// Same geometry as [`write_multichunk_2x3_tiles`], but chunk payloads are **zstd**-compressed.
+pub fn write_multichunk_2x3_zstd(path: &Path, dataset_name: &str, data: &[u8]) {
+    write_multichunk_2x3(path, dataset_name, CHUNK_PAYLOAD_CODEC_V1.zstd, data);
+}
+
+/// Same geometry as [`write_multichunk_2x3_tiles`], with per-file execution settings in the index header.
+#[allow(dead_code)]
+pub fn write_multichunk_2x3_with_execution(
+    path: &Path,
+    dataset_name: &str,
+    file_execution: FileExecutionSettingsV1,
+) {
     write_raw_array_file(
         path,
         &RawArrayWrite {
@@ -86,7 +122,8 @@ pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
             shape: &SHAPE_2X3,
             chunk_shape: &CHUNK_2X2,
             chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-            data: &data,
+            data: &le_row_major_2x3_f32_one_to_six(),
+            file_execution: Some(file_execution),
         },
     )
     .unwrap();
@@ -96,17 +133,5 @@ pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
 /// (all-zero `f32` tensor so frames shrink on disk).
 #[allow(dead_code)]
 pub fn write_multichunk_2x3_zero_zstd(path: &Path, dataset_name: &str) {
-    let data = vec![0u8; 24];
-    write_raw_array_file(
-        path,
-        &RawArrayWrite {
-            name: dataset_name,
-            dtype: DTYPE_F32,
-            shape: &SHAPE_2X3,
-            chunk_shape: &CHUNK_2X2,
-            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.zstd,
-            data: &data,
-        },
-    )
-    .unwrap();
+    write_multichunk_2x3_zstd(path, dataset_name, &vec![0u8; 24]);
 }

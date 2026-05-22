@@ -3,21 +3,25 @@
 //! See `docs/layout_v1.md` for byte layout after the 32-byte superblock.
 
 mod dataset;
+pub mod execution;
 mod index;
-pub(crate) mod tile;
+pub mod tile;
+mod write;
 
-use std::fs::OpenOptions;
-use std::io::{self, Write};
-use std::path::Path;
+use std::borrow::Cow;
+use std::io;
 
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::layout::{self, LAYOUT_VERSION_V1, SuperblockV1};
+use crate::layout::{self, SuperblockV1};
 use crate::utils::wire;
 
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
+pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
+pub use tile::{chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided};
+pub use write::{write_one_chunk_raw_file, write_raw_array_file};
 
 /// v1 chunk payload codec wire tags (`u32` values written per chunk in the index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,39 +71,42 @@ impl ChunkPayloadCodecV1 {
         }
         Err(CatalogError::UnsupportedCodec { codec })
     }
-}
 
-/// Chunk grid coordinates whose tiles intersect the half-open global index box (see
-/// [`tile::chunk_coords_intersecting_global_box`]).
-///
-/// # Errors
-///
-/// Returns [`CatalogError::InvalidWriteSpec`] when slice lengths disagree, the global box is
-/// empty or out of bounds, or chunk-grid arithmetic overflows. Propagates other catalog tile
-/// errors from the underlying helper.
-pub fn chunk_coords_intersecting_global_box(
-    shape: &[u64],
-    chunk_shape: &[u64],
-    g0: &[u64],
-    g1_exclusive: &[u64],
-) -> Result<Vec<[u64; MAX_NDIM]>, CatalogError> {
-    tile::chunk_coords_intersecting_global_box(shape, chunk_shape, g0, g1_exclusive)
-}
-
-/// Chunk grid coordinates touching a per-axis strided selection (see
-/// [`tile::chunk_coords_intersecting_strided`]).
-///
-/// # Errors
-///
-/// Same failure modes as [`chunk_coords_intersecting_global_box`], plus invalid `step` values.
-pub fn chunk_coords_intersecting_strided(
-    shape: &[u64],
-    chunk_shape: &[u64],
-    g0: &[u64],
-    g1_exclusive: &[u64],
-    step: &[u64],
-) -> Result<Vec<[u64; MAX_NDIM]>, CatalogError> {
-    tile::chunk_coords_intersecting_strided(shape, chunk_shape, g0, g1_exclusive, step)
+    /// Decode stored chunk bytes to uncompressed tile payload (`raw_byte_len` bytes).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError::UnsupportedCodec`], [`CatalogError::RawStoredMismatch`],
+    /// [`CatalogError::ZstdDecode`], or [`CatalogError::DecodedLengthMismatch`].
+    pub fn decode_tile_payload(
+        self,
+        stored: &[u8],
+        raw_byte_len: u64,
+        stored_byte_len: u64,
+        codec: u32,
+    ) -> Result<Cow<'_, [u8]>, CatalogError> {
+        if self.is_raw(codec) {
+            if stored_byte_len != raw_byte_len {
+                return Err(CatalogError::RawStoredMismatch {
+                    raw: raw_byte_len,
+                    stored: stored_byte_len,
+                });
+            }
+            return Ok(Cow::Borrowed(stored));
+        }
+        if self.is_zstd(codec) {
+            let dec =
+                zstd::decode_all(stored).map_err(|e| CatalogError::ZstdDecode(e.to_string()))?;
+            if dec.len() as u64 != raw_byte_len {
+                return Err(CatalogError::DecodedLengthMismatch {
+                    decoded: dec.len(),
+                    raw: raw_byte_len,
+                });
+            }
+            return Ok(Cow::Owned(dec));
+        }
+        Err(CatalogError::UnsupportedCodec { codec })
+    }
 }
 
 /// `dtype` tag for IEEE754 binary32 elements (`f32`), row-major within a chunk.
@@ -108,6 +115,13 @@ pub const DTYPE_F32: u32 = 1;
 /// Maximum tensor rank supported by the v1 catalog on disk.
 pub const MAX_NDIM: usize = 8;
 
+/// Element count × 4 for an `f32` tensor with `shape` (returns `None` on overflow).
+#[must_use]
+pub fn f32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
+    let elems = shape.iter().try_fold(1u64, |a, &b| a.checked_mul(b))?;
+    crate::utils::f32_le::bytes_from_elem_count(elems)
+}
+
 /// High-level view of a mapped `.tet` file (superblock + catalog).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,6 +129,8 @@ pub struct TetFileSummaryV1 {
     pub superblock: SuperblockV1,
     pub datasets: Vec<DatasetRecordV1>,
     pub chunks: Vec<ChunkIndexEntryV1>,
+    /// Execution preferences from the chunk index header (defaults when all zero).
+    pub file_execution: FileExecutionSettingsV1,
 }
 
 #[derive(Debug, Error)]
@@ -145,6 +161,10 @@ pub enum CatalogError {
     UnsupportedCodec { codec: u32 },
     #[error("raw/stored length mismatch for codec=0: raw={raw}, stored={stored}")]
     RawStoredMismatch { raw: u64, stored: u64 },
+    #[error("zstd decode failed: {0}")]
+    ZstdDecode(String),
+    #[error("decoded payload length {decoded} != raw_byte_len {raw}")]
+    DecodedLengthMismatch { decoded: usize, raw: u64 },
     #[error("invalid one-chunk write spec: {0}")]
     InvalidWriteSpec(&'static str),
     #[error("catalog numeric value too large for this platform ({field}={value})")]
@@ -175,6 +195,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
             superblock: sb,
             datasets: Vec::new(),
             chunks: Vec::new(),
+            file_execution: FileExecutionSettingsV1::default_engine(),
         });
     }
 
@@ -241,7 +262,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
             got: data.len(),
         })?;
     let idx_bytes = &data[idx_start..idx_end];
-    let chunks = index::parse_chunk_index(idx_bytes)?;
+    let (chunks, file_execution) = index::parse_chunk_index(idx_bytes)?;
 
     index::validate_chunk_payloads(&chunks, data.len() as u64)?;
 
@@ -249,165 +270,15 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
         superblock: sb,
         datasets,
         chunks,
+        file_execution,
     })
 }
 
 /// Validate chunk index payload spans against a file length (same rules as [`read_tet_summary_v1`]).
 ///
 /// Exposed for integration tests in `tests/`.
-#[doc(hidden)]
-pub fn validate_chunk_payloads(
-    chunks: &[ChunkIndexEntryV1],
-    file_len: u64,
-) -> Result<(), CatalogError> {
-    index::validate_chunk_payloads(chunks, file_len)
-}
+pub use index::validate_chunk_payloads;
 
-/// Write a `.tet` with one dataset and any number of **`f32` chunks** (`4` bytes per element,
-/// row-major), each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](ChunkPayloadCodecV1::raw) or
-/// [`zstd`](ChunkPayloadCodecV1::zstd) per `spec.chunk_codec`.
-///
-/// `data` must be the full tensor in **row-major** order (`4 * product(shape)` bytes).
-///
-/// # Errors
-///
-/// Returns I/O errors from the host, or [`CatalogError`] when arguments are inconsistent.
-pub fn write_raw_array_file(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(), CatalogError> {
-    dataset::validate_raw_array_write(spec)?;
-    write_raw_array_file_inner(path, spec)
-}
-
-fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(), CatalogError> {
-    let blob = dataset::encode_dataset_blob(spec.name, spec.dtype, spec.shape, spec.chunk_shape)?;
-    let dataset_blob_len = blob.len() as u64;
-    let index_base = wire::align8_u64(40u64 + dataset_blob_len);
-
-    let ndim = spec.shape.len();
-    let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-    let n_chunks = tile::total_chunk_count(&counts)?;
-    let n_usize = usize::try_from(n_chunks).map_err(|_| CatalogError::TooLargeForPlatform {
-        field: "chunk_entry_count",
-        value: n_chunks,
-    })?;
-
-    let index_header_len = index::CHUNK_INDEX_HEADER_V1.header_len as u64;
-    let entries_len_u64 = n_chunks
-        .checked_mul(ChunkIndexEntryV1::WIRE_LEN as u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    let chunk_index_length = index_header_len
-        .checked_add(entries_len_u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-
-    let payload_start = index_base + chunk_index_length;
-
-    let mut entries: Vec<ChunkIndexEntryV1> = Vec::with_capacity(n_usize);
-    let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(n_usize);
-    let mut cursor = payload_start;
-
-    for k in 0..n_chunks {
-        let coord = tile::chunk_coord_from_linear(k, &counts, ndim);
-        let tile_bytes = tile::extract_f32_tile_row_major(
-            spec.data,
-            spec.shape,
-            spec.chunk_shape,
-            &coord[..ndim],
-            ndim,
-        )?;
-        let raw_len =
-            u64::try_from(tile_bytes.len()).map_err(|_| CatalogError::TooLargeForPlatform {
-                field: "chunk_payload_len",
-                value: u64::MAX,
-            })?;
-        let stored_vec =
-            CHUNK_PAYLOAD_CODEC_V1.encode_tile_payload(spec.chunk_codec, tile_bytes)?;
-        let stored_len =
-            u64::try_from(stored_vec.len()).map_err(|_| CatalogError::TooLargeForPlatform {
-                field: "chunk_stored_len",
-                value: u64::MAX,
-            })?;
-        let mut chunk_index = [0u64; MAX_NDIM];
-        chunk_index[..ndim].copy_from_slice(&coord[..ndim]);
-        entries.push(ChunkIndexEntryV1 {
-            dataset_id: 0,
-            chunk_index,
-            payload_offset: cursor,
-            raw_byte_len: raw_len,
-            stored_byte_len: stored_len,
-            codec: spec.chunk_codec,
-        });
-        cursor = cursor
-            .checked_add(stored_len)
-            .ok_or(CatalogError::InvalidWriteSpec("payload cursor overflow"))?;
-        payloads.push(stored_vec);
-    }
-
-    let sb = SuperblockV1 {
-        layout_version: LAYOUT_VERSION_V1,
-        dataset_count: 1,
-        flags: 0,
-        chunk_index_offset: index_base,
-        chunk_index_length,
-    };
-
-    let mut index_bytes = Vec::with_capacity(usize_from_u64(
-        "chunk_index_byte_length",
-        chunk_index_length,
-    )?);
-    let idx_hdr = index::CHUNK_INDEX_HEADER_V1;
-    index_bytes.extend_from_slice(idx_hdr.magic);
-    index_bytes.extend_from_slice(&idx_hdr.version.to_le_bytes());
-    index_bytes.extend_from_slice(&n_chunks.to_le_bytes());
-    index_bytes.resize(idx_hdr.header_len, 0);
-    for e in &entries {
-        index_bytes.extend_from_slice(&e.to_bytes());
-    }
-
-    debug_assert_eq!(index_bytes.len() as u64, chunk_index_length);
-
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    f.write_all(&sb.to_bytes())?;
-    f.write_all(&dataset_blob_len.to_le_bytes())?;
-    f.write_all(&blob)?;
-    let after_blob = 40usize + blob.len();
-    let pad = usize_from_u64("chunk_index_base", index_base)?.saturating_sub(after_blob);
-    if pad > 0 {
-        f.write_all(&vec![0u8; pad])?;
-    }
-    f.write_all(&index_bytes)?;
-    for p in payloads {
-        f.write_all(&p)?;
-    }
-    f.sync_all()?;
-    Ok(())
-}
-
-/// Write a `.tet` containing one dataset and exactly one uncompressed chunk (`codec = 0`).
-///
-/// # Errors
-///
-/// Returns I/O errors from the host, or [`CatalogError`] when arguments are inconsistent.
-pub fn write_one_chunk_raw_file(
-    path: &Path,
-    spec: &OneChunkRawWrite<'_>,
-) -> Result<(), CatalogError> {
-    dataset::validate_write_spec(spec)?;
-    write_raw_array_file_inner(
-        path,
-        &RawArrayWrite {
-            name: spec.name,
-            dtype: spec.dtype,
-            shape: spec.shape,
-            chunk_shape: spec.chunk_shape,
-            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-            data: spec.payload,
-        },
-    )
-}
-
-fn usize_from_u64(field: &'static str, v: u64) -> Result<usize, CatalogError> {
+pub(super) fn usize_from_u64(field: &'static str, v: u64) -> Result<usize, CatalogError> {
     usize::try_from(v).map_err(|_| CatalogError::TooLargeForPlatform { field, value: v })
 }
