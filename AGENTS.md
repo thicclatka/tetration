@@ -4,13 +4,13 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 
 ## Current status (May 2026)
 
-| Area                                                                        | Status                                                                                                                                                               |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phases 0–3 (spec, writer/reader, chunk addressing, zstd + index robustness) | **Done**                                                                                                                                                             |
-| Phase 4 (query execute)                                                     | **Core done** — plan, mmap materialize, parallel multi-chunk decode, `sum`/`mean`/`min`/`max`/`count`/`var`/`std`/`product` (scalar + partial axes), scalar fold without full tensor alloc |
-| Phase 4 remainder                                                           | Spill/streaming, more ops (`norm`, …), richer `QueryResponse`, non-`f32` dtypes                                                                            |
-| Phase 5 (convert / bindings)                                                | **Not started** (CLI stubs only)                                                                                                                                     |
-| JSON security                                                               | **Done (v1)** — byte size, depth, `deny_unknown_fields`, caps in `document.rs`; proptest in `tests/query.rs` |
+| Area                                                                        | Status                                                                                                                                                                       |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phases 0–3 (spec, writer/reader, chunk addressing, zstd + index robustness) | **Done**                                                                                                                                                                     |
+| Phase 4 (query execute)                                                     | **Core done** — plan, mmap materialize, parallel multi-chunk decode, memory-aware routing, mmap spill, streaming scalar + partial-axis folds for all v1 `Operation` variants |
+| Phase 4 remainder                                                           | Capped preview without full-buffer alloc for huge selections; richer dtypes; spill path allowlist policy                                                                     |
+| Phase 5 (convert / bindings)                                                | **Not started** (CLI stubs only)                                                                                                                                             |
+| JSON security                                                               | **Done (v1)** — `QueryLimits`, `deny_unknown_fields`, caps in `document.rs`; proptest in `tests/query.rs`                                                                    |
 
 **Branch:** `dev` → `main` ([PR #1](https://github.com/thicclatka/tetration/pull/1)).
 
@@ -21,37 +21,40 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 
 ## Implemented (layout v1)
 
-- **`utils`:** Crate-private `src/utils/` (not re-exported from crate root except `#[doc(hidden)]` `f32_le` helpers). **`utils::wire`** — LE `u32`/`u64` cursors, alignment — for **`layout`** / **`catalog`**. **`utils::f32_le`** — `read_f32_le_at`, `try_cast_f32_le`, `f32_count` (aligned fast path + unaligned-safe reads in materialize).
+- **`utils`:** Crate-private helpers. **`utils::wire`** — LE primitives, `align8`, byte-span checks. **`utils::f32_le`** — `read_f32_le_at`, `try_cast_f32_le`, `f32_count`, `bytes_from_elem_count`. **`utils::host_memory`** — best-effort host RAM probe (Linux `MemAvailable`, macOS free+inactive pages).
 - **`layout`:** 32-byte `TETR` superblock v1, mmap open (`mmap_file_read`), superblock parse, empty v1 file creation (`create_empty_v1_file`). See `docs/layout_v1.md`.
-- **`catalog`:** Dataset directory, chunk index header/entries, validation (`validate_chunk_payloads` — also public for integration tests), `read_tet_summary_v1`. Chunk coords: `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided` (`catalog/tile.rs`).
+- **`catalog`:** Dataset directory, chunk index header/entries (including optional **execution settings** in TIDX bytes 16–31), validation (`validate_chunk_payloads`), `read_tet_summary_v1`. Writers in **`catalog/write.rs`**. Chunk geometry in **`catalog/tile.rs`** (`pub`): `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided`. **`ChunkPayloadCodecV1::encode_tile_payload` / `decode_tile_payload`** (raw + zstd).
 - **Writers:**
   - `write_one_chunk_raw_file` — single chunk, raw `f32`, `codec = 0`.
-  - `write_raw_array_file` / `RawArrayWrite` — multi-chunk `f32` grid; per-chunk **`chunk_codec`**: **`CHUNK_PAYLOAD_CODEC_V1.raw`** (0) or **`.zstd`** (1).
-- **`tile` (in `catalog`):** Chunk grid, linear chunk index, local coords, `extract_f32_tile_row_major`; strided / box intersection for planning.
-- **`query`:** JSON `QueryDocument` parse/validate (`document.rs`; module doc points at JSON security section). **Engine** (`src/query/engine/`):
+  - `write_raw_array_file` / `RawArrayWrite` — multi-chunk `f32` grid; per-chunk **`chunk_codec`**; optional **`file_execution`** → TIDX header settings.
+- **`query`:** JSON parse/validate in **`document.rs`** (`QueryLimits`). Wire types in **`query/types/`** (`document`, `plan`, `response`, `error`). **Engine** (`src/query/engine/`):
 
-  | Module           | Role                                                                          |
-  | ---------------- | ----------------------------------------------------------------------------- |
-  | `run.rs`         | `plan_query_empty`, `plan_query_with_tet_mmap` → `QueryResponse`              |
-  | `selection.rs`   | JSON selection → global box + step                                            |
-  | `read_plan.rs`   | `ReadPlan` (chunk I/O rows + logical geometry)                                |
-  | `indexing.rs`    | Row-major index ↔ coords                                                      |
-  | `materialize.rs` | Raw/zstd decode, logical row-major scatter; `fold_read_plan_scalar_operation` |
-  | `parallel.rs`    | Rayon `materialize_read_plan_f32_le_parallel` / `_into_parallel`              |
-  | `reduction.rs`   | `ReductionKind`, `ScalarAccum`, preview field mapping                         |
-  | `operations.rs`  | `build_execution_preview`, `apply_operation`, `reduce_along_axes`             |
+  | Module            | Role                                                                         |
+  | ----------------- | ---------------------------------------------------------------------------- |
+  | `run.rs`          | `plan_query_empty`, `plan_query_with_tet_mmap` → `QueryResponse`             |
+  | `selection.rs`    | JSON `selection` → global box + step                                         |
+  | `read_plan.rs`    | `ReadPlan` (chunk I/O rows + logical geometry)                               |
+  | `indexing.rs`     | Row-major index ↔ coords                                                     |
+  | `chunk_decode.rs` | Mmap slice bounds, codec decode, `visit_planned_chunk`, scatter              |
+  | `materialize.rs`  | Full/capped materialize, spill, scalar fold entry                            |
+  | `parallel.rs`     | Rayon parallel scatter fill                                                  |
+  | `partial_fold.rs` | Streaming partial-axis reductions (no full logical tensor)                   |
+  | `fold.rs`         | Shared fold preview validation + `FoldPlanOutcome`                           |
+  | `budget.rs`       | `ExecutionBudget` resolve (host RAM × percent, `.tet` header, query JSON)    |
+  | `reduction.rs`    | `ReductionKind`, `ValueAccum`, preview field mapping                         |
+  | `operations.rs`   | `build_execution_preview` — memory strategy routing + fold/materialize/spill |
 
-  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers. **`build_execution_preview`** uses **parallel** decode when `read_plan.chunks.len() > 1` (including CLI `--execute`). **Operations (f32 only):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` — scalar (`axes: []`) via scalar fold (no full logical `Vec`); partial axes (`axes: ["0",…]`) via full materialize + `reduce_along_axes`. **`var` / `std`** use population statistics (`ddof = 0`). Preview: `--preview-f32 N` (default **64**); **`0`** with `operation` skips preview floats.
+  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers. **`build_execution_preview`** picks **`MemoryStrategy`**: `streaming_fold` (any `operation`), `mmap_spill` (`output.preferred.spill_array`), `capped_in_memory` (preview-only). Budget from host RAM (default **25%**), query `execution.*`, or per-file TIDX settings. **Operations (f32 only):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan` — scalar and partial axes via streaming fold; population **`var` / `std`**, `ddof = 0`. Preview: `--preview-f32 N` (default **64**); **`0`** with `operation` skips preview floats.
 
 ## CLI (`tet`)
 
-| Command                                     | Behavior                                                                                                                                                                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tet info <path.tet>`                       | Mmap, v1 superblock + catalog summary → pretty JSON.                                                                                                                                           |
-| `tet query [-f path \| stdin]`              | Parse/validate query JSON; plan-only echo without `--tet`.                                                                                                                                     |
-| `tet query … --tet path.tet`                | Catalog + `ReadPlan` in response.                                                                                                                                                              |
-| `tet query … --tet path.tet --execute`      | Plan + **`build_execution_preview`**: mmap tiles (raw **0** / zstd **1**), capped `f32_preview`, optional **`operation_*`** / **`operation_reduced_*`**. Multi-chunk plans decode in parallel. |
-| `tet convert h5 …` / `tet convert netcdf …` | Placeholder errors (not implemented).                                                                                                                                                          |
+| Command                                     | Behavior                                                                                                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tet info <path.tet>`                       | Mmap, v1 superblock + catalog summary → pretty JSON.                                                                                                                                   |
+| `tet query [-f path \| stdin]`              | Parse/validate query JSON; plan-only echo without `--tet`.                                                                                                                             |
+| `tet query … --tet path.tet`                | Catalog + `ReadPlan` in response (`dataset_f32_bytes`, `file_execution` when matched).                                                                                                 |
+| `tet query … --tet path.tet --execute`      | Plan + **`build_execution_preview`**: mmap tiles (raw **0** / zstd **1**), capped `f32_preview`, optional **`operation_*`** / **`operation_reduced_*`**, budget fields in `execution`. |
+| `tet convert h5 …` / `tet convert netcdf …` | Placeholder errors (not implemented).                                                                                                                                                  |
 
 Run: `cargo run -- …` or `cargo build --release` then `./target/release/tet …`.
 
@@ -79,25 +82,25 @@ Stricter local: `cargo clippy -- -D warnings -W clippy::pedantic`; `cargo test -
 
 **Integration tests (consolidated):**
 
-| File                        | Covers                                                                                                                  |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `tests/catalog.rs`          | Catalog roundtrip, index robustness (truncated spans, codec/length lies), proptest `validate_chunk_payloads`, `f32_le`  |
-| `tests/query.rs`            | Query JSON parse/validate/plan, mmap materialize (sequential vs parallel parity, zstd), strided chunk-touch, operations |
-| `tests/layout_roundtrip.rs` | Superblock / empty file                                                                                                 |
-| `tests/fixture.rs`          | Shared temp `.tet` builders, `index_patch` helpers                                                                      |
+| File                        | Covers                                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/catalog.rs`          | Catalog roundtrip, index robustness (truncated spans, codec/length lies), proptest `validate_chunk_payloads`, `f32_le`                 |
+| `tests/query.rs`            | Query JSON parse/validate/plan, mmap materialize (sequential vs parallel parity, zstd), strided chunk-touch, operations, memory budget |
+| `tests/layout_roundtrip.rs` | Superblock / empty file                                                                                                                |
+| `tests/fixture.rs`          | Shared temp `.tet` builders, `index_patch` helpers (wire offsets from `ChunkIndexEntryV1::WIRE_*`)                                     |
 
 Examples: `cargo test --test catalog`, `cargo test --test query`, `cargo test catalog::index_bounds_proptest`.
 
 ## Public API surface (high level)
 
-Re-exported from `src/lib.rs`: layout (`MAGIC`, mmap, `create_empty_v1_file`, …), catalog (writers, codecs, index types, `read_tet_summary_v1`, `validate_chunk_payloads`, chunk coord helpers), query (`QueryDocument`, `QueryResponse`, `ReadPlan`, `QueryExecutionPreview`, parse/validate/plan, materialize + parallel twins, `planned_chunk_mmap_slices`).
+Re-exported from `src/lib.rs`: layout (`MAGIC`, mmap, `create_empty_v1_file`, …), catalog (writers, codecs, `FileExecutionSettingsV1`, index types, `read_tet_summary_v1`, `validate_chunk_payloads`, chunk coord helpers, `f32_tensor_bytes_from_shape`), query (`QueryDocument`, `QueryResponse`, `ReadPlan`, `QueryExecutionPreview`, `ExecutionBudget`, `QueryLimits`, parse/validate/plan, materialize + parallel twins, `spill_read_plan_f32_le`, `planned_chunk_mmap_slices`).
 
 ## Not implemented / intentional gaps
 
-- **Query:** dtypes other than **`f32`**; named dimension labels for `operation.axes` (decimal indices only); tier-1+ ops from [operations roadmap](docs/query_engine.md#operations-roadmap-planned) (`norm`, …); disk spill / partial-axis streaming for huge selections.
-- **JSON hardening:** see [JSON security](docs/query_engine.md#json-security-input-and-output) — v1 limits in `document.rs`; extend proptest as needed.
+- **Query:** dtypes other than **`f32`**; named dimension labels for `operation.axes` (decimal indices only); capped preview still allocates full logical buffer internally before truncate (known gap).
+- **Memory:** spill path is caller-provided string (no host allowlist yet); no cgroup-aware RAM probe.
 - **Codecs:** only raw (**0**) and zstd (**1**); `write_one_chunk_raw_file` remains raw-only.
 - **`tet convert`:** stubs only; HDF5 / NetCDF → `.tet` not wired.
 - **Bindings:** C ABI / Python per README — later.
 
-When behavior changes, keep **README.md**, **`GETTING_STARTED.md`**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned. New cross-cutting helpers → **`src/utils/`**; query mmap logic → **`src/query/engine/`** before growing `document.rs` / `types.rs`.
+When behavior changes, keep **README.md**, **`GETTING_STARTED.md`**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned. New cross-cutting helpers → **`src/utils/`**; query mmap logic → **`src/query/engine/`** (prefer new submodules over growing monoliths).

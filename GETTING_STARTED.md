@@ -19,14 +19,14 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Phase 1 — Minimal writer / reader (no compression required)
 
 - [x] **`layout` + `catalog`** (+ shared **`src/utils/wire.rs`** via **`crate::utils::wire`**): binary structs for superblock + index (hand-rolled LE; **rkyv** is a dependency for later metadata, not required for v1 catalog hot path). **`src/utils/`** is the home for crate-private helpers—keep **chunk/dataset/query** logic in `catalog` / `query`.
-- [x] **`create` path:** `create_empty_v1_file`, `write_one_chunk_raw_file`, `write_raw_array_file` / `RawArrayWrite` (multi-chunk raw `f32`).
+- [x] **`create` path:** `create_empty_v1_file`, `write_one_chunk_raw_file`, `write_raw_array_file` / `RawArrayWrite` (multi-chunk raw `f32`; optional **`file_execution`** → TIDX header).
 - [x] **`open` + mmap** (`memmap2`): `mmap_file_read`, `read_superblock_v1`, `read_tet_summary_v1`.
 - [x] **`tet info`** and library APIs dump catalog / superblock JSON.
 
 ## Phase 2 — Chunk addressing
 
 - [x] **Logical slice → chunk coordinates:** `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided` (see `catalog/tile.rs`).
-- [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**; **`build_execution_preview`** uses parallel decode when the read plan has more than one chunk (`tet query --execute`).
+- [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**; **`build_execution_preview`** uses parallel decode when the read plan has more than one chunk and materialization is required (`tet query --execute`).
 - [x] **`plan_query_with_tet_mmap`:** produces **`ReadPlan`** (payload offsets, `stored_byte_len`, `raw_byte_len`, `codec` per touched chunk).
 
 ## Phase 3 — Compression and robustness (complete)
@@ -37,10 +37,14 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 ## Phase 4 — Query execution
 
-- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection. **`operation`:** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`).
-- [x] **Scalar reductions** (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product` with `axes: []`) without full logical tensor allocation (`reduction.rs` + `fold_read_plan_scalar_operation` in `materialize.rs`, orchestrated by `build_execution_preview`).
-- [ ] **Full materialization** ergonomics (disk spill, partial-axis streaming) for very large selections; richer **`Operation`** kinds (see [operations roadmap](docs/query_engine.md#operations-roadmap-planned)).
-- [ ] Return richer **`QueryResponse`** / **`execution`** fields as operations grow (e.g. named-axis reductions, non-`f32` dtypes).
+- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection.
+- [x] **`operation`:** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`).
+- [x] **Streaming reductions** — scalar (`fold_read_plan_scalar_operation`) and partial-axis (`partial_fold_read_plan_operation`) without full logical tensor allocation; orchestrated by **`build_execution_preview`** with **`memory_strategy: streaming_fold`**.
+- [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); budget fields on **`execution`**; per-file settings via **`RawArrayWrite::file_execution`**.
+- [x] **Mmap spill** — `output.preferred.spill_array { handle }` → **`spill_read_plan_f32_le`** (`memory_strategy: mmap_spill`).
+- [ ] **Capped preview** without full logical-buffer allocation for huge selections (budget gates strategy today; internal alloc gap remains).
+- [ ] **Spill path allowlist** policy for multi-tenant hosts.
+- [ ] Richer **`Operation`** kinds and non-**`f32`** dtypes (see [operations roadmap](docs/query_engine.md#operations-roadmap-planned)).
 
 ## Phase 5 — Interop and bindings (later)
 
@@ -52,13 +56,14 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 - [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), layout (`tests/layout_roundtrip.rs`); shared fixtures in `tests/fixture.rs`.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
-- [x] JSON hardening: `MAX_QUERY_JSON_BYTES`, `MAX_QUERY_JSON_DEPTH`, `deny_unknown_fields`, dataset/selection/axis caps, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
+- [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
 ---
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Operations:** tier-1 ops in [query engine roadmap](docs/query_engine.md#operations-roadmap-planned) (`product`, …); or execution depth (spill / partial-axis streaming).
-2. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch (truncated zstd frame covered in `tests/catalog.rs`).
-3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
+1. **Operations:** tier-2 ops in [query engine roadmap](docs/query_engine.md#tier-2--still-tensor-stats-heavier) (`argmin`, `median`, …).
+2. **Execution:** capped preview without OOM-sized internal alloc; spill path allowlist.
+3. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch (truncated zstd frame covered in `tests/catalog.rs`).
+4. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.

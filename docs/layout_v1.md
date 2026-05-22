@@ -99,6 +99,8 @@ Records are concatenated in catalog order; `dataset_id` in the chunk index is th
 | 20     | 4    | `memory_budget_bytes`       | `u32` LE fixed RAM cap for dense decode; **0** = use percent of host RAM. |
 | 24     | 8    | reserved                    | Write **0**.                                                              |
 
+These fields map to [`FileExecutionSettingsV1`](../src/catalog/execution.rs). Writers set them via **`RawArrayWrite::file_execution`**; readers surface them on **`catalog.file_execution`** in query responses. Query JSON **`execution.memory_budget_*`** overrides file defaults at runtime (see [query engine — memory budget](query_engine.md#memory-budget-and-execution-strategies)). Basis points: **10000 = 100%** (engine default when both are zero: **2500 = 25%** of detected host RAM).
+
 The total chunk index byte length must be exactly:
 
 `32 + entry_count * entry_wire_len`
@@ -146,7 +148,7 @@ See also [`query_engine.md`](query_engine.md) for how the query engine materiali
 
 The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`).
 
-`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`.
+`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
 
 ## Concurrency (informative)
 
