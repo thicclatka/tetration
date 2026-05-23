@@ -19,14 +19,19 @@ pub use layout::{
     LAYOUT_VERSION_V1, LayoutError, LayoutOpenError, MAGIC, SUPERBLOCK_V1_LEN, SuperblockV1,
     create_empty_v1_file, mmap_file_read, open_superblock_v1, read_superblock_v1,
 };
+#[doc(hidden)]
+pub use query::TempSpillFile;
 pub use query::{
     AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DEFAULT_MEMORY_BUDGET_BYTES,
     DatasetResolution, ExecutionBudget, ExecutionHints, MaterializeReadPlanF32IntoOutcome,
     MemoryStrategy, Operation, OutputHint, OutputHints, PlannedChunkIo, QueryDocument,
-    QueryExecutionPreview, QueryLimits, QueryResponse, ReadPlan, materialize_read_plan_f32_le,
-    materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
-    materialize_read_plan_f32_le_parallel, parse_query_json, plan_query_empty,
-    plan_query_with_tet_mmap, planned_chunk_mmap_slices, spill_read_plan_f32_le, validate_query,
+    QueryExecutionPreview, QueryLimits, QueryResponse, ReadPlan, SpillPathAllowlist,
+    materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
+    materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
+    parse_query_json, plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex,
+    planned_chunk_mmap_slices, spill_read_plan_f32_le, validate_query,
 };
 #[doc(hidden)]
 pub use utils::f32_le::{f32_count, read_f32_le_at, try_cast_f32_le};
+#[doc(hidden)]
+pub use utils::host_memory::available_memory_bytes;

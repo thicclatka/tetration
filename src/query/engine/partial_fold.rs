@@ -8,7 +8,7 @@ use super::chunk_decode::visit_planned_chunk;
 use super::fold::{FoldPlanOutcome, build_fold_plan_outcome, validate_fold_preview};
 use super::indexing::{coords_from_linear_row_major, linear_rm_index};
 use super::read_plan::shape_product_usize;
-use super::reduction::{ReductionKind, ValueAccum};
+use super::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 
 fn parse_axis_indices(labels: &[String], ndim: usize) -> Result<Vec<usize>, TetError> {
     let mut seen = BTreeSet::new();
@@ -57,6 +57,16 @@ fn reduced_index(
     linear_rm_index(&out_c, out_shape)
 }
 
+fn fiber_linear_index(
+    coords: &[usize],
+    axis_indices: &[usize],
+    shape: &[u64],
+) -> Result<usize, TetError> {
+    let rshape: Vec<u64> = axis_indices.iter().map(|&d| shape[d]).collect();
+    let rc: Vec<usize> = axis_indices.iter().map(|&d| coords[d]).collect();
+    linear_rm_index(&rc, &rshape)
+}
+
 /// Stream a **partial-axis** reduction without allocating the full logical tensor.
 pub(crate) fn fold_read_plan_partial_operation(
     mmap: &[u8],
@@ -82,7 +92,6 @@ pub(crate) fn fold_read_plan_partial_operation(
     let out_sh = out_shape(shape, &axis_indices);
     let out_len = shape_product_usize(&out_sh)?;
     let axis_set: BTreeSet<usize> = axis_indices.iter().copied().collect();
-    let mut cells = vec![ValueAccum::default(); out_len];
 
     let n = plan.logical_f32_element_count;
     let preview_cap = max_f32.min(n);
@@ -90,26 +99,50 @@ pub(crate) fn fold_read_plan_partial_operation(
     let mut saw_any = false;
     let mut total_bytes_read_from_disk: u64 = 0;
 
-    for c in &plan.chunks {
-        let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
-            saw_any = true;
-            if li < preview_cap {
-                preview[li] = v;
+    let operation = match kind {
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            let mut cells = vec![ArgIndexAccum::default(); out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
+                    saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &axis_set, &out_sh)?;
+                    let fi = fiber_linear_index(&coords, &axis_indices, shape)? as u64;
+                    cells[oi].push(fi, v, kind);
+                    Ok(())
+                })?;
+                total_bytes_read_from_disk = total_bytes_read_from_disk
+                    .checked_add(chunk_bytes)
+                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
             }
-            let coords = coords_from_linear_row_major(li, shape)?;
-            let oi = reduced_index(&coords, &axis_set, &out_sh)?;
-            cells[oi].push(v);
-            Ok(())
-        })?;
-        total_bytes_read_from_disk = total_bytes_read_from_disk
-            .checked_add(chunk_bytes)
-            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
-    }
-
-    validate_fold_preview(saw_any, &preview, preview_cap)?;
-
-    let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
-    let operation = partial_fields(kind, n, &out_sh, &reduced, &cells);
+            validate_fold_preview(saw_any, &preview, preview_cap)?;
+            partial_arg_fields(kind, n, &out_sh, &cells)
+        }
+        _ => {
+            let mut cells = vec![ValueAccum::default(); out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
+                    saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &axis_set, &out_sh)?;
+                    cells[oi].push(v);
+                    Ok(())
+                })?;
+                total_bytes_read_from_disk = total_bytes_read_from_disk
+                    .checked_add(chunk_bytes)
+                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+            }
+            validate_fold_preview(saw_any, &preview, preview_cap)?;
+            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
+            partial_fields(kind, n, &out_sh, &reduced, &cells)
+        }
+    };
 
     Ok(build_fold_plan_outcome(
         preview,
@@ -118,6 +151,26 @@ pub(crate) fn fold_read_plan_partial_operation(
         total_bytes_read_from_disk,
         operation,
     ))
+}
+
+fn partial_arg_fields(
+    kind: ReductionKind,
+    element_count: usize,
+    out_shape: &[u64],
+    cells: &[ArgIndexAccum],
+) -> OperationPreviewFields {
+    let indices: Vec<u64> = cells.iter().map(ArgIndexAccum::index).collect();
+    let mut fields = OperationPreviewFields {
+        element_count: Some(element_count),
+        reduced_shape: Some(out_shape.to_vec()),
+        ..OperationPreviewFields::default()
+    };
+    match kind {
+        ReductionKind::ArgMin => fields.reduced_argmin = Some(indices),
+        ReductionKind::ArgMax => fields.reduced_argmax = Some(indices),
+        _ => {}
+    }
+    fields
 }
 
 fn partial_fields(
@@ -148,6 +201,9 @@ fn partial_fields(
         }
         ReductionKind::AnyNan => {
             fields.reduced_any_nan = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
+        }
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            unreachable!("argmin/argmax use partial_arg_fields")
         }
     }
     fields

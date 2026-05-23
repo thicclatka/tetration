@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::catalog::{
     CatalogError, DTYPE_F32, TetFileSummaryV1, chunk_coords_intersecting_strided,
     f32_tensor_bytes_from_shape, read_tet_summary_v1,
@@ -11,6 +13,7 @@ use super::budget::ExecutionBudget;
 use super::operations::build_execution_preview;
 use super::read_plan::{ReadPlanGeometry, build_read_plan};
 use super::selection::resolved_dense_global_box;
+use super::spill_policy::SpillPathAllowlist;
 
 fn map_geometry_catalog_error(e: CatalogError) -> TetError {
     match e {
@@ -87,6 +90,27 @@ pub fn plan_query_with_tet_mmap(
     mmap: &[u8],
     raw_f32_preview_max: Option<usize>,
 ) -> Result<QueryResponse, TetError> {
+    plan_query_with_tet_mmap_ex(doc, tet_path, mmap, raw_f32_preview_max, None)
+}
+
+/// Like [`plan_query_with_tet_mmap`], with an optional spill path allowlist.
+///
+/// When `spill_allowlist` is `None` and `tet_path` is set, [`SpillPathAllowlist::default_for_tet`]
+/// applies (`.tet` parent + platform cache dirs). Pass an explicit allowlist to override defaults
+/// entirely, or build [`SpillPathAllowlist::default_for_tet`] with extra `--spill-allow` roots.
+///
+/// # Errors
+///
+/// Same as [`plan_query_with_tet_mmap`], plus [`TetError::Validation`] when the default spill
+/// allowlist cannot be built from `tet_path`, when export spill or materialize-required operations
+/// need an allowlist but none is available, or when a spill path fails allowlist validation.
+pub fn plan_query_with_tet_mmap_ex(
+    doc: &QueryDocument,
+    tet_path: Option<&str>,
+    mmap: &[u8],
+    raw_f32_preview_max: Option<usize>,
+    spill_allowlist: Option<&SpillPathAllowlist>,
+) -> Result<QueryResponse, TetError> {
     let summary = read_tet_summary_v1(mmap)?;
     match summary.datasets.iter().position(|d| d.name == doc.dataset) {
         Some(dataset_idx) => plan_query_matched_dataset(
@@ -96,6 +120,7 @@ pub fn plan_query_with_tet_mmap(
             mmap,
             tet_path,
             raw_f32_preview_max,
+            spill_allowlist,
         ),
         None => Ok(plan_query_unmatched_dataset(doc, tet_path, &summary)),
     }
@@ -108,6 +133,7 @@ fn plan_query_matched_dataset(
     mmap: &[u8],
     tet_path: Option<&str>,
     raw_f32_preview_max: Option<usize>,
+    spill_allowlist: Option<&SpillPathAllowlist>,
 ) -> Result<QueryResponse, TetError> {
     let rows = summary
         .chunks
@@ -149,18 +175,34 @@ fn plan_query_matched_dataset(
             ));
         }
         Some(limit) => {
-            let preview = build_execution_preview(
+            let default_spill;
+            let spill_ref = match spill_allowlist {
+                Some(p) => Some(p),
+                None => {
+                    if let Some(tp) = tet_path {
+                        default_spill = SpillPathAllowlist::default_for_tet(
+                            Path::new(tp),
+                            std::iter::empty::<PathBuf>(),
+                        )?;
+                        Some(&default_spill)
+                    } else {
+                        None
+                    }
+                }
+            };
+            let preview = build_execution_preview(&super::operations::ExecutionPreviewInput {
                 mmap,
-                &read_plan,
-                rec.dtype,
-                doc.operation.as_ref(),
-                doc.output.as_ref(),
-                limit,
-                ExecutionBudget::resolve(&summary.file_execution, doc.execution.as_ref()),
-            )?;
+                plan: &read_plan,
+                dtype: rec.dtype,
+                operation: doc.operation.as_ref(),
+                output: doc.output.as_ref(),
+                max_f32: limit,
+                budget: ExecutionBudget::resolve(&summary.file_execution, doc.execution.as_ref()),
+                spill_allowlist: spill_ref,
+            })?;
             if doc.operation.is_some() {
                 message.push_str(
-                    "; operation uses streaming fold (see execution.memory_strategy and operation_*)",
+                    "; operation executed (see execution.memory_strategy and operation_*)",
                 );
             } else {
                 message.push_str("; mmap f32 preview attached (see execution)");

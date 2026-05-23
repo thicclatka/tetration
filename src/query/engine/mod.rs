@@ -12,6 +12,7 @@ mod read_plan;
 mod reduction;
 mod run;
 mod selection;
+mod spill_policy;
 
 pub use budget::{DEFAULT_MEMORY_BUDGET_BYTES, ExecutionBudget, MemoryStrategy};
 pub use chunk_decode::planned_chunk_mmap_slices;
@@ -22,4 +23,7 @@ pub use materialize::{
 pub use parallel::{
     materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
 };
-pub use run::{plan_query_empty, plan_query_with_tet_mmap};
+pub use run::{plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex};
+pub use spill_policy::SpillPathAllowlist;
+#[doc(hidden)]
+pub use spill_policy::TempSpillFile;

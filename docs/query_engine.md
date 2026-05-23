@@ -103,13 +103,32 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 
 | Strategy            | When chosen                                                                 | Behavior                                                                                                      |
 | ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **`streaming_fold`** | Any query with **`operation`** set                                           | Single-pass fold (scalar or partial axes); no full logical `Vec`.                                             |
-| **`mmap_spill`**     | **`output.preferred.spill_array { handle }`** and no `operation`             | Full logical selection written row-major **`f32` LE** to caller path via **`spill_read_plan_f32_le`**.        |
+| **`streaming_fold`** | Tier-A/B **`operation`** (sum, mean, min, …)                                | Single-pass fold (scalar or partial axes); no full logical `Vec`.                                             |
+| **`in_memory_materialize`** | Tier-C **`operation`** when logical size ≤ budget                    | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                     |
+| **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                 | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.     |
+| **`mmap_spill`**     | **`output.preferred.spill_array { handle }`** and no `operation`             | Full logical selection written row-major **`f32` LE** to caller path; preview read from spilled file (one decode). |
 | **`capped_in_memory`** | Preview-only (no `operation`, no spill) when logical size ≤ budget         | Capped materialize into **`execution.f32_preview`** only.                                                     |
 
 When logical selection exceeds the budget and neither **`operation`** nor spill is requested, execution fails with a validation error suggesting a higher budget, an **`operation`**, or spill output.
 
-**Known gap:** capped preview may still allocate a full logical buffer internally before truncating to the preview cap; budget gates strategy selection, not every intermediate allocation.
+Capped preview allocates only `min(cap, logical)` floats (not the full logical tensor). Full materialize (`max_elements: None`) still requires a buffer sized to the logical selection.
+
+### Spill path allowlist
+
+Spill targets come from query JSON (`output.preferred.spill_array.handle`). **Relative handles** resolve against the **`.tet` file’s directory** (not shell cwd).
+
+Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/engine/spill_policy.rs), applied automatically with `--tet` + `--execute`):
+
+1. **`.tet` parent directory**
+2. **Platform cache/scratch** (best-effort, each as `…/tetration/`):
+   - `$XDG_CACHE_HOME/tetration` or `~/.cache/tetration` (Linux and other Unix)
+   - `~/.local/cache/tetration` (macOS default when `XDG_CACHE_HOME` unset; also on Linux)
+   - Windows: `%LOCALAPPDATA%\\tetration`
+   - `$TMPDIR` / `$TEMP` / `$TMP` / `tetration` subdirs when creatable
+
+**`--spill-allow DIR`** (repeatable) **adds** extra roots to that default set.
+
+Example relative spill beside the dataset: `"handle": "slice.bin"` → next to `data.tet`. Example cache spill: `"handle": "/home/you/.cache/tetration/job-42.bin"` (or rely on a path under an allowed root).
 
 ## Materialization and operations
 
@@ -120,7 +139,8 @@ flowchart TD
     BEP --> Budget
     Budget --> OpGate{"operation set?"}
 
-    OpGate -->|yes| FoldPath["streaming_fold"]
+    OpGate -->|yes| TierGate{"materialize tier?"}
+    TierGate -->|streaming| FoldPath["streaming_fold"]
     FoldPath --> Axes{"axes empty?"}
     Axes -->|yes| ScalarFold["fold_read_plan_scalar_operation"]
     Axes -->|no| PartialFold["partial_fold_read_plan_operation"]
@@ -128,6 +148,13 @@ flowchart TD
     PartialFold --> Reduced["operation_reduced_*"]
     OpFields --> Done["QueryExecutionPreview"]
     Reduced --> Done
+
+    TierGate -->|materialize-required| MatGate{"logical ≤ budget?"}
+    MatGate -->|yes| InRam["in_memory_materialize"]
+    MatGate -->|no| TempSpill["temp_spill_materialize → delete on drop"]
+    InRam --> TierCOp["median, …"]
+    TempSpill --> TierCOp
+    TierCOp --> Done
 
     OpGate -->|no| SpillGate{"output.spill_array?"}
     SpillGate -->|yes| Spill["spill_read_plan_f32_le → mmap_spill"]
@@ -156,7 +183,7 @@ flowchart TD
 | `execution.f32_preview`                      | First `n` logical row-major floats (`n = 0` → empty vec).                                                          |
 | `execution.operation_*`                    | Scalar aggregates over full logical selection; preview cap does not truncate them.                                 |
 | `execution.operation_reduced_*`            | Partial-axis reductions + `operation_reduced_shape`.                                                               |
-| `execution.memory_strategy`                | `streaming_fold`, `capped_in_memory`, or `mmap_spill`.                                                             |
+| `execution.memory_strategy`                | `streaming_fold`, `capped_in_memory`, `mmap_spill`, `in_memory_materialize`, `temp_spill_materialize`.             |
 | `execution.memory_budget_bytes`            | Resolved RAM budget used for this run.                                                                             |
 | `execution.host_available_ram_bytes`       | Host probe at budget resolution, when available.                                                                   |
 | `execution.logical_selection_f32_bytes`    | `4 × logical_f32_element_count`.                                                                                   |
@@ -192,6 +219,9 @@ JSON `operation` is a tagged object with decimal **`axes`** (dimension indices a
 | **`norm_l2`**    | `norm_l2`      | `operation_norm_l2`              | `operation_reduced_norm_l2` + `operation_reduced_shape`      |
 | **`all_finite`** | `all_finite`   | `operation_all_finite`           | `operation_reduced_all_finite` + `operation_reduced_shape`   |
 | **`any_nan`**    | `any_nan`      | `operation_any_nan`              | `operation_reduced_any_nan` + `operation_reduced_shape`      |
+| **`arg_min`**    | `arg_min`      | `operation_argmin_index`         | `operation_reduced_argmin` + `operation_reduced_shape`       |
+| **`arg_max`**    | `arg_max`      | `operation_argmax_index`         | `operation_reduced_argmax` + `operation_reduced_shape`       |
+| **`median`**     | `median`       | `operation_median` (scalar only)   | not supported yet (partial median deferred)                  |
 
 Population **`var` / `std`**, `ddof = 0`. **`norm_l2`** is √(sum of squares).
 
@@ -217,8 +247,9 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 **Execution paths today:**
 
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
-- **Any `operation`** — **`streaming_fold`**: scalar (`axes: []`) via **`fold_read_plan_scalar_operation`**; partial axes via **`partial_fold_read_plan_operation`** (no full logical `Vec`). Preview is still the first `n` logical values when `raw_f32_preview_max > 0`.
-- **Spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`.
+- **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (`axes: []`) via **`fold_read_plan_scalar_operation`**; partial axes via **`partial_fold_read_plan_operation`**. Preview is still the first `n` logical values when `raw_f32_preview_max > 0`.
+- **Materialize-required ops** (`median`, scalar only for now) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
+- **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode).
 
 All of the above are **`f32`** / `DTYPE_F32` only. The preview cap does **not** truncate `operation_*` aggregates.
 
@@ -241,10 +272,12 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Tier 2 — still tensor stats, heavier
 
+**Shipped (index ops):** `arg_min`, `arg_max` (scalar logical index; partial = index within reduced axes fiber).
+
 | Op                           | Tier (typical) | Notes                                                                           |
 | ---------------------------- | -------------- | ------------------------------------------------------------------------------- |
-| **`argmin` / `argmax`**      | C              | Return logical or global indices, not just a scalar value.                      |
-| **`median`**                 | C              | Exact median needs storage or selection; per-chunk median is not global median. |
+| **`argmin` / `argmax`**      | C → **A/B**    | **Done** as `arg_min` / `arg_max`.                                              |
+| **`median`**                 | C              | **Done** (scalar `axes: []` only); partial axes deferred.                      |
 | **`quantile` / `histogram`** | C              | Often fixed bins so partial results can be merged.                              |
 
 ### Tier 3 — not `Operation` enum variants
@@ -333,11 +366,11 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 | Input size / depth limits                  | In        | **Done** — `QueryLimits::DEFAULT`                         |
 | `deny_unknown_fields`                      | In        | **Done** on query input types                             |
 | Dataset / axis length caps                 | In        | **Done** in `validate_query` via `QueryLimits`            |
-| Spill path allowlist                       | In/out    | **Partial** — spill works; no host policy yet             |
+| Spill path allowlist                       | In/out    | **Done** — `SpillPathAllowlist`, `plan_query_with_tet_mmap_ex`, CLI `--spill-allow` |
 | Response schema version + stability        | Out       | Document breaking changes                                 |
 | Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `tests/query.rs`                    |
 | Redaction mode for echoed fields           | Out       | Multi-tenant logging                                      |
-| Capped preview without full-buffer alloc   | In        | Budget gates strategy; internal alloc gap remains         |
+| Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical` |
 
 ## Robustness (catalog index)
 
@@ -350,6 +383,6 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Direct callers can still use **`materialize_read_plan_f32_le`** (always sequential) or **`_parallel`** (always Rayon); execution picks parallel only for multi-chunk **materialize** paths. Any **`operation`** uses **`streaming_fold`** instead of allocating the full logical buffer.
 - Materialization and operations are **`f32`** / `DTYPE_F32` only.
 - `operation.axes` uses **decimal dimension indices**, not dataset name labels.
-- Spill path is caller-provided with no built-in allowlist; mmap spill does not cap output file size separately from decode correctness.
-- Capped preview may allocate a full logical buffer before truncating (see [Memory budget](#memory-budget-and-execution-strategies)).
+- Spill path must lie under default roots (`.tet` dir + platform `…/tetration` cache dirs) or `--spill-allow`; relative handles are relative to the `.tet` directory.
+- Non-**`f32`** dtypes not yet supported in query execution.
 - JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy remains open (see [JSON security](#json-security-input-and-output)).

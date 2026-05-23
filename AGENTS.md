@@ -8,7 +8,7 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Phases 0–3 (spec, writer/reader, chunk addressing, zstd + index robustness) | **Done**                                                                                                                                                                     |
 | Phase 4 (query execute)                                                     | **Core done** — plan, mmap materialize, parallel multi-chunk decode, memory-aware routing, mmap spill, streaming scalar + partial-axis folds for all v1 `Operation` variants |
-| Phase 4 remainder                                                           | Capped preview without full-buffer alloc for huge selections; richer dtypes; spill path allowlist policy                                                                     |
+| Phase 4 remainder                                                           | Non-`f32` dtypes; partial-axis `median`; quantile / histogram                                                                                                                |
 | Phase 5 (convert / bindings)                                                | **Not started** (CLI stubs only)                                                                                                                                             |
 | JSON security                                                               | **Done (v1)** — `QueryLimits`, `deny_unknown_fields`, caps in `document.rs`; proptest in `tests/query.rs`                                                                    |
 
@@ -36,15 +36,16 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
   | `read_plan.rs`    | `ReadPlan` (chunk I/O rows + logical geometry)                               |
   | `indexing.rs`     | Row-major index ↔ coords                                                     |
   | `chunk_decode.rs` | Mmap slice bounds, codec decode, `visit_planned_chunk`, scatter              |
-  | `materialize.rs`  | Full/capped materialize, spill, scalar fold entry                            |
+  | `materialize.rs`  | Full/capped materialize, export spill, logical RAM/temp-spill backing for tier-C ops |
   | `parallel.rs`     | Rayon parallel scatter fill                                                  |
   | `partial_fold.rs` | Streaming partial-axis reductions (no full logical tensor)                   |
   | `fold.rs`         | Shared fold preview validation + `FoldPlanOutcome`                           |
   | `budget.rs`       | `ExecutionBudget` resolve (host RAM × percent, `.tet` header, query JSON)    |
+  | `spill_policy.rs` | Spill path allowlist, temp spill allocation + cleanup                        |
   | `reduction.rs`    | `ReductionKind`, `ValueAccum`, preview field mapping                         |
-  | `operations.rs`   | `build_execution_preview` — memory strategy routing + fold/materialize/spill |
+  | `operations.rs`   | `build_execution_preview` — memory strategy routing, tier-C ops, fold/spill  |
 
-  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers. **`build_execution_preview`** picks **`MemoryStrategy`**: `streaming_fold` (any `operation`), `mmap_spill` (`output.preferred.spill_array`), `capped_in_memory` (preview-only). Budget from host RAM (default **25%**), query `execution.*`, or per-file TIDX settings. **Operations (f32 only):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan` — scalar and partial axes via streaming fold; population **`var` / `std`**, `ddof = 0`. Preview: `--preview-f32 N` (default **64**); **`0`** with `operation` skips preview floats.
+  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers; capped preview allocates `min(cap, logical)` only. **`build_execution_preview`** picks **`MemoryStrategy`**: `streaming_fold` (tier-A/B ops), `in_memory_materialize` / `temp_spill_materialize` (tier-C ops such as scalar **`median`**), `mmap_spill` (export spill + single-pass preview), `capped_in_memory` (preview-only). Temp spills live under platform cache allowlist roots and are deleted when execution finishes. Budget from host RAM (default **25%**), query `execution.*`, or per-file TIDX settings. **Operations (f32 only):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `arg_min`, `arg_max`, `median` (scalar) — streaming fold for tier-A/B; materialize path for tier-C. Population **`var` / `std`**, `ddof = 0`. Preview: `--preview-f32 N` (default **64**); **`0`** with `operation` skips preview floats.
 
 ## CLI (`tet`)
 
@@ -84,8 +85,9 @@ Stricter local: `cargo clippy -- -D warnings -W clippy::pedantic`; `cargo test -
 
 | File                        | Covers                                                                                                                                 |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/catalog.rs`          | Catalog roundtrip, index robustness (truncated spans, codec/length lies), proptest `validate_chunk_payloads`, `f32_le`                 |
-| `tests/query.rs`            | Query JSON parse/validate/plan, mmap materialize (sequential vs parallel parity, zstd), strided chunk-touch, operations, memory budget |
+| `tests/catalog.rs`          | Catalog roundtrip, index robustness, chunk tile geometry, proptest `validate_chunk_payloads`, `f32_le`                                 |
+| `tests/query.rs`            | Query JSON, mmap materialize, operations, memory budget, spill allowlist + temp spill cleanup                                          |
+| `tests/utils.rs`            | Host memory probe (`available_memory_bytes`)                                                                                           |
 | `tests/layout_roundtrip.rs` | Superblock / empty file                                                                                                                |
 | `tests/fixture.rs`          | Shared temp `.tet` builders, `index_patch` helpers (wire offsets from `ChunkIndexEntryV1::WIRE_*`)                                     |
 
@@ -93,12 +95,12 @@ Examples: `cargo test --test catalog`, `cargo test --test query`, `cargo test ca
 
 ## Public API surface (high level)
 
-Re-exported from `src/lib.rs`: layout (`MAGIC`, mmap, `create_empty_v1_file`, …), catalog (writers, codecs, `FileExecutionSettingsV1`, index types, `read_tet_summary_v1`, `validate_chunk_payloads`, chunk coord helpers, `f32_tensor_bytes_from_shape`), query (`QueryDocument`, `QueryResponse`, `ReadPlan`, `QueryExecutionPreview`, `ExecutionBudget`, `QueryLimits`, parse/validate/plan, materialize + parallel twins, `spill_read_plan_f32_le`, `planned_chunk_mmap_slices`).
+Re-exported from `src/lib.rs`: layout (`MAGIC`, mmap, `create_empty_v1_file`, …), catalog (writers, codecs, `FileExecutionSettingsV1`, index types, `read_tet_summary_v1`, `validate_chunk_payloads`, chunk coord helpers, `f32_tensor_bytes_from_shape`), query (`QueryDocument`, `QueryResponse`, `ReadPlan`, `QueryExecutionPreview`, `ExecutionBudget`, `QueryLimits`, `SpillPathAllowlist`, parse/validate/plan, materialize + parallel twins, `spill_read_plan_f32_le`, `plan_query_with_tet_mmap_ex`, `planned_chunk_mmap_slices`).
 
 ## Not implemented / intentional gaps
 
-- **Query:** dtypes other than **`f32`**; named dimension labels for `operation.axes` (decimal indices only); capped preview still allocates full logical buffer internally before truncate (known gap).
-- **Memory:** spill path is caller-provided string (no host allowlist yet); no cgroup-aware RAM probe.
+- **Query:** dtypes other than **`f32`**; named dimension labels for `operation.axes` (decimal indices only).
+- **Memory:** no cgroup-aware RAM probe.
 - **Codecs:** only raw (**0**) and zstd (**1**); `write_one_chunk_raw_file` remains raw-only.
 - **`tet convert`:** stubs only; HDF5 / NetCDF → `.tet` not wired.
 - **Bindings:** C ABI / Python per README — later.

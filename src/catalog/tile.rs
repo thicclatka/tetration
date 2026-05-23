@@ -265,35 +265,3 @@ pub(crate) fn extract_f32_tile_row_major(
     }
     Ok(out)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strided_axis_fewer_chunks_than_dense() {
-        let shape = [4u64, 3];
-        let cs = [2u64, 3];
-        let g0 = [1, 0];
-        let g1 = [3, 3];
-        let steps_strided = [2u64, 1];
-        let steps_dense = [1u64, 1];
-        let a = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps_strided).unwrap();
-        let b = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps_dense).unwrap();
-        assert!(a.len() < b.len());
-        assert_eq!(a.len(), 1);
-        assert_eq!(b.len(), 2);
-    }
-
-    #[test]
-    fn global_box_matches_strided_unit_steps() {
-        let shape = [2u64, 3];
-        let cs = [2u64, 2];
-        let g0 = [0, 0];
-        let g1 = [2, 2];
-        let steps = [1u64, 1];
-        let a = chunk_coords_intersecting_global_box(&shape, &cs, &g0, &g1).unwrap();
-        let b = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps).unwrap();
-        assert_eq!(a, b);
-    }
-}

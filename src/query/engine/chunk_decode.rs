@@ -169,7 +169,9 @@ pub(crate) fn scatter_chunk_into_plan(
     out: &mut [f32],
 ) -> Result<u64, TetError> {
     visit_planned_chunk(mmap, plan, c, |li, v| {
-        out[li] = v;
+        if li < out.len() {
+            out[li] = v;
+        }
         Ok(())
     })
 }

@@ -34,6 +34,7 @@ pub(crate) struct OperationPreviewFields {
     pub element_count: Option<usize>,
     pub sum: Option<f64>,
     pub mean: Option<f64>,
+    pub median: Option<f64>,
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub var: Option<f64>,
@@ -43,6 +44,8 @@ pub(crate) struct OperationPreviewFields {
     pub norm_l2: Option<f64>,
     pub all_finite: Option<bool>,
     pub any_nan: Option<bool>,
+    pub argmin_index: Option<u64>,
+    pub argmax_index: Option<u64>,
     pub reduced_shape: Option<Vec<u64>>,
     pub reduced_sum: Option<Vec<f64>>,
     pub reduced_mean: Option<Vec<f64>>,
@@ -56,6 +59,8 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_norm_l2: Option<Vec<f64>>,
     pub reduced_all_finite: Option<Vec<bool>>,
     pub reduced_any_nan: Option<Vec<bool>>,
+    pub reduced_argmin: Option<Vec<u64>>,
+    pub reduced_argmax: Option<Vec<u64>>,
 }
 
 /// First `f32` values read from planned chunk payloads (little-endian), capped for JSON safety.
@@ -81,6 +86,8 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_mean: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_median: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_min: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_max: Option<f64>,
@@ -98,7 +105,12 @@ pub struct QueryExecutionPreview {
     pub operation_all_finite: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_any_nan: Option<bool>,
-    /// How execution respected memory limits (`streaming_fold`, `capped_in_memory`, `mmap_spill`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_argmin_index: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_argmax_index: Option<u64>,
+    /// How execution respected memory limits (`streaming_fold`, `capped_in_memory`, `mmap_spill`,
+    /// `in_memory_materialize`, `temp_spill_materialize`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_strategy: Option<&'static str>,
     /// When set, full logical selection was spilled as row-major `f32` LE to this path.
@@ -142,6 +154,10 @@ pub struct QueryExecutionPreview {
     pub operation_reduced_all_finite: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_any_nan: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_argmin: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_argmax: Option<Vec<u64>>,
 }
 
 impl From<OperationPreviewFields> for QueryExecutionPreview {
@@ -150,6 +166,7 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_element_count: operation.element_count,
             operation_sum: operation.sum,
             operation_mean: operation.mean,
+            operation_median: operation.median,
             operation_min: operation.min,
             operation_max: operation.max,
             operation_var: operation.var,
@@ -159,6 +176,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_norm_l2: operation.norm_l2,
             operation_all_finite: operation.all_finite,
             operation_any_nan: operation.any_nan,
+            operation_argmin_index: operation.argmin_index,
+            operation_argmax_index: operation.argmax_index,
             operation_reduced_shape: operation.reduced_shape,
             operation_reduced_sum: operation.reduced_sum,
             operation_reduced_mean: operation.reduced_mean,
@@ -172,6 +191,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_norm_l2: operation.reduced_norm_l2,
             operation_reduced_all_finite: operation.reduced_all_finite,
             operation_reduced_any_nan: operation.reduced_any_nan,
+            operation_reduced_argmin: operation.reduced_argmin,
+            operation_reduced_argmax: operation.reduced_argmax,
             ..Self::default()
         }
     }

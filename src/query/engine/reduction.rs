@@ -16,6 +16,8 @@ pub(crate) enum ReductionKind {
     NormL2,
     AllFinite,
     AnyNan,
+    ArgMin,
+    ArgMax,
 }
 
 impl From<&Operation> for ReductionKind {
@@ -33,6 +35,11 @@ impl From<&Operation> for ReductionKind {
             Operation::NormL2 { .. } => Self::NormL2,
             Operation::AllFinite { .. } => Self::AllFinite,
             Operation::AnyNan { .. } => Self::AnyNan,
+            Operation::ArgMin { .. } => Self::ArgMin,
+            Operation::ArgMax { .. } => Self::ArgMax,
+            Operation::Median { .. } => {
+                unreachable!("median uses materialize-required execution path")
+            }
         }
     }
 }
@@ -145,6 +152,9 @@ impl ValueAccum {
             ReductionKind::NormL2 => self.norm_l2_sq.sqrt(),
             ReductionKind::AllFinite => f64::from(u8::from(self.all_finite)),
             ReductionKind::AnyNan => f64::from(u8::from(self.any_nan)),
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
         }
     }
 
@@ -174,7 +184,6 @@ impl ValueAccum {
             ReductionKind::Mean => mean_scalar = Some(self.welford.mean),
             ReductionKind::Min => min_scalar = Some(self.min),
             ReductionKind::Max => max_scalar = Some(self.max),
-            ReductionKind::Count => {}
             ReductionKind::Var => var_scalar = Some(self.welford.population_variance()),
             ReductionKind::Std => std_scalar = Some(self.welford.population_std()),
             ReductionKind::Product => product_scalar = Some(self.product),
@@ -182,6 +191,7 @@ impl ValueAccum {
             ReductionKind::NormL2 => norm_l2_scalar = Some(self.norm_l2_sq.sqrt()),
             ReductionKind::AllFinite => all_finite_scalar = Some(self.all_finite),
             ReductionKind::AnyNan => any_nan_scalar = Some(self.any_nan),
+            ReductionKind::Count | ReductionKind::ArgMin | ReductionKind::ArgMax => {}
         }
         ScalarReductionResult {
             element_count: self.count,
@@ -196,6 +206,64 @@ impl ValueAccum {
             norm_l2_scalar,
             all_finite_scalar,
             any_nan_scalar,
+            argmin_index: None,
+            argmax_index: None,
+        }
+    }
+}
+
+/// Index of min/max in logical row-major order (scalar) or within reduced axes (partial).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ArgIndexAccum {
+    have: bool,
+    best_val: f64,
+    best_idx: u64,
+}
+
+impl ArgIndexAccum {
+    pub fn is_empty(&self) -> bool {
+        !self.have
+    }
+
+    pub fn push(&mut self, idx: u64, v: f32, kind: ReductionKind) {
+        let x = f64::from(v);
+        if !self.have {
+            self.best_val = x;
+            self.best_idx = idx;
+            self.have = true;
+            return;
+        }
+        match kind {
+            ReductionKind::ArgMin if x < self.best_val => {
+                self.best_val = x;
+                self.best_idx = idx;
+            }
+            ReductionKind::ArgMax if x > self.best_val => {
+                self.best_val = x;
+                self.best_idx = idx;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn index(&self) -> u64 {
+        self.best_idx
+    }
+
+    pub fn finish_scalar(self, kind: ReductionKind, element_count: usize) -> ScalarReductionResult {
+        let idx = self.best_idx;
+        let mut argmin_index = None;
+        let mut argmax_index = None;
+        match kind {
+            ReductionKind::ArgMin => argmin_index = Some(idx),
+            ReductionKind::ArgMax => argmax_index = Some(idx),
+            _ => {}
+        }
+        ScalarReductionResult {
+            element_count,
+            argmin_index,
+            argmax_index,
+            ..ScalarReductionResult::default_fields(element_count)
         }
     }
 }
@@ -215,6 +283,29 @@ pub(crate) struct ScalarReductionResult {
     pub norm_l2_scalar: Option<f64>,
     pub all_finite_scalar: Option<bool>,
     pub any_nan_scalar: Option<bool>,
+    pub argmin_index: Option<u64>,
+    pub argmax_index: Option<u64>,
+}
+
+impl ScalarReductionResult {
+    fn default_fields(element_count: usize) -> Self {
+        Self {
+            element_count,
+            sum_scalar: None,
+            mean_scalar: None,
+            min_scalar: None,
+            max_scalar: None,
+            var_scalar: None,
+            std_scalar: None,
+            product_scalar: None,
+            norm_l1_scalar: None,
+            norm_l2_scalar: None,
+            all_finite_scalar: None,
+            any_nan_scalar: None,
+            argmin_index: None,
+            argmax_index: None,
+        }
+    }
 }
 
 impl From<ScalarReductionResult> for OperationPreviewFields {
@@ -232,6 +323,8 @@ impl From<ScalarReductionResult> for OperationPreviewFields {
             norm_l2: r.norm_l2_scalar,
             all_finite: r.all_finite_scalar,
             any_nan: r.any_nan_scalar,
+            argmin_index: r.argmin_index,
+            argmax_index: r.argmax_index,
             ..Self::default()
         }
     }

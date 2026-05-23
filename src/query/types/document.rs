@@ -24,6 +24,9 @@ pub enum Operation {
     NormL2 { axes: Vec<String> },
     AllFinite { axes: Vec<String> },
     AnyNan { axes: Vec<String> },
+    ArgMin { axes: Vec<String> },
+    ArgMax { axes: Vec<String> },
+    Median { axes: Vec<String> },
 }
 
 impl Operation {
@@ -42,7 +45,10 @@ impl Operation {
             | Self::NormL1 { axes }
             | Self::NormL2 { axes }
             | Self::AllFinite { axes }
-            | Self::AnyNan { axes } => axes,
+            | Self::AnyNan { axes }
+            | Self::ArgMin { axes }
+            | Self::ArgMax { axes }
+            | Self::Median { axes } => axes,
         }
     }
 }

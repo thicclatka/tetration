@@ -47,13 +47,3 @@ fn sysctl_u64(name: &str) -> Option<u64> {
     }
     std::str::from_utf8(&out.stdout).ok()?.trim().parse().ok()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::available_memory_bytes;
-
-    #[test]
-    fn host_memory_probe_does_not_panic() {
-        let _ = available_memory_bytes();
-    }
-}

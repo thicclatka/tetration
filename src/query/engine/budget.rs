@@ -16,6 +16,10 @@ pub enum MemoryStrategy {
     CappedInMemory,
     /// Full logical tensor written to a caller path via file mmap (disk-backed, not a giant `Vec`).
     MmapSpill,
+    /// Tier-C op: full logical selection held in RAM for the operation.
+    InMemoryMaterialize,
+    /// Tier-C op: full logical selection written to an engine temp file, then removed.
+    TempSpillMaterialize,
 }
 
 impl MemoryStrategy {
@@ -25,6 +29,8 @@ impl MemoryStrategy {
             Self::StreamingFold => "streaming_fold",
             Self::CappedInMemory => "capped_in_memory",
             Self::MmapSpill => "mmap_spill",
+            Self::InMemoryMaterialize => "in_memory_materialize",
+            Self::TempSpillMaterialize => "temp_spill_materialize",
         }
     }
 }

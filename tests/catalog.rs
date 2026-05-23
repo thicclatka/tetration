@@ -13,9 +13,10 @@ use fixture::{
 use proptest::prelude::*;
 use tetration::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DTYPE_F32, MAX_NDIM, OneChunkRawWrite,
-    create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
-    plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
-    validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
+    chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided, create_empty_v1_file,
+    materialize_read_plan_f32_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
+    read_f32_le_at, read_tet_summary_v1, try_cast_f32_le, validate_chunk_payloads, validate_query,
+    write_one_chunk_raw_file,
 };
 
 // --- roundtrip ---
@@ -498,4 +499,33 @@ fn cast_aligned_tile() {
     let vals = try_cast_f32_le(aligned).expect("aligned");
     assert_eq!(vals.len(), 2);
     assert_eq!(read_f32_le_at(aligned, 0), vals[0]);
+}
+
+// --- chunk tile geometry (from src/catalog/tile.rs) ---
+
+#[test]
+fn strided_axis_fewer_chunks_than_dense() {
+    let shape = [4u64, 3];
+    let cs = [2u64, 3];
+    let g0 = [1, 0];
+    let g1 = [3, 3];
+    let steps_strided = [2u64, 1];
+    let steps_dense = [1u64, 1];
+    let a = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps_strided).unwrap();
+    let b = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps_dense).unwrap();
+    assert!(a.len() < b.len());
+    assert_eq!(a.len(), 1);
+    assert_eq!(b.len(), 2);
+}
+
+#[test]
+fn global_box_matches_strided_unit_steps() {
+    let shape = [2u64, 3];
+    let cs = [2u64, 2];
+    let g0 = [0, 0];
+    let g1 = [2, 2];
+    let steps = [1u64, 1];
+    let a = chunk_coords_intersecting_global_box(&shape, &cs, &g0, &g1).unwrap();
+    let b = chunk_coords_intersecting_strided(&shape, &cs, &g0, &g1, &steps).unwrap();
+    assert_eq!(a, b);
 }

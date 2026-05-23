@@ -2,13 +2,16 @@
 
 mod fixture;
 
+use std::path::{Path, PathBuf};
+
 use fixture::{CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_tiles, write_multichunk_2x3_zero_zstd};
 use tetration::{
     CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DTYPE_F32, OneChunkRawWrite, RawArrayWrite,
-    create_empty_v1_file, materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
-    materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
-    mmap_file_read, parse_query_json, plan_query_empty, plan_query_with_tet_mmap,
-    read_tet_summary_v1, validate_query, write_one_chunk_raw_file, write_raw_array_file,
+    SpillPathAllowlist, TempSpillFile, create_empty_v1_file, materialize_read_plan_f32_le,
+    materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
+    materialize_read_plan_f32_le_parallel, mmap_file_read, parse_query_json, plan_query_empty,
+    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
+    write_one_chunk_raw_file, write_raw_array_file,
 };
 
 // --- JSON / plan-only ---
@@ -57,6 +60,7 @@ fn accepts_min_max_count_operations() {
         r#"{"dataset":"a","operation":{"var":{"axes":[]}}}"#,
         r#"{"dataset":"a","operation":{"std":{"axes":["0"]}}}"#,
         r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"median":{"axes":[]}}}"#,
     ] {
         let doc = parse_query_json(json).unwrap();
         validate_query(&doc).unwrap();
@@ -735,6 +739,152 @@ fn query_execution_reports_dataset_and_budget_fields() {
     let exec = resp.execution.as_ref().unwrap();
     assert_eq!(exec.memory_budget_bytes, Some(999_999));
     assert_eq!(exec.logical_selection_f32_bytes, Some(24));
+}
+
+#[test]
+fn plan_query_operation_argmin_argmax_scalar_and_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","operation":{"arg_min":{"axes":[]}}}"#).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_argmin_index, Some(0));
+    assert_eq!(ex.memory_strategy, Some("streaming_fold"));
+
+    let doc =
+        parse_query_json(r#"{"dataset":"a","operation":{"arg_max":{"axes":["0"]}}}"#).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_reduced_argmax, Some(vec![1, 1, 1]));
+}
+
+#[test]
+fn spill_path_allowlist_rejects_outside_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let outside_dir = tempfile::tempdir().unwrap();
+    let policy = SpillPathAllowlist::default_for_tet(&path, std::iter::empty::<PathBuf>()).unwrap();
+    let spill_out = outside_dir.path().join("out.bin");
+    let json = format!(
+        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":"{}"}}}}}}}}"#,
+        spill_out.display()
+    );
+    let doc = parse_query_json(&json).unwrap();
+    let err = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap_err();
+    assert!(err.to_string().contains("allowed root"), "{err}");
+
+    let json = r#"{"dataset":"a","output":{"preferred":{"spill_array":{"handle":"out.bin"}}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap();
+    assert!(
+        resp.execution
+            .as_ref()
+            .unwrap()
+            .spill_f32_path
+            .as_ref()
+            .unwrap()
+            .ends_with("out.bin")
+    );
+
+    let allow = dir.path().join("allowed");
+    std::fs::create_dir_all(&allow).unwrap();
+    let policy = SpillPathAllowlist::default_for_tet(&path, [allow.clone()]).unwrap();
+    let spill_ok = allow.join("out.bin");
+    let json = format!(
+        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":"{}"}}}}}}}}"#,
+        spill_ok.display()
+    );
+    let doc = parse_query_json(&json).unwrap();
+    let resp = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap();
+    let spilled = resp
+        .execution
+        .as_ref()
+        .unwrap()
+        .spill_f32_path
+        .as_ref()
+        .unwrap();
+    assert!(
+        spilled.ends_with("allowed/out.bin") || spilled.ends_with("allowed\\out.bin"),
+        "{spilled}"
+    );
+}
+
+#[test]
+fn capped_preview_materialize_allocates_only_cap_not_full_tensor() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a"}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(2)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.f32_preview.len(), 2);
+    assert!(ex.f32_preview_truncated);
+    assert_eq!(ex.memory_strategy, Some("capped_in_memory"));
+}
+
+#[test]
+fn plan_query_operation_median_scalar_in_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert!((ex.operation_median.unwrap() - 3.5).abs() < 1e-5);
+    assert_eq!(ex.operation_element_count, Some(6));
+    assert_eq!(ex.memory_strategy, Some("in_memory_materialize"));
+}
+
+#[test]
+fn plan_query_operation_median_scalar_temp_spill_when_over_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    // 8 bytes = 2 f32; logical selection is 6 f32 (24 bytes).
+    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":8}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(2)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert!((ex.operation_median.unwrap() - 3.5).abs() < 1e-5);
+    assert_eq!(ex.memory_strategy, Some("temp_spill_materialize"));
+    assert!(ex.spill_f32_path.is_none());
+}
+
+// --- spill policy (from src/query/engine/spill_policy.rs) ---
+
+#[test]
+fn spill_path_allowlist_default_for_tet_includes_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let tet = dir.path().join("data.tet");
+    std::fs::write(&tet, b"x").unwrap();
+    let policy = SpillPathAllowlist::default_for_tet(&tet, std::iter::empty::<PathBuf>()).unwrap();
+    let resolved = policy.validate(Path::new("spill.bin")).unwrap();
+    assert!(resolved.starts_with(std::fs::canonicalize(dir.path()).unwrap()));
+}
+
+#[test]
+fn temp_spill_file_deleted_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("spill-test.bin");
+    std::fs::write(&file_path, b"x").unwrap();
+    {
+        let guard = TempSpillFile::with_path_for_test(file_path.clone());
+        assert!(file_path.exists());
+        drop(guard);
+    }
+    assert!(!file_path.exists());
 }
 
 proptest! {

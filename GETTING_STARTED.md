@@ -42,9 +42,11 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Streaming reductions** — scalar (`fold_read_plan_scalar_operation`) and partial-axis (`partial_fold_read_plan_operation`) without full logical tensor allocation; orchestrated by **`build_execution_preview`** with **`memory_strategy: streaming_fold`**.
 - [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); budget fields on **`execution`**; per-file settings via **`RawArrayWrite::file_execution`**.
 - [x] **Mmap spill** — `output.preferred.spill_array { handle }` → **`spill_read_plan_f32_le`** (`memory_strategy: mmap_spill`).
-- [ ] **Capped preview** without full logical-buffer allocation for huge selections (budget gates strategy today; internal alloc gap remains).
-- [ ] **Spill path allowlist** policy for multi-tenant hosts.
-- [ ] Richer **`Operation`** kinds and non-**`f32`** dtypes (see [operations roadmap](docs/query_engine.md#operations-roadmap-planned)).
+- [x] **Capped preview** without full logical-buffer allocation when `max_elements < logical` (bounded scatter buffer only).
+- [x] **Spill path allowlist** — host `SpillPathAllowlist` + `plan_query_with_tet_mmap_ex`; CLI `--spill-allow DIR` (repeatable).
+- [x] **Tier-2 index ops** — `arg_min` / `arg_max` (scalar + partial axes; JSON snake_case tags).
+- [x] **Scalar `median`** (tier-C): in-RAM when logical selection ≤ budget, else temp spill + mmap + cleanup (`in_memory_materialize` / `temp_spill_materialize`).
+- [ ] **Non-`f32` dtypes**, partial-axis `median`, and other tier-C stats (`quantile`, …); see [operations roadmap](docs/query_engine.md#operations-roadmap-planned).
 
 ## Phase 5 — Interop and bindings (later)
 
@@ -63,7 +65,6 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Operations:** tier-2 ops in [query engine roadmap](docs/query_engine.md#tier-2--still-tensor-stats-heavier) (`argmin`, `median`, …).
-2. **Execution:** capped preview without OOM-sized internal alloc; spill path allowlist.
-3. **Robustness:** targeted tests for bad/truncated zstd payloads and index/file length mismatch (truncated zstd frame covered in `tests/catalog.rs`).
-4. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
+1. **Operations:** partial-axis `median`, quantile / histogram in [query engine roadmap](docs/query_engine.md#tier-2--still-tensor-stats-heavier).
+2. **Dtypes:** `f64` / integer read paths on disk and in materialize.
+3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
