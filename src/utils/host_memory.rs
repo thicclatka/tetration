@@ -1,5 +1,6 @@
 //! Best-effort host RAM available for new allocations.
 
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 /// Returns an estimate of bytes the OS considers available for new allocations, if detectable.
@@ -39,7 +40,7 @@ fn read_macos_available() -> Option<u64> {
     Some(free.saturating_add(inactive).saturating_mul(page_size))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn sysctl_u64(name: &str) -> Option<u64> {
     let out = Command::new("sysctl").args(["-n", name]).output().ok()?;
     if !out.status.success() {
