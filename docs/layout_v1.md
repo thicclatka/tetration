@@ -72,7 +72,7 @@ Each record is:
 | Field         | Type            | Notes                                                                                                                                                                                |
 | ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `name_len`    | `u32` LE        | Byte length of UTF-8 `name` that follows.                                                                                                                                            |
-| `dtype`       | `u32` LE        | `1` = IEEE754 **`f32`**, `2` = IEEE754 **`f64`**, row-major within each chunk (more later).                                                                                                                   |
+| `dtype`       | `u32` LE        | `1` = IEEE754 **`f32`**, `2` = IEEE754 **`f64`**, row-major within each chunk (more later).                                                                                          |
 | `ndim`        | `u32` LE        | Rank in `1 … 8`.                                                                                                                                                                     |
 | `reserved`    | `u32` LE        | Write **0**.                                                                                                                                                                         |
 | `name`        | `[u8]`          | UTF-8 of length `name_len`.                                                                                                                                                          |
@@ -139,16 +139,16 @@ Each index row’s `payload_offset` selects the byte span in region ⑤.
 
 | Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                              |
 | ---------- | ------------------------------------------- | ------------------------------------------ |
-| **0** raw  | must be equal                               | tensor payload (LE `f32` in v1 writers)    |
+| **0** raw  | must be equal                               | tensor payload (LE **`f32`** or **`f64`** per dataset `dtype`) |
 | **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes |
 
 See also [`query_engine.md`](query_engine.md) for how the query engine materializes planned chunks.
 
 ## Reference subset (current Rust writer)
 
-The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`).
+The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`). **`dtype`** may be **`f32`** (`1`) or **`f64`** (`2`).
 
-`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
+`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). **`dtype`** is **`f32`** or **`f64`**. Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
 
 ## Concurrency (informative)
 

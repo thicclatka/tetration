@@ -1,6 +1,6 @@
 # Getting started — Tetration
 
-Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **optional capped `f32` execution preview** (`tet query --tet … --execute`), and **optional NetCDF** behind the default feature flag.
+Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **optional capped execution preview** (`f32` / `f64` via `tet query --tet … --execute`), and **optional NetCDF** behind the default feature flag.
 
 ## Environment
 
@@ -19,7 +19,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Phase 1 — Minimal writer / reader (no compression required)
 
 - [x] **`layout` + `catalog`** (+ shared **`src/utils/wire.rs`** via **`crate::utils::wire`**): binary structs for superblock + index (hand-rolled LE; **rkyv** is a dependency for later metadata, not required for v1 catalog hot path). **`src/utils/`** is the home for crate-private helpers—keep **chunk/dataset/query** logic in `catalog` / `query`.
-- [x] **`create` path:** `create_empty_v1_file`, `write_one_chunk_raw_file`, `write_raw_array_file` / `RawArrayWrite` (multi-chunk raw `f32`; optional **`file_execution`** → TIDX header).
+- [x] **`create` path:** `create_empty_v1_file`, `write_one_chunk_raw_file`, `write_raw_array_file` / `RawArrayWrite` (multi-chunk raw **`f32`** or **`f64`**; optional **`file_execution`** → TIDX header).
 - [x] **`open` + mmap** (`memmap2`): `mmap_file_read`, `read_superblock_v1`, `read_tet_summary_v1`.
 - [x] **`tet info`** and library APIs dump catalog / superblock JSON.
 
@@ -31,9 +31,9 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 ## Phase 3 — Compression and robustness (complete)
 
-- [x] **Per-chunk zstd** (`codec = 1`): `RawArrayWrite::chunk_codec` vs **`CHUNK_PAYLOAD_CODEC_V1`** (`raw` / `zstd`); index stores `raw_byte_len` vs `stored_byte_len`; query materialization decompresses for `f32` preview.
+- [x] **Per-chunk zstd** (`codec = 1`): `RawArrayWrite::chunk_codec` vs **`CHUNK_PAYLOAD_CODEC_V1`** (`raw` / `zstd`); index stores `raw_byte_len` vs `stored_byte_len`; query materialization decompresses for **`f32`** / **`f64`** preview.
 - [x] Fuzz or property-test **index bounds** vs file length: `tests/catalog.rs` (property tests + hand-patched robustness cases).
-- [x] **`bytemuck`** for `f32` payloads: `src/utils/f32_le.rs` (`read_f32_le_at` / `try_cast_f32_le` when 4-byte aligned); materialize uses unaligned-safe reads; covered in `tests/catalog.rs`.
+- [x] **`bytemuck`** for **`f32`** / **`f64`** payloads: `src/utils/f32_le.rs`, `src/utils/f64_le.rs`; materialize uses unaligned-safe reads; covered in `tests/catalog.rs`.
 
 ## Phase 4 — Query execution
 
