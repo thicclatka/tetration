@@ -72,7 +72,7 @@ mise run fixtures:clean-extra-large
 
 **`groups_3d`** and **Zarr** stores are generated for upcoming Phase 5 import work; convert tests will expand when importers land.
 
-Regenerate tracked small files after changing `generate.py`, then re-run `cargo test --test convert`.
+Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --test convert`.
 
 ## Benchmarks
 
@@ -93,6 +93,7 @@ Sequential per **tier**, then wipe the whole **format** tree before the next for
 mise run bench              # h5, netcdf, zarr (large ~6.67 GiB + extra_large 20 GiB each)
 mise run bench:h5           # one format only
 uv run --directory fixtures bench-large --skip-mean   # convert timing only
+# or: uv run --directory fixtures tet-fixtures bench --skip-ops
 ```
 
 Results: `fixtures/bench_results/latest.md` (gitignored). Peak disk per **extra_large** row ≈ **one** 20 GiB file (source or `.tet`, not both).
@@ -119,13 +120,17 @@ Or from this directory with uv directly:
 
 ```bash
 uv sync
+uv run tet-fixtures generate small
+uv run tet-fixtures generate large
+uv run tet-fixtures generate extra-large-h5
+uv run tet-fixtures generate extra-large-netcdf
+uv run tet-fixtures generate extra-large-zarr
+uv run tet-fixtures generate all
+uv run tet-fixtures generate large -q
+
+# legacy entry points still work:
 uv run generate-fixtures small
-uv run generate-fixtures large
-uv run generate-fixtures extra-large-h5
-uv run generate-fixtures extra-large-netcdf
-uv run generate-fixtures extra-large-zarr
-uv run generate-fixtures all
-uv run generate-fixtures large -q
+uv run bench-large h5
 ```
 
 Other dense formats (**`.npy`**, GRIB, GeoTIFF, …) get fixtures only if/when convert support is added — see Phase 5 “could add later” in [`GETTING_STARTED.md`](../GETTING_STARTED.md).

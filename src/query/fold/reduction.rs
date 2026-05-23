@@ -160,72 +160,84 @@ impl ValueAccum {
     /// Accumulate every little-endian `f32` in `raw` for a scalar fold (no per-element callbacks).
     pub fn push_f32_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
         debug_assert_eq!(raw.len() % 4, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[f32] = bytemuck::cast_slice(raw);
         match kind {
             ReductionKind::Count => {
-                self.count += raw.len() / 4;
+                self.count += vals.len();
             }
-            ReductionKind::Sum => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f32::from_le_bytes(chunk.try_into().expect("4 bytes"));
-                    self.count += 1;
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                for &v in vals {
                     self.sum += f64::from(v);
                 }
             }
-            ReductionKind::Mean | ReductionKind::Var | ReductionKind::Std => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
+            ReductionKind::Var | ReductionKind::Std => {
+                for &v in vals {
+                    let vd = f64::from(v);
                     self.count += 1;
-                    self.sum += v;
-                    self.welford.push(v);
+                    self.sum += vd;
+                    self.welford.push(vd);
                 }
             }
             ReductionKind::Min | ReductionKind::Max => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
-                    self.count += 1;
+                self.count += vals.len();
+                for &v in vals {
+                    let vd = f64::from(v);
                     if self.have_min_max {
-                        self.min = self.min.min(v);
-                        self.max = self.max.max(v);
+                        self.min = self.min.min(vd);
+                        self.max = self.max.max(vd);
                     } else {
-                        self.min = v;
-                        self.max = v;
+                        self.min = vd;
+                        self.max = vd;
                         self.have_min_max = true;
                     }
                 }
             }
             ReductionKind::Product => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
-                    self.count += 1;
-                    self.product *= v;
+                self.count += vals.len();
+                for &v in vals {
+                    self.product *= f64::from(v);
                 }
             }
             ReductionKind::NormL1 => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
-                    self.count += 1;
-                    self.norm_l1 += v.abs();
+                self.count += vals.len();
+                for &v in vals {
+                    self.norm_l1 += f64::from(v).abs();
                 }
             }
             ReductionKind::NormL2 => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
-                    self.count += 1;
-                    self.norm_l2_sq += v * v;
+                self.count += vals.len();
+                for &v in vals {
+                    let vd = f64::from(v);
+                    self.norm_l2_sq += vd * vd;
                 }
             }
             ReductionKind::AllFinite => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
-                    self.count += 1;
-                    self.all_finite &= v.is_finite();
+                self.count += vals.len();
+                if !self.all_finite {
+                    return;
+                }
+                for &v in vals {
+                    if !v.is_finite() {
+                        self.all_finite = false;
+                        return;
+                    }
                 }
             }
             ReductionKind::AnyNan => {
-                for chunk in raw.chunks_exact(4) {
-                    let v = f64::from(f32::from_le_bytes(chunk.try_into().expect("4 bytes")));
+                if self.any_nan {
+                    self.count += vals.len();
+                    return;
+                }
+                for &v in vals {
                     self.count += 1;
-                    self.any_nan |= v.is_nan();
+                    if v.is_nan() {
+                        self.any_nan = true;
+                        return;
+                    }
                 }
             }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
@@ -316,7 +328,13 @@ impl ValueAccum {
     pub fn finish_f64(&self, kind: ReductionKind) -> f64 {
         match kind {
             ReductionKind::Sum => self.sum,
-            ReductionKind::Mean => self.welford.mean,
+            ReductionKind::Mean => {
+                if self.count == 0 {
+                    0.0
+                } else {
+                    self.sum / self.count as f64
+                }
+            }
             ReductionKind::Min => self.min,
             ReductionKind::Max => self.max,
             ReductionKind::Count => self.count as f64,
@@ -385,7 +403,13 @@ impl ValueAccum {
         let mut any_nan_scalar = None;
         match kind {
             ReductionKind::Sum => sum_scalar = Some(self.sum),
-            ReductionKind::Mean => mean_scalar = Some(self.welford.mean),
+            ReductionKind::Mean => {
+                mean_scalar = Some(if self.count == 0 {
+                    0.0
+                } else {
+                    self.sum / self.count as f64
+                });
+            }
             ReductionKind::Min => min_scalar = Some(self.min),
             ReductionKind::Max => max_scalar = Some(self.max),
             ReductionKind::Var => var_scalar = Some(self.welford.population_variance()),

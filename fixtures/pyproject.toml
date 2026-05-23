@@ -13,12 +13,13 @@ dependencies = [
 ]
 
 [project.scripts]
-generate-fixtures = "generate:main"
-bench-large = "benchmark:main"
+tet-fixtures = "cli:main"
+generate-fixtures = "cli:main_generate"
+bench-large = "cli:main_bench"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["generate.py", "benchmark.py"]
+only-include = ["cli.py", "generate", "benchmark"]
