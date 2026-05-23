@@ -1,7 +1,12 @@
 //! JSON query documents: validated plans for reads and basic operations.
 
+mod decode;
+mod dispatch;
 mod document;
 mod engine;
+mod fold;
+mod materialize;
+mod plan;
 mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;

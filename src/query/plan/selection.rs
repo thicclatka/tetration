@@ -3,9 +3,9 @@
 use crate::query::document::validate_axis_slice_json;
 use crate::query::types::{QueryDocument, TetError};
 
-pub(super) type ResolvedGlobalBox = (Vec<u64>, Vec<u64>, Vec<u64>);
+pub(crate) type ResolvedGlobalBox = (Vec<u64>, Vec<u64>, Vec<u64>);
 
-pub(super) fn resolved_dense_global_box(
+pub(crate) fn resolved_dense_global_box(
     doc: &QueryDocument,
     shape: &[u64],
 ) -> Result<ResolvedGlobalBox, TetError> {

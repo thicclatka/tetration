@@ -8,20 +8,19 @@ use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
 use crate::utils::{i32_le, i64_le};
 
-use super::chunk_decode::{
-    scatter_chunk_into_plan_i32, scatter_chunk_into_plan_i64, visit_planned_chunk_i32_as_f64,
-    visit_planned_chunk_i64_as_f64,
-};
-use super::dispatch::accumulate_chunk_read_bytes;
-use super::fold::FoldPlanOutcome;
-use super::materialize::{
-    MaterializedLogical, validate_full_read_plan_buffer, validate_read_plan_geometry,
-};
 use super::parallel::{
     materialize_scatter_fill_parallel_i32, materialize_scatter_fill_parallel_i64,
 };
-use super::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use super::spill_policy::TempSpillFile;
+use crate::query::decode::chunk_decode::{
+    scatter_chunk_into_plan_i32, scatter_chunk_into_plan_i64, visit_planned_chunk_i32_as_f64,
+    visit_planned_chunk_i64_as_f64,
+};
+use crate::query::dispatch::accumulate_chunk_read_bytes;
+use crate::query::engine::spill_policy::TempSpillFile;
+use crate::query::fold::FoldPlanOutcome;
+use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
+
+use super::{MaterializedLogical, validate_full_read_plan_buffer, validate_read_plan_geometry};
 
 fn check_materialized_complete_option<T>(out: &[Option<T>]) -> Result<(), TetError> {
     if out.iter().any(Option::is_none) {
@@ -340,10 +339,8 @@ pub(crate) fn materialized_logical_as_f64(
 ) -> Result<Vec<f64>, TetError> {
     match materialized {
         MaterializedLogical::F32 { backing, .. } => match backing {
-            super::materialize::LogicalF32Backing::InMemory(v) => {
-                Ok(v.iter().map(|&x| f64::from(x)).collect())
-            }
-            super::materialize::LogicalF32Backing::TempSpill(temp) => {
+            super::LogicalF32Backing::InMemory(v) => Ok(v.iter().map(|&x| f64::from(x)).collect()),
+            super::LogicalF32Backing::TempSpill(temp) => {
                 let mmap = mmap_spill(temp.path())?;
                 Ok(bytemuck::cast_slice::<u8, f32>(&mmap)
                     .iter()
@@ -352,8 +349,8 @@ pub(crate) fn materialized_logical_as_f64(
             }
         },
         MaterializedLogical::F64 { backing, .. } => match backing {
-            super::materialize::LogicalF64Backing::InMemory(v) => Ok(v.clone()),
-            super::materialize::LogicalF64Backing::TempSpill(temp) => {
+            super::LogicalF64Backing::InMemory(v) => Ok(v.clone()),
+            super::LogicalF64Backing::TempSpill(temp) => {
                 let mmap = mmap_spill(temp.path())?;
                 Ok(bytemuck::cast_slice::<u8, f64>(&mmap).to_vec())
             }

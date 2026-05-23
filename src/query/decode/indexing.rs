@@ -2,7 +2,7 @@
 
 use crate::query::types::TetError;
 
-pub(super) fn linear_rm_index(logical_coords: &[usize], shape: &[u64]) -> Result<usize, TetError> {
+pub(crate) fn linear_rm_index(logical_coords: &[usize], shape: &[u64]) -> Result<usize, TetError> {
     if logical_coords.len() != shape.len() {
         return Err(TetError::Validation(
             "internal: logical coordinate rank mismatch".into(),
@@ -36,7 +36,7 @@ pub(super) fn linear_rm_index(logical_coords: &[usize], shape: &[u64]) -> Result
     Ok(idx)
 }
 
-pub(super) fn coords_from_linear_row_major(
+pub(crate) fn coords_from_linear_row_major(
     mut li: usize,
     shape: &[u64],
 ) -> Result<Vec<usize>, TetError> {

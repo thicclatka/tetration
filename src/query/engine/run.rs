@@ -9,11 +9,11 @@ use crate::query::types::{
     ReadPlan, TetError,
 };
 
-use super::budget::ExecutionBudget;
-use super::operations::build_execution_preview;
-use super::read_plan::{ReadPlanGeometry, build_read_plan};
-use super::selection::resolved_dense_global_box;
-use super::spill_policy::SpillPathAllowlist;
+use crate::query::engine::budget::ExecutionBudget;
+use crate::query::engine::operations::build_execution_preview;
+use crate::query::engine::spill_policy::SpillPathAllowlist;
+use crate::query::plan::read_plan::{ReadPlanGeometry, build_read_plan};
+use crate::query::plan::selection::resolved_dense_global_box;
 
 fn dataset_tensor_bytes(dtype: u32, shape: &[u64], expected: u32) -> Option<u64> {
     (dtype == expected)
@@ -225,16 +225,20 @@ fn matched_dataset_execution(
             }
         }
     };
-    let preview = build_execution_preview(&super::operations::ExecutionPreviewInput {
-        mmap: ctx.mmap,
-        plan: ctx.read_plan,
-        dtype: ctx.rec.dtype,
-        operation: ctx.doc.operation.as_ref(),
-        output: ctx.doc.output.as_ref(),
-        max_f32: limit,
-        budget: ExecutionBudget::resolve(&ctx.summary.file_execution, ctx.doc.execution.as_ref()),
-        spill_allowlist: spill_ref,
-    })?;
+    let preview =
+        build_execution_preview(&crate::query::engine::operations::ExecutionPreviewInput {
+            mmap: ctx.mmap,
+            plan: ctx.read_plan,
+            dtype: ctx.rec.dtype,
+            operation: ctx.doc.operation.as_ref(),
+            output: ctx.doc.output.as_ref(),
+            max_f32: limit,
+            budget: ExecutionBudget::resolve(
+                &ctx.summary.file_execution,
+                ctx.doc.execution.as_ref(),
+            ),
+            spill_allowlist: spill_ref,
+        })?;
     if ctx.doc.operation.is_some() {
         message.push_str("; operation executed (see execution.memory_strategy and operation_*)");
     } else {

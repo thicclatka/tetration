@@ -6,17 +6,15 @@ use rayon::prelude::*;
 
 use crate::query::types::{ReadPlan, TetError};
 
-use super::chunk_decode::{
-    scatter_chunk_into_plan, scatter_chunk_into_plan_f64, scatter_chunk_into_plan_i32,
-    scatter_chunk_into_plan_i64,
-};
-use super::materialize::{
+use super::int::{materialize_read_plan_i32_le_core, materialize_read_plan_i64_le_core};
+use super::{
     MaterializeReadPlanF32IntoOutcome, materialize_read_plan_f32_le_core,
     materialize_read_plan_f32_le_into_core, materialize_read_plan_f64_le_core,
     validate_read_plan_geometry,
 };
-use super::materialize_int::{
-    materialize_read_plan_i32_le_core, materialize_read_plan_i64_le_core,
+use crate::query::decode::chunk_decode::{
+    scatter_chunk_into_plan, scatter_chunk_into_plan_f64, scatter_chunk_into_plan_i32,
+    scatter_chunk_into_plan_i64,
 };
 
 pub(crate) fn materialize_scatter_fill_parallel(
@@ -42,11 +40,11 @@ pub(crate) fn materialize_scatter_fill_parallel(
     Ok(total_bytes.load(Ordering::Relaxed))
 }
 
-/// Like [`super::materialize::materialize_read_plan_f32_le`], but decodes planned chunks in parallel.
+/// Like [`crate::query::materialize::materialize_read_plan_f32_le`], but decodes planned chunks in parallel.
 ///
 /// # Errors
 ///
-/// Same failure modes as [`super::materialize::materialize_read_plan_f32_le`].
+/// Same failure modes as [`crate::query::materialize::materialize_read_plan_f32_le`].
 pub fn materialize_read_plan_f32_le_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
@@ -55,11 +53,11 @@ pub fn materialize_read_plan_f32_le_parallel(
     materialize_read_plan_f32_le_core(mmap, plan, max_elements, materialize_scatter_fill_parallel)
 }
 
-/// Like [`super::materialize::materialize_read_plan_f32_le_into`], but decodes planned chunks in parallel.
+/// Like [`crate::query::materialize::materialize_read_plan_f32_le_into`], but decodes planned chunks in parallel.
 ///
 /// # Errors
 ///
-/// Same failure modes as [`super::materialize::materialize_read_plan_f32_le_into`].
+/// Same failure modes as [`crate::query::materialize::materialize_read_plan_f32_le_into`].
 pub fn materialize_read_plan_f32_le_into_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
@@ -96,7 +94,7 @@ pub(crate) fn materialize_scatter_fill_parallel_f64(
     Ok(total_bytes.load(Ordering::Relaxed))
 }
 
-/// Like [`super::materialize::materialize_read_plan_f64_le`], but decodes planned chunks in parallel.
+/// Like [`crate::query::materialize::materialize_read_plan_f64_le`], but decodes planned chunks in parallel.
 pub fn materialize_read_plan_f64_le_parallel(
     mmap: &[u8],
     plan: &ReadPlan,

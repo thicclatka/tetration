@@ -5,24 +5,24 @@ use std::path::Path;
 use crate::query::types::{ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
 
-use super::fold::FoldPlanOutcome;
-use super::materialize::{
-    DecodePreviewBundle, materialize_read_plan_f32_le, materialize_read_plan_f64_le,
-    preview_from_spill_export_file, spill_read_plan_f32_le, spill_read_plan_f64_le,
-};
-use super::materialize_int::{
-    fold_read_plan_scalar_operation_int, materialize_read_plan_i32_le,
-    materialize_read_plan_i64_le, spill_read_plan_int_le,
-};
-use super::parallel::{
-    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel,
-    materialize_read_plan_i32_le_parallel, materialize_read_plan_i64_le_parallel,
-};
-use super::partial_fold::{
+use crate::query::fold::FoldPlanOutcome;
+use crate::query::fold::partial_fold::{
     fold_read_plan_partial_operation, fold_read_plan_partial_operation_f64,
     fold_read_plan_partial_operation_int,
 };
-use super::reduction::ReductionKind;
+use crate::query::fold::reduction::ReductionKind;
+use crate::query::materialize::int::{
+    fold_read_plan_scalar_operation_int, materialize_read_plan_i32_le,
+    materialize_read_plan_i64_le, spill_read_plan_int_le,
+};
+use crate::query::materialize::parallel::{
+    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel,
+    materialize_read_plan_i32_le_parallel, materialize_read_plan_i64_le_parallel,
+};
+use crate::query::materialize::{
+    DecodePreviewBundle, materialize_read_plan_f32_le, materialize_read_plan_f64_le,
+    preview_from_spill_export_file, spill_read_plan_f32_le, spill_read_plan_f64_le,
+};
 
 pub(crate) fn accumulate_chunk_read_bytes(
     total: &mut u64,
@@ -135,12 +135,18 @@ pub(crate) fn scalar_fold(
     dtype: ElementDtype,
 ) -> Result<FoldPlanOutcome, TetError> {
     match dtype {
-        ElementDtype::F32 => {
-            super::materialize::fold_read_plan_scalar_operation(mmap, plan, max_preview, kind)
-        }
-        ElementDtype::F64 => {
-            super::materialize::fold_read_plan_scalar_operation_f64(mmap, plan, max_preview, kind)
-        }
+        ElementDtype::F32 => crate::query::materialize::fold_read_plan_scalar_operation(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+        ),
+        ElementDtype::F64 => crate::query::materialize::fold_read_plan_scalar_operation_f64(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+        ),
         ElementDtype::I32 | ElementDtype::I64 => {
             fold_read_plan_scalar_operation_int(mmap, plan, max_preview, kind, dtype)
         }

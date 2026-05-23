@@ -3,7 +3,7 @@
 use crate::catalog::{ChunkIndexEntryV1, MAX_NDIM, TetFileSummaryV1};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 
-pub(super) struct ReadPlanGeometry<'a> {
+pub(crate) struct ReadPlanGeometry<'a> {
     dataset_shape: &'a [u64],
     chunk_shape: &'a [u64],
     g0: &'a [u64],
@@ -12,7 +12,7 @@ pub(super) struct ReadPlanGeometry<'a> {
 }
 
 impl<'a> ReadPlanGeometry<'a> {
-    pub(super) const fn new(
+    pub(crate) const fn new(
         dataset_shape: &'a [u64],
         chunk_shape: &'a [u64],
         g0: &'a [u64],
@@ -29,7 +29,7 @@ impl<'a> ReadPlanGeometry<'a> {
     }
 }
 
-pub(super) fn selection_logical_shape_u64(
+pub(crate) fn selection_logical_shape_u64(
     g0: &[u64],
     g1_exclusive: &[u64],
     step: &[u64],
@@ -54,7 +54,7 @@ pub(super) fn selection_logical_shape_u64(
     Ok(out)
 }
 
-pub(super) fn shape_product_usize(shape: &[u64]) -> Result<usize, TetError> {
+pub(crate) fn shape_product_usize(shape: &[u64]) -> Result<usize, TetError> {
     let mut p: usize = 1;
     for &s in shape {
         let su = usize::try_from(s).map_err(|_| {
@@ -94,7 +94,7 @@ fn find_chunk_entry<'a>(
     })
 }
 
-pub(super) fn build_read_plan(
+pub(crate) fn build_read_plan(
     summary: &TetFileSummaryV1,
     dataset_idx: usize,
     ndim: usize,
