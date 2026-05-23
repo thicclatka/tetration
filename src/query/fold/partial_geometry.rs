@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use crate::query::types::{ReadPlan, TetError};
 
-use super::indexing::linear_rm_index;
-use super::read_plan::shape_product_usize;
+use crate::query::decode::indexing::linear_rm_index;
+use crate::query::plan::read_plan::shape_product_usize;
 
 pub(crate) struct PartialAxisLayout {
     pub axis_indices: Vec<usize>,

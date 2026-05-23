@@ -1,26 +1,26 @@
-//! Decode planned chunk payloads into logical row-major `f32`.
+//! Decode planned chunk payloads into logical row-major tensors (f32/f64/i32/i64).
+
+pub mod int;
+pub mod parallel;
+pub mod stats;
 
 use std::path::Path;
 
 use memmap2::Mmap;
 
-use crate::query::types::{ReadPlan, TetError};
-use crate::utils::dtype::ElementDtype;
-use crate::utils::f64_le;
-
-use super::budget::{ExecutionBudget, MemoryStrategy};
-use super::chunk_decode::{
+use crate::query::decode::chunk_decode::{
     scatter_chunk_into_plan, scatter_chunk_into_plan_f64, visit_planned_chunk,
     visit_planned_chunk_f64,
 };
-use super::fold::{build_fold_plan_outcome, validate_fold_preview};
-use super::parallel::{
-    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel,
-};
-use super::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use super::spill_policy::{SpillPathAllowlist, TempSpillFile};
-
-pub(crate) use super::fold::FoldPlanOutcome;
+use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
+use crate::query::engine::spill_policy::{SpillPathAllowlist, TempSpillFile};
+pub(crate) use crate::query::fold::FoldPlanOutcome;
+use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
+use crate::query::fold::shared::{build_fold_plan_outcome, validate_fold_preview};
+use crate::query::types::{ReadPlan, TetError};
+use crate::utils::dtype::ElementDtype;
+use crate::utils::f64_le;
+use parallel::{materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel};
 
 type ScatterFillFn = fn(&[u8], &ReadPlan, &mut [f32]) -> Result<u64, TetError>;
 
@@ -364,12 +364,12 @@ pub(crate) enum MaterializedLogical {
         strategy: MemoryStrategy,
     },
     I32 {
-        backing: super::materialize_int::LogicalI32Backing,
+        backing: int::LogicalI32Backing,
         total_bytes_read_from_disk: u64,
         strategy: MemoryStrategy,
     },
     I64 {
-        backing: super::materialize_int::LogicalI64Backing,
+        backing: int::LogicalI64Backing,
         total_bytes_read_from_disk: u64,
         strategy: MemoryStrategy,
     },
@@ -409,7 +409,7 @@ pub(crate) fn materialize_logical_selection(
 ) -> Result<MaterializedLogical, TetError> {
     if budget.full_tensor_exceeds_budget(plan, dtype)? {
         let temp = TempSpillFile::create(allowlist)?;
-        let bytes = super::dispatch::spill_full_selection(mmap, plan, temp.path(), dtype)?;
+        let bytes = crate::query::dispatch::spill_full_selection(mmap, plan, temp.path(), dtype)?;
         Ok(match dtype {
             ElementDtype::F32 => MaterializedLogical::F32 {
                 backing: LogicalF32Backing::TempSpill(temp),
@@ -422,12 +422,12 @@ pub(crate) fn materialize_logical_selection(
                 strategy: MemoryStrategy::TempSpillMaterialize,
             },
             ElementDtype::I32 => MaterializedLogical::I32 {
-                backing: super::materialize_int::LogicalI32Backing::TempSpill(temp),
+                backing: int::LogicalI32Backing::TempSpill(temp),
                 total_bytes_read_from_disk: bytes,
                 strategy: MemoryStrategy::TempSpillMaterialize,
             },
             ElementDtype::I64 => MaterializedLogical::I64 {
-                backing: super::materialize_int::LogicalI64Backing::TempSpill(temp),
+                backing: int::LogicalI64Backing::TempSpill(temp),
                 total_bytes_read_from_disk: bytes,
                 strategy: MemoryStrategy::TempSpillMaterialize,
             },
@@ -451,17 +451,17 @@ pub(crate) fn materialize_logical_selection(
                 })
             }
             ElementDtype::I32 => {
-                let (vec, bytes) = super::materialize_int::materialize_into_vec_i32(mmap, plan)?;
+                let (vec, bytes) = int::materialize_into_vec_i32(mmap, plan)?;
                 Ok(MaterializedLogical::I32 {
-                    backing: super::materialize_int::LogicalI32Backing::InMemory(vec),
+                    backing: int::LogicalI32Backing::InMemory(vec),
                     total_bytes_read_from_disk: bytes,
                     strategy: MemoryStrategy::InMemoryMaterialize,
                 })
             }
             ElementDtype::I64 => {
-                let (vec, bytes) = super::materialize_int::materialize_into_vec_i64(mmap, plan)?;
+                let (vec, bytes) = int::materialize_into_vec_i64(mmap, plan)?;
                 Ok(MaterializedLogical::I64 {
-                    backing: super::materialize_int::LogicalI64Backing::InMemory(vec),
+                    backing: int::LogicalI64Backing::InMemory(vec),
                     total_bytes_read_from_disk: bytes,
                     strategy: MemoryStrategy::InMemoryMaterialize,
                 })
@@ -498,8 +498,7 @@ pub(crate) fn preview_from_materialized(
             })
         }
         MaterializedLogical::I32 { backing, .. } => {
-            let (p, t) =
-                super::materialize_int::preview_from_materialized_i32(backing, logical_len, max)?;
+            let (p, t) = int::preview_from_materialized_i32(backing, logical_len, max)?;
             Ok(DecodePreviewBundle {
                 i32: p,
                 i32_truncated: t,
@@ -507,8 +506,7 @@ pub(crate) fn preview_from_materialized(
             })
         }
         MaterializedLogical::I64 { backing, .. } => {
-            let (p, t) =
-                super::materialize_int::preview_from_materialized_i64(backing, logical_len, max)?;
+            let (p, t) = int::preview_from_materialized_i64(backing, logical_len, max)?;
             Ok(DecodePreviewBundle {
                 i64: p,
                 i64_truncated: t,
@@ -618,8 +616,7 @@ pub(crate) fn preview_from_spill_export_file(
             })
         }
         ElementDtype::I32 => {
-            let (p, t) =
-                super::materialize_int::preview_from_spill_file_i32(path, cap, logical_len)?;
+            let (p, t) = int::preview_from_spill_file_i32(path, cap, logical_len)?;
             Ok(DecodePreviewBundle {
                 i32: p,
                 i32_truncated: t,
@@ -627,8 +624,7 @@ pub(crate) fn preview_from_spill_export_file(
             })
         }
         ElementDtype::I64 => {
-            let (p, t) =
-                super::materialize_int::preview_from_spill_file_i64(path, cap, logical_len)?;
+            let (p, t) = int::preview_from_spill_file_i64(path, cap, logical_len)?;
             Ok(DecodePreviewBundle {
                 i64: p,
                 i64_truncated: t,

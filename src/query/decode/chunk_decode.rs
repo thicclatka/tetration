@@ -6,7 +6,7 @@ use crate::catalog::{CHUNK_PAYLOAD_CODEC_V1, MAX_NDIM, tile};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 use crate::utils::{f32_le, f64_le, i32_le, i64_le, wire};
 
-use super::indexing::linear_rm_index;
+use crate::query::decode::indexing::linear_rm_index;
 
 fn u64_to_usize(field: &'static str, v: u64) -> Result<usize, TetError> {
     usize::try_from(v)
@@ -53,7 +53,7 @@ pub(crate) fn decode_planned_chunk_bytes<'a>(
 /// Returns [`TetError::Validation`] when a chunk is not mmap-readable as raw bytes (`codec` must be
 /// [`CHUNK_PAYLOAD_CODEC_V1.raw`](crate::catalog::ChunkPayloadCodecV1::raw)), lengths disagree, ranges overflow, or payload bytes fall outside `mmap`.
 ///
-/// For [`CHUNK_PAYLOAD_CODEC_V1.zstd`](crate::catalog::ChunkPayloadCodecV1::zstd) payloads use [`super::materialize::materialize_read_plan_f32_le`] (or another decode path);
+/// For [`CHUNK_PAYLOAD_CODEC_V1.zstd`](crate::catalog::ChunkPayloadCodecV1::zstd) payloads use [`crate::query::materialize::materialize_read_plan_f32_le`] (or another decode path);
 /// compressed bytes are not returned as a single mmap slice here.
 pub fn planned_chunk_mmap_slices<'a>(
     mmap: &'a [u8],

@@ -8,17 +8,19 @@ use crate::query::types::{
 };
 use crate::utils::dtype::ElementDtype;
 
-use super::budget::{ExecutionBudget, MemoryStrategy};
-use super::dispatch::{
+use crate::query::dispatch::{
     materialize_for_execution, partial_fold, scalar_fold, spill_export_preview,
     spill_full_selection,
 };
-use super::materialize::{
-    DecodePreviewBundle, materialize_logical_selection, preview_from_materialized,
+use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
+use crate::query::engine::spill_policy::SpillPathAllowlist;
+use crate::query::fold::FoldPlanOutcome;
+use crate::query::fold::reduction::ReductionKind;
+use crate::query::materialize::stats::run_tier_c_operation;
+use crate::query::materialize::{
+    DecodePreviewBundle, MaterializedLogical, materialize_logical_selection,
+    preview_from_materialized,
 };
-use super::materialize_stats::run_tier_c_operation;
-use super::reduction::ReductionKind;
-use super::spill_policy::SpillPathAllowlist;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperationMaterializeTier {
@@ -37,26 +39,24 @@ impl Operation {
     }
 }
 
-fn materialized_io(
-    materialized: &super::materialize::MaterializedLogical,
-) -> (u64, MemoryStrategy) {
+fn materialized_io(materialized: &MaterializedLogical) -> (u64, MemoryStrategy) {
     match materialized {
-        super::materialize::MaterializedLogical::F32 {
+        MaterializedLogical::F32 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | super::materialize::MaterializedLogical::F64 {
+        | MaterializedLogical::F64 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | super::materialize::MaterializedLogical::I32 {
+        | MaterializedLogical::I32 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | super::materialize::MaterializedLogical::I64 {
+        | MaterializedLogical::I64 {
             total_bytes_read_from_disk,
             strategy,
             ..
@@ -106,7 +106,7 @@ fn attach_budget_fields(
 }
 
 fn fold_outcome_to_preview(
-    folded: super::fold::FoldPlanOutcome,
+    folded: FoldPlanOutcome,
     strategy: MemoryStrategy,
     budget: ExecutionBudget,
     plan: &ReadPlan,

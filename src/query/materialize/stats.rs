@@ -7,9 +7,12 @@ use memmap2::MmapMut;
 
 use crate::query::types::{Operation, OperationPreviewFields, ReadPlan, TetError};
 
-use super::indexing::coords_from_linear_row_major;
-use super::materialize::{LogicalF32Backing, LogicalF64Backing, MaterializedLogical};
-use super::partial_geometry::{partial_axis_layout, reduced_index};
+use crate::query::decode::indexing::coords_from_linear_row_major;
+use crate::query::engine::budget::MemoryStrategy;
+use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
+
+use super::int;
+use super::{LogicalF32Backing, LogicalF64Backing, MaterializedLogical};
 
 fn median_f64(values: &mut [f64]) -> Result<f64, TetError> {
     if values.is_empty() {
@@ -108,7 +111,7 @@ fn median_f32(values: &mut [f32]) -> Result<f64, TetError> {
 fn gather_partial_in_memory<V: Copy>(
     values: &[V],
     shape: &[u64],
-    layout: &super::partial_geometry::PartialAxisLayout,
+    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
 ) -> Result<Vec<Vec<V>>, TetError> {
     let mut cells = vec![Vec::new(); layout.out_len];
     for (li, &value) in values.iter().enumerate() {
@@ -122,7 +125,7 @@ fn gather_partial_in_memory<V: Copy>(
 fn gather_partial_in_memory_f64_from_f32(
     values: &[f32],
     shape: &[u64],
-    layout: &super::partial_geometry::PartialAxisLayout,
+    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
 ) -> Result<Vec<Vec<f64>>, TetError> {
     let mut cells = vec![Vec::new(); layout.out_len];
     for (li, &value) in values.iter().enumerate() {
@@ -136,7 +139,7 @@ fn gather_partial_in_memory_f64_from_f32(
 fn gather_partial_f64<F>(
     n: usize,
     shape: &[u64],
-    layout: &super::partial_geometry::PartialAxisLayout,
+    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
     mut read_at: F,
 ) -> Result<Vec<Vec<f64>>, TetError>
 where
@@ -296,11 +299,11 @@ pub(crate) fn run_tier_c_operation(
         materialized,
         MaterializedLogical::I32 { .. } | MaterializedLogical::I64 { .. }
     ) {
-        let vec = super::materialize_int::materialized_logical_as_f64(materialized)?;
+        let vec = int::materialized_logical_as_f64(materialized)?;
         let synthetic = MaterializedLogical::F64 {
             backing: LogicalF64Backing::InMemory(vec),
             total_bytes_read_from_disk: 0,
-            strategy: super::budget::MemoryStrategy::InMemoryMaterialize,
+            strategy: MemoryStrategy::InMemoryMaterialize,
         };
         return run_tier_c_operation(&synthetic, plan, op);
     }
