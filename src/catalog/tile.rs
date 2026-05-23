@@ -19,6 +19,26 @@ pub(crate) fn total_chunk_count(counts: &[u64]) -> Result<u64, CatalogError> {
     })
 }
 
+/// Uncompressed byte length of one tile (product of per-axis extent × `elem_size`).
+pub(crate) fn tile_raw_byte_len(
+    shape: &[u64],
+    chunk_shape: &[u64],
+    chunk_coord: &[u64],
+    ndim: usize,
+    elem_size: usize,
+) -> Result<u64, CatalogError> {
+    let tile = tile_extent(shape, chunk_shape, chunk_coord, ndim);
+    let nelem: u64 = tile.iter().try_fold(1u64, |a, &b| a.checked_mul(b)).ok_or(
+        CatalogError::InvalidWriteSpec("tile element count overflow"),
+    )?;
+    nelem
+        .checked_mul(
+            u64::try_from(elem_size)
+                .map_err(|_| CatalogError::InvalidWriteSpec("element size overflow"))?,
+        )
+        .ok_or(CatalogError::InvalidWriteSpec("tile byte length overflow"))
+}
+
 /// Per-axis extent of the tile for this chunk (may be smaller than `chunk_shape` at edges).
 pub(crate) fn tile_extent(
     shape: &[u64],

@@ -1,3 +1,5 @@
+//! Query engine response types (catalog match, read plan, execution preview).
+
 use serde::Serialize;
 
 use super::document::Operation;
@@ -293,6 +295,7 @@ impl QueryExecutionPreview {
     }
 }
 
+/// JSON response from plan-only or execute query paths (`tet query`, [`crate::query::plan_query_empty`]).
 #[derive(Debug, Clone, Serialize)]
 pub struct QueryResponse {
     pub status: &'static str,

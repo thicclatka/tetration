@@ -1,14 +1,16 @@
-//! `tet` — CLI for JSON queries and (planned) HDF5 / `NetCDF` conversion.
+//! `tet` — CLI for JSON queries and foreign-format conversion.
 
 use std::fs;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use tetration::{
-    SpillPathAllowlist, mmap_file_read, parse_query_json, plan_query_empty,
-    plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
+    CLI_QUERY_HISTORY_MAX, ConvertProgress, ConvertReport, SpillPathAllowlist,
+    append_cli_query_history, clear_cli_query_history, convert_to_tet_with_progress,
+    detect_convert_format, list_cli_query_history, mmap_file_read, parse_query_json,
+    plan_query_empty, plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
 };
 
 #[derive(Parser)]
@@ -47,19 +49,25 @@ enum Commands {
         #[arg(long = "spill-allow", value_name = "DIR")]
         spill_allow: Vec<PathBuf>,
     },
-    /// Convert foreign formats into Tetration (importers are staged behind the on-disk layout).
+    /// Convert HDF5 / `NetCDF` into `.tet` (format from input extension).
     Convert {
-        #[command(subcommand)]
-        target: ConvertTarget,
+        /// Source array file (`.h5`/`.hdf5`/`.hdf`/`.he2`/`.he5`, `.nc`/`.netcdf`/`.nc4`/`.nc3`/`.cdf`, or recognizable signature).
+        input: PathBuf,
+        /// Destination `.tet` file.
+        output: PathBuf,
+        /// Parallel chunk read workers (`0` = host `available_parallelism`, capped at 64).
+        #[arg(long = "jobs", default_value_t = 0)]
+        jobs: usize,
     },
-}
-
-#[derive(Subcommand)]
-enum ConvertTarget {
-    /// HDF5 → Tetration (not implemented until `.tet` writer + HDF5 reader are linked).
-    H5 { input: PathBuf, output: PathBuf },
-    /// `NetCDF` → Tetration (not implemented until `.tet` writer + `NetCDF` reader are linked).
-    Netcdf { input: PathBuf, output: PathBuf },
+    /// List or clear recent `tet query` documents (platform cache; not stored in `.tet`).
+    History {
+        /// Max rows to print (default 10; file retains [`CLI_QUERY_HISTORY_MAX`]).
+        #[arg(short = 'n', long, default_value_t = CLI_QUERY_HISTORY_MAX)]
+        limit: usize,
+        /// Remove the history file.
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 fn read_stdin_string() -> io::Result<String> {
@@ -74,6 +82,54 @@ fn read_query_payload(file: Option<&PathBuf>) -> io::Result<String> {
         Some(p) if p.as_os_str() == "-" => read_stdin_string(),
         Some(path) => fs::read_to_string(path),
     }
+}
+
+fn finish_convert_report(
+    pb: &indicatif::ProgressBar,
+    label: &str,
+    report: &ConvertReport,
+) -> Result<(), String> {
+    pb.finish_with_message(format!("{label} done in {:.2}s", report.elapsed_secs));
+    let pretty = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
+    println!();
+    println!("{pretty}");
+    Ok(())
+}
+
+fn run_convert(input: &Path, output: &Path, jobs: usize) -> Result<(), String> {
+    use indicatif::{ProgressBar, ProgressStyle};
+
+    let format = detect_convert_format(input).map_err(|e| e.to_string())?;
+    let label = match format {
+        tetration::ConvertInputFormat::H5 => "HDF5 convert",
+        tetration::ConvertInputFormat::Netcdf => "NetCDF convert",
+        tetration::ConvertInputFormat::Zarr => "Zarr convert",
+    };
+    let progress_prefix = match format {
+        tetration::ConvertInputFormat::H5 => "HDF5 → .tet",
+        tetration::ConvertInputFormat::Netcdf => "NetCDF → .tet",
+        tetration::ConvertInputFormat::Zarr => "Zarr → .tet",
+    };
+
+    let pb = ProgressBar::new(0);
+    pb.set_style(
+        ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {pos}/{len} chunks ({eta})")
+            .map_err(|e| e.to_string())?
+            .progress_chars("=>-"),
+    );
+    pb.set_message(progress_prefix.to_owned());
+
+    let progress = Some(|p: ConvertProgress| {
+        if pb.length().unwrap_or(0) != p.chunks_total {
+            pb.set_length(p.chunks_total);
+        }
+        pb.set_position(p.chunks_done);
+        pb.set_message(format!("{progress_prefix} ({})", p.dataset));
+    });
+
+    let report =
+        convert_to_tet_with_progress(input, output, jobs, progress).map_err(|e| e.to_string())?;
+    finish_convert_report(&pb, label, &report)
 }
 
 fn main() -> ExitCode {
@@ -148,23 +204,33 @@ fn run(cli: Cli) -> Result<(), String> {
             };
             let out = serde_json::to_string_pretty(&response).map_err(|e| e.to_string())?;
             println!("{out}");
+            let tet_display = tet.as_ref().map(|p| p.display().to_string());
+            if let Err(e) = append_cli_query_history(&doc, tet_display.as_deref(), execute) {
+                eprintln!("warning: query history not saved: {e}");
+            }
             Ok(())
         }
-        Commands::Convert { target } => match target {
-            ConvertTarget::H5 { input, output } => Err(format!(
-                "HDF5 → Tetration conversion is not implemented yet.\n\
-                 Paths were: input={} output={}\n\
-                 Next steps: stable `.tet` layout writer, then chunked copy from `hdf5` crate datasets.",
-                input.display(),
-                output.display()
-            )),
-            ConvertTarget::Netcdf { input, output } => Err(format!(
-                "NetCDF → Tetration conversion is not implemented yet.\n\
-                 Paths were: input={} output={}\n\
-                 Next steps: stable `.tet` layout writer, then chunked copy from `netcdf` / `netcdf-sys` bindings.",
-                input.display(),
-                output.display()
-            )),
-        },
+        Commands::History { limit, clear } => {
+            if clear {
+                clear_cli_query_history().map_err(|e| e.to_string())?;
+                eprintln!("query history cleared");
+                return Ok(());
+            }
+            let path = tetration::cli_query_history_path();
+            let entries = list_cli_query_history(limit).map_err(|e| e.to_string())?;
+            let out = serde_json::json!({
+                "path": path.as_ref().map(|p| p.display().to_string()),
+                "max_retained": CLI_QUERY_HISTORY_MAX,
+                "entries": entries,
+            });
+            let pretty = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+            println!("{pretty}");
+            Ok(())
+        }
+        Commands::Convert {
+            input,
+            output,
+            jobs,
+        } => run_convert(&input, &output, jobs),
     }
 }

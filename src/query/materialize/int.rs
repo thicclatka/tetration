@@ -310,6 +310,11 @@ define_int_materialize! {
     promote_spill |x| x as f64;
 }
 
+/// Spill a full logical `i32` or `i64` selection to `path` (dispatches by `dtype`).
+///
+/// # Errors
+///
+/// Returns [`TetError::Validation`] when `dtype` is not `i32` or `i64`, or on spill I/O failure.
 pub fn spill_read_plan_int_le(
     mmap: &[u8],
     plan: &ReadPlan,

@@ -1,0 +1,503 @@
+//! Convert integration tests against tracked `fixtures/small/` tensors.
+
+use std::path::{Path, PathBuf};
+
+#[cfg(feature = "tetration-hdf5")]
+use tetration::convert_h5_to_tet_with_progress;
+use tetration::{
+    DATASET_DTYPE_TAG_V1, convert_netcdf_to_tet_with_progress, convert_zarr_to_tet_with_progress,
+    materialize_read_plan_f32_le, materialize_read_plan_f64_le, materialize_read_plan_i32_le,
+    materialize_read_plan_i64_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
+    read_tet_summary_v1, validate_query,
+};
+
+const FIXTURE_DTYPES: [&str; 4] = ["f32", "f64", "i32", "i64"];
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn small_h5(name: &str) -> PathBuf {
+    repo_root().join("fixtures/small/h5").join(name)
+}
+
+fn small_nc(name: &str) -> PathBuf {
+    repo_root().join("fixtures/small/netcdf").join(name)
+}
+
+fn small_zarr(name: &str) -> PathBuf {
+    repo_root().join("fixtures/small/zarr").join(name)
+}
+
+fn materialize_dataset_le_bytes(mmap: &[u8], dataset: &str) -> Vec<u8> {
+    let doc = parse_query_json(&format!(r#"{{"dataset":"{dataset}"}}"#)).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, mmap, None).unwrap();
+    let cat = plan.catalog.as_ref().unwrap();
+    let dtype = cat.dtype.expect("matched dataset dtype");
+    let rp = plan.read_plan.as_ref().unwrap();
+    let tags = DATASET_DTYPE_TAG_V1;
+    if tags.is_f32(dtype) {
+        let (vals, _, _) = materialize_read_plan_f32_le(mmap, rp, None).unwrap();
+        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+    } else if tags.is_f64(dtype) {
+        let (vals, _, _) = materialize_read_plan_f64_le(mmap, rp, None).unwrap();
+        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+    } else if tags.is_i32(dtype) {
+        let (vals, _, _) = materialize_read_plan_i32_le(mmap, rp, None).unwrap();
+        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+    } else if tags.is_i64(dtype) {
+        let (vals, _, _) = materialize_read_plan_i64_le(mmap, rp, None).unwrap();
+        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+    } else {
+        panic!("unexpected dtype {dtype}");
+    }
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn hdf5_dataset_le_bytes(ds: &hdf5_metno::Dataset, name: &str) -> Vec<u8> {
+    hdf5_dataset_raw_le_bytes(ds).unwrap_or_else(|| panic!("unexpected dataset {name}"))
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn hdf5_dataset_raw_le_bytes(ds: &hdf5_metno::Dataset) -> Option<Vec<u8>> {
+    use hdf5_metno::types::{FloatSize, IntSize, TypeDescriptor};
+
+    let td = ds.dtype().ok()?;
+    let desc = td.to_descriptor().ok()?;
+    Some(match desc {
+        TypeDescriptor::Float(FloatSize::U4) => ds
+            .read_raw::<f32>()
+            .ok()?
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect(),
+        TypeDescriptor::Float(FloatSize::U8) => ds
+            .read_raw::<f64>()
+            .ok()?
+            .into_iter()
+            .flat_map(f64::to_le_bytes)
+            .collect(),
+        TypeDescriptor::Integer(IntSize::U4) => ds
+            .read_raw::<i32>()
+            .ok()?
+            .into_iter()
+            .flat_map(i32::to_le_bytes)
+            .collect(),
+        TypeDescriptor::Integer(IntSize::U8) => ds
+            .read_raw::<i64>()
+            .ok()?
+            .into_iter()
+            .flat_map(i64::to_le_bytes)
+            .collect(),
+        _ => return None,
+    })
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn hdf5_dataset_path_le_bytes(file: &hdf5_metno::File, path: &str) -> Vec<u8> {
+    let ds = file.dataset(path).unwrap();
+    hdf5_dataset_raw_le_bytes(&ds).unwrap_or_else(|| panic!("unsupported dataset `{path}`"))
+}
+
+fn netcdf_dataset_path_le_bytes(file: &netcdf::File, path: &str) -> Vec<u8> {
+    let var = file.variable(path).expect("source variable");
+    var.get_raw_values(..).unwrap()
+}
+
+fn read_dataset_payload_le_bytes(mmap: &[u8], dataset: &str) -> Vec<u8> {
+    let doc = parse_query_json(&format!(r#"{{"dataset":"{dataset}"}}"#)).unwrap();
+    validate_query(&doc).unwrap();
+    let plan = plan_query_with_tet_mmap(&doc, None, mmap, None).unwrap();
+    let rp = plan.read_plan.as_ref().unwrap();
+    let mut out = Vec::new();
+    for chunk in &rp.chunks {
+        let start = usize::try_from(chunk.payload_offset).unwrap();
+        let end = start + usize::try_from(chunk.raw_byte_len).unwrap();
+        out.extend_from_slice(&mmap[start..end]);
+    }
+    out
+}
+
+fn assert_f32_payload_eq(got: &[u8], want: &[u8], label: &str) {
+    assert_eq!(got.len(), want.len(), "{label}: byte length mismatch");
+    for (i, (g, w)) in got.chunks_exact(4).zip(want.chunks_exact(4)).enumerate() {
+        let got_v = f32::from_le_bytes(g.try_into().unwrap());
+        let want_v = f32::from_le_bytes(w.try_into().unwrap());
+        let equal = if got_v.is_nan() && want_v.is_nan() {
+            true
+        } else if got_v.is_nan() || want_v.is_nan() {
+            false
+        } else {
+            got_v.to_bits() == want_v.to_bits()
+                || (got_v - want_v).abs() <= 1.0e-5 * got_v.abs().max(want_v.abs()).max(1.0)
+        };
+        assert!(equal, "{label}[{i}] got={got_v} want={want_v}");
+    }
+}
+
+fn cf_temperature_physical_le_bytes(stored: &[u8]) -> Vec<u8> {
+    let scale = 0.01_f64;
+    let offset = 273.15_f64;
+    let fill = -9999.0_f32;
+    stored
+        .chunks_exact(4)
+        .map(|chunk| {
+            let v = f32::from_le_bytes(chunk.try_into().unwrap());
+            let decoded = if (v - fill).abs() <= 1.0e-3 {
+                f32::NAN
+            } else {
+                (f64::from(v) * scale + offset) as f32
+            };
+            decoded.to_le_bytes()
+        })
+        .flatten()
+        .collect()
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn assert_small_fixture_h5(stem: &str) {
+    assert_small_fixture_h5_with_jobs(stem, 1);
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn assert_small_fixture_h5_with_jobs(stem: &str, parallel_jobs: usize) {
+    let input = small_h5(&format!("{stem}.h5"));
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join(format!("{stem}.tet"));
+    convert_h5_to_tet_with_progress(&input, &output, parallel_jobs, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 4);
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history[0].0, "convert");
+    assert_eq!(summary.history[0].1, "h5");
+
+    let src = hdf5_metno::File::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let ds = src.dataset(name).unwrap();
+        let want = hdf5_dataset_le_bytes(&ds, name);
+        let got = materialize_dataset_le_bytes(&mmap, name);
+        assert_eq!(got, want, "dataset {name} bytes differ for {stem}");
+    }
+}
+
+fn assert_small_fixture_netcdf(stem: &str) {
+    assert_small_fixture_netcdf_with_jobs(stem, 1);
+}
+
+fn assert_small_fixture_netcdf_with_jobs(stem: &str, parallel_jobs: usize) {
+    let input = small_nc(&format!("{stem}.nc"));
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join(format!("{stem}.tet"));
+    convert_netcdf_to_tet_with_progress(&input, &output, parallel_jobs, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 4);
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history[0].0, "convert");
+    assert_eq!(summary.history[0].1, "nc");
+
+    let src = netcdf::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let var = src.variable(name).expect("source variable");
+        let want = var.get_raw_values(..).unwrap();
+        let got = materialize_dataset_le_bytes(&mmap, name);
+        assert_eq!(got, want, "dataset {name} bytes differ for {stem}");
+    }
+}
+
+fn assert_small_fixture_zarr(stem: &str) {
+    let input = small_zarr(stem);
+    assert!(input.is_dir(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join(format!("{stem}.tet"));
+    convert_zarr_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 4);
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history[0].0, "convert");
+    assert_eq!(summary.history[0].1, "zarr");
+
+    for name in FIXTURE_DTYPES {
+        let want_path = input.join(name);
+        let want = zarr_array_le_bytes(&want_path);
+        let got = materialize_dataset_le_bytes(&mmap, name);
+        assert_eq!(got, want, "dataset {name} bytes differ for zarr {stem}");
+    }
+}
+
+fn zarr_array_le_bytes(array_dir: &Path) -> Vec<u8> {
+    let chunk_path = array_dir.join("c/0/0/0");
+    let compressed = std::fs::read(&chunk_path).unwrap();
+    let raw = zstd::decode_all(compressed.as_slice()).unwrap();
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(array_dir.join("zarr.json")).unwrap())
+            .unwrap();
+    let data_type = meta["data_type"].as_str().unwrap_or("");
+    match data_type {
+        "float32" => raw,
+        "float64" => raw,
+        "int32" => raw,
+        "int64" => raw,
+        other => panic!("unexpected zarr dtype {other}"),
+    }
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_tensor_3d_matches_source_bytes() {
+    assert_small_fixture_h5("tensor_3d");
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_tensor_4d_matches_source_bytes() {
+    assert_small_fixture_h5("tensor_4d");
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_tensor_5d_matches_source_bytes() {
+    assert_small_fixture_h5("tensor_5d");
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_groups_3d_matches_nested_source_bytes() {
+    let input = small_h5("groups_3d.h5");
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("groups_3d.tet");
+    convert_h5_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 5);
+
+    let src = hdf5_metno::File::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let path = format!("primary/{name}");
+        let want = hdf5_dataset_path_le_bytes(&src, &path);
+        let got = materialize_dataset_le_bytes(&mmap, &path);
+        assert_eq!(got, want, "dataset {path} bytes differ");
+    }
+    let want_scale = hdf5_dataset_path_le_bytes(&src, "aux/scale");
+    let got_scale = materialize_dataset_le_bytes(&mmap, "aux/scale");
+    assert_eq!(got_scale, want_scale);
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_cf_3d_decodes_temperature() {
+    let input = small_h5("cf_3d.h5");
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("cf_3d.tet");
+    convert_h5_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert!(summary.datasets.len() >= 5);
+
+    let src = hdf5_metno::File::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let want = hdf5_dataset_le_bytes(&src.dataset(name).unwrap(), name);
+        let got = materialize_dataset_le_bytes(&mmap, name);
+        assert_eq!(got, want, "dataset {name} bytes differ");
+    }
+    let stored = src
+        .dataset("temperature")
+        .unwrap()
+        .read_raw::<f32>()
+        .unwrap();
+    let want = cf_temperature_physical_le_bytes(
+        &stored
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>(),
+    );
+    let got = read_dataset_payload_le_bytes(&mmap, "temperature");
+    assert_f32_payload_eq(&got, &want, "temperature CF decode");
+}
+
+#[test]
+fn detect_convert_format_from_extension() {
+    use tetration::{
+        ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, ZarrConvertInput,
+        detect_convert_format,
+    };
+
+    for ext in Hdf5ConvertInput::EXTENSIONS {
+        let path = format!("tensor.{ext}");
+        assert_eq!(
+            detect_convert_format(Path::new(&path)).unwrap(),
+            ConvertInputFormat::H5,
+            "expected HDF5 for .{ext}"
+        );
+    }
+    assert_eq!(
+        detect_convert_format(Path::new("a.HDF5")).unwrap(),
+        ConvertInputFormat::H5
+    );
+
+    for ext in NetcdfConvertInput::EXTENSIONS {
+        let path = format!("tensor.{ext}");
+        assert_eq!(
+            detect_convert_format(Path::new(&path)).unwrap(),
+            ConvertInputFormat::Netcdf,
+            "expected NetCDF for .{ext}"
+        );
+    }
+    assert_eq!(
+        detect_convert_format(Path::new("a.NETCDF")).unwrap(),
+        ConvertInputFormat::Netcdf
+    );
+    assert_eq!(
+        detect_convert_format(Path::new("model.nc.gz")).unwrap(),
+        ConvertInputFormat::Netcdf
+    );
+
+    for ext in ZarrConvertInput::EXTENSIONS {
+        let path = format!("tensor.{ext}");
+        assert_eq!(
+            detect_convert_format(Path::new(&path)).unwrap(),
+            ConvertInputFormat::Zarr,
+            "expected Zarr for .{ext}"
+        );
+    }
+
+    assert!(detect_convert_format(Path::new("data.csv")).is_err());
+}
+
+#[test]
+fn detect_convert_format_sniffs_file_signature() {
+    use tetration::{
+        ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let h5_path = dir.path().join("payload.bin");
+    std::fs::write(&h5_path, Hdf5ConvertInput::MAGIC).unwrap();
+    assert_eq!(
+        detect_convert_format(&h5_path).unwrap(),
+        ConvertInputFormat::H5
+    );
+
+    let nc_path = dir.path().join("payload.dat");
+    std::fs::write(&nc_path, NetcdfConvertInput::NETCDF3_V1).unwrap();
+    assert_eq!(
+        detect_convert_format(&nc_path).unwrap(),
+        ConvertInputFormat::Netcdf
+    );
+}
+
+#[test]
+fn detect_convert_format_sniffs_zarr_directory() {
+    use tetration::{ConvertInputFormat, detect_convert_format};
+
+    let path = small_zarr("tensor_3d");
+    if path.is_dir() {
+        assert_eq!(
+            detect_convert_format(&path).unwrap(),
+            ConvertInputFormat::Zarr
+        );
+    }
+}
+
+#[cfg(feature = "tetration-hdf5")]
+#[test]
+fn convert_small_h5_parallel_jobs_matches_source_bytes() {
+    assert_small_fixture_h5_with_jobs("tensor_3d", 4);
+}
+
+#[test]
+fn convert_small_netcdf_parallel_jobs_matches_source_bytes() {
+    assert_small_fixture_netcdf_with_jobs("tensor_3d", 4);
+}
+
+#[test]
+fn convert_small_netcdf_tensor_3d_matches_source_bytes() {
+    assert_small_fixture_netcdf("tensor_3d");
+}
+
+#[test]
+fn convert_small_netcdf_tensor_4d_matches_source_bytes() {
+    assert_small_fixture_netcdf("tensor_4d");
+}
+
+#[test]
+fn convert_small_netcdf_tensor_5d_matches_source_bytes() {
+    assert_small_fixture_netcdf("tensor_5d");
+}
+
+#[test]
+fn convert_small_netcdf_groups_3d_matches_nested_source_bytes() {
+    let input = small_nc("groups_3d.nc");
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("groups_3d.tet");
+    convert_netcdf_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 4);
+
+    let src = netcdf::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let path = format!("primary/{name}");
+        let want = netcdf_dataset_path_le_bytes(&src, &path);
+        let got = materialize_dataset_le_bytes(&mmap, &path);
+        assert_eq!(got, want, "dataset {path} bytes differ");
+    }
+}
+
+#[test]
+fn convert_small_netcdf_cf_3d_decodes_temperature() {
+    let input = small_nc("cf_3d.nc");
+    assert!(input.is_file(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("cf_3d.tet");
+    convert_netcdf_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+
+    let src = netcdf::open(&input).unwrap();
+    for name in FIXTURE_DTYPES {
+        let want = netcdf_dataset_path_le_bytes(&src, name);
+        let got = materialize_dataset_le_bytes(&mmap, name);
+        assert_eq!(got, want, "dataset {name} bytes differ");
+    }
+    let stored = src
+        .variable("temperature")
+        .unwrap()
+        .get_raw_values(..)
+        .unwrap();
+    let want = cf_temperature_physical_le_bytes(&stored);
+    let got = read_dataset_payload_le_bytes(&mmap, "temperature");
+    assert_f32_payload_eq(&got, &want, "temperature CF decode");
+}
+
+#[test]
+fn convert_small_zarr_tensor_3d_matches_source_bytes() {
+    assert_small_fixture_zarr("tensor_3d");
+}
+
+#[test]
+fn convert_small_zarr_groups_3d_matches_nested_source_bytes() {
+    let input = small_zarr("groups_3d");
+    assert!(input.is_dir(), "missing fixture {}", input.display());
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("groups_3d.tet");
+    convert_zarr_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 4);
+
+    for name in FIXTURE_DTYPES {
+        let path = format!("primary/{name}");
+        let want = zarr_array_le_bytes(&input.join("primary").join(name));
+        let got = materialize_dataset_le_bytes(&mmap, &path);
+        assert_eq!(got, want, "dataset {path} bytes differ");
+    }
+}

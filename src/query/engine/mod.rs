@@ -15,7 +15,7 @@ pub use crate::query::materialize::parallel::{
 };
 pub use crate::query::materialize::{
     MaterializeReadPlanF32IntoOutcome, materialize_read_plan_f32_le,
-    materialize_read_plan_f32_le_into, spill_read_plan_f32_le,
+    materialize_read_plan_f32_le_into, materialize_read_plan_f64_le, spill_read_plan_f32_le,
 };
 pub use budget::{DEFAULT_MEMORY_BUDGET_BYTES, ExecutionBudget, MemoryStrategy};
 pub use run::{plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex};

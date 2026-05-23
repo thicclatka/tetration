@@ -1,3 +1,5 @@
+//! Chunk read plan types produced after resolving a query selection against a catalog.
+
 use serde::Serialize;
 
 /// Per-chunk file regions needed to satisfy the current plan (on-disk payload bytes; may be zstd-compressed).

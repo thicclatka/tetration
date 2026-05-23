@@ -97,7 +97,7 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 
 | Strategy                     | When chosen                                                        | Behavior                                                                                                                  |
 | ---------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| **`streaming_fold`**         | Tier-A/B **`operation`** (sum, mean, min, …)                       | Single-pass fold (scalar or partial axes); no full logical `Vec`.                                                         |
+| **`streaming_fold`**         | Tier-A/B **`operation`** (sum, mean, min, …)                       | Single-pass fold (scalar or partial axes); no full logical `Vec`. Chunks are visited **sequentially** in v1 (see [Streaming fold performance](#streaming-fold-performance)). |
 | **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                  | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                |
 | **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                  | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                 |
 | **`mmap_spill`**             | **`output.preferred.spill_array { handle }`** and no `operation`   | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode). |
@@ -123,6 +123,30 @@ Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/
 **`--spill-allow DIR`** (repeatable) **adds** extra roots to that default set.
 
 Example relative spill beside the dataset: `"handle": "slice.bin"` → next to `data.tet`. Example cache spill: `"handle": "/home/you/.cache/tetration/job-42.bin"` (or rely on a path under an allowed root).
+
+### Streaming fold performance
+
+**v1 behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops call [`fold_read_plan_scalar_operation`](../src/query/materialize/mod.rs) / partial-axis twins, which loop **`read_plan.chunks` in order** — one mmap slice + decode pass per chunk. **Multi-chunk materialize** (`materialize_read_plan_f32_le_parallel`, …) already uses Rayon when `chunk_count > 1`; **streaming fold does not yet**.
+
+So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator (e.g. mean adds each `f32`). Wall time is dominated by **page-cache / disk bandwidth** and sequential CPU over the selection, not by JSON planning.
+
+**Reference (local, gitignored fixture):** `fixtures/large/h5/tensor_20gb.tet` — 20 GiB logical **`f32`**, 320 chunks × 64 MiB raw (`dataset`: **`data`**). After convert from `tensor_20gb.h5`:
+
+```bash
+echo '{"dataset":"data","layout_version":1,"operation":{"mean":{"axes":[]}}}' \
+  | tet query --tet fixtures/large/h5/tensor_20gb.tet --execute --preview-f32 0
+```
+
+On a warm SSD, expect on the order of **~2 minutes** (~150–180 MiB/s effective over ~21 GiB read). Response checks:
+
+- **`execution.memory_strategy`**: `"streaming_fold"` (no dense 20 GiB buffer)
+- **`read_plan.chunk_count`**: `320`
+- **`operation_element_count`**: `5368709120`
+- **`operation_mean`**: ~`0.5` for the linspace fixture
+
+A **single-chunk** slice (`selection` stopping after 16 777 216 elements) completes in a few seconds — same fold path, one chunk.
+
+**Planned — parallel streaming fold:** Rayon (or similar) over **disjoint chunks**, each worker holding a **partial accumulator** (sum + count for mean/min/max, merge rules per op), then a cheap combine step. Same memory story as today; target speedup when `chunk_count` ≫ core count and I/O is not already saturated.
 
 ## Materialization and operations
 
@@ -283,8 +307,8 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 | Tier  | Name                             | When to use                                                | Engine pattern                                                                                   |
 | ----- | -------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | Extend **`fold_read_plan_scalar_operation`** / `visit_planned_chunk` (one pass, no full buffer). |
-| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | Extend **`partial_fold_read_plan_operation`** (streaming; no full logical buffer).               |
+| **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | Extend **`fold_read_plan_scalar_operation`** / `visit_planned_chunk` (one pass, no full buffer). **v1:** sequential chunk loop; **planned:** parallel partial accumulators + merge. |
+| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | Extend **`partial_fold_read_plan_operation`** (streaming; no full logical buffer). **v1:** sequential; **planned:** parallel chunk workers where merge semantics allow.               |
 | **C** | **Materialize-required**         | Needs full logical tensor order, sort, or index of extrema | Full decode (or spill file); may add new `operation_*` response fields.                          |
 | **D** | **Out of scope for `Operation`** | Writers, dtype views, foreign format import                | Separate APIs (`materialize_*`, `tet convert`, metadata), not the JSON `operation` enum.         |
 
@@ -313,13 +337,17 @@ These match the product vision but belong **beside** the reduction enum:
 | **Named axis labels**                   | Resolve `"time"` → index via dataset metadata before reductions.                                   |
 | **`rechunk` / resample**                | Writer / transform path, not read-time aggregate.                                                  |
 | **Linear algebra** (`matmul`, `einsum`) | Belongs in caller libraries on materialized slabs.                                                 |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.      |
 | **SQL / joins**                         | Explicit non-goal (see [README](../README.md)).                                                    |
+| **CLI query history**                   | **Done** — platform cache JSONL (`tet history`); `.tet` footer history is **write provenance only**. |
 
 ### Non-goals for the JSON `operation` field
 
 - Arbitrary per-chunk user callbacks (needs a sandbox and stable ABI).
 - Plugin codecs or filters beyond the v1 catalog codec tags.
 - Guarantees about numerical order beyond logical row-major **preview** order (aggregates are commutative where noted).
+- **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 6 Python).
+- **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet history` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
 When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial_fold.rs`, and (if tier **C**) `materialize_stats.rs`.
 
@@ -393,6 +421,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 | Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `tests/query.rs`                                              |
 | Redaction mode for echoed fields           | Out       | Multi-tenant logging                                                                |
 | Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical`                     |
+| Parallel streaming fold (tier A/B ops)     | Out       | Rayon over chunks + merge partial accumulators; see [Streaming fold performance](#streaming-fold-performance) |
 
 ## Robustness (catalog index)
 
@@ -402,8 +431,8 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ## Intentional gaps (v1)
 
-- Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution picks parallel only for multi-chunk **materialize** paths. Tier-A/B **`operation`** paths use **`streaming_fold`** instead of allocating the full logical buffer.
+- Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution picks parallel only for multi-chunk **materialize** paths. Tier-A/B **`operation`** paths use **`streaming_fold`** (sequential chunk loop in v1; parallel fold planned — see [Streaming fold performance](#streaming-fold-performance)).
 - **`operation.axes`** uses **decimal dimension indices**, not dataset name labels.
 - Spill path must lie under default roots (`.tet` dir + platform `…/tetration` cache dirs) or `--spill-allow`; relative handles are relative to the `.tet` directory.
-- Integer dtypes (`i32` / `i64`) are not yet supported in writers or query execution.
+- Integer dtypes (`i32` / `i64`) are supported in writers and query execution (aggregates promote to `f64` for fold paths).
 - JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy is enforced via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).

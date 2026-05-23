@@ -3,6 +3,7 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - Accum
   - badzstd
   - bytemuck
   - cdylib
@@ -12,13 +13,17 @@ words:
   - embedders
   - hyperslab
   - hyperslabs
+  - indicatif
   - maturin
   - memcpy
+  - metno
   - multichunk
   - ndim
   - nelem
+  - proptest
   - reprojection
   - rkyv
+  - rustdoc
   - TETR
   - Tetration
   - thiserror

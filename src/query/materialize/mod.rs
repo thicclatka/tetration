@@ -669,6 +669,18 @@ pub(crate) fn materialize_read_plan_f64_le_core(
     Ok((out, truncated, total_bytes_read_from_disk))
 }
 
+/// Decode planned raw `f64` chunk payloads (little-endian) into **logical row-major** order for the
+/// strided selection encoded on [`ReadPlan`].
+///
+/// `max_elements`: `None` decodes every float in the logical tensor. `Some(0)` returns an empty
+/// vector and reads nothing from disk. `Some(n)` for `n > 0` returns the first `n` values in
+/// logical row-major order and sets `truncated` when the logical tensor is longer.
+///
+/// # Errors
+///
+/// Returns [`TetError::Validation`] when chunk payloads disagree with tile geometry, the
+/// strided selection is not fully covered by planned chunks, mmap bounds fail, or zstd decode
+/// fails.
 pub fn materialize_read_plan_f64_le(
     mmap: &[u8],
     plan: &ReadPlan,
@@ -693,6 +705,12 @@ pub(crate) fn materialize_scatter_fill_f64(
     Ok(total_bytes_read_from_disk)
 }
 
+/// Spill the full logical selection as row-major `f64` LE to `path` using a file-backed mmap
+/// (disk-resident; does not allocate a dense `Vec` in RAM).
+///
+/// # Errors
+///
+/// Same validation failures as [`materialize_read_plan_f64_le`], plus I/O or mmap errors on `path`.
 pub fn spill_read_plan_f64_le(
     mmap: &[u8],
     plan: &ReadPlan,

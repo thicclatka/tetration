@@ -10,8 +10,8 @@ repository = "https://github.com/thicclatka/tetration"
 homepage = "https://github.com/thicclatka/tetration"
 documentation = "https://docs.rs/tetration"
 readme = "README.md"
-keywords = []
-categories = []
+keywords = ["tensor", "data", "format", "mmap"]
+categories = ["data-formats"]
 default-run = "tet"
 
 # rustdoc on docs.rs: build with default features off (avoid native `netcdf` / etc. when gated).
@@ -19,8 +19,9 @@ default-run = "tet"
 no-default-features = true
 
 [features]
-default = ["tetration-netcdf"]
+default = ["tetration-netcdf", "tetration-hdf5"]
 tetration-netcdf = ["dep:netcdf"]
+tetration-hdf5 = ["dep:hdf5-metno"]
 
 [[bin]]
 name = "tet"
@@ -29,13 +30,15 @@ path = "src/bin/tet.rs"
 [dependencies]
 bytemuck = "1.25.0"
 clap = { version = "4.5.51", features = ["derive"] }
+indicatif = "0.18.3"
 memmap2 = "0.9.10"
 rayon = "1.12.0"
 rkyv = "0.8.16"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = "1.0.150"
 thiserror = "2.0.18"
 netcdf = { version = "0.12.0", optional = true }
+hdf5-metno = { version = "0.12.4", optional = true }
 zstd = "0.13.3"
 
 [dev-dependencies]

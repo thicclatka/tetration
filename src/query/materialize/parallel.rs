@@ -150,6 +150,11 @@ pub(crate) fn materialize_scatter_fill_parallel_i64(
     Ok(total_bytes.load(Ordering::Relaxed))
 }
 
+/// Like [`crate::query::materialize::materialize_read_plan_i32_le`], but decodes planned chunks in parallel.
+///
+/// # Errors
+///
+/// Same failure modes as [`crate::query::materialize::materialize_read_plan_i32_le`].
 pub fn materialize_read_plan_i32_le_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
@@ -163,6 +168,11 @@ pub fn materialize_read_plan_i32_le_parallel(
     )
 }
 
+/// Like [`crate::query::materialize::materialize_read_plan_i64_le`], but decodes planned chunks in parallel.
+///
+/// # Errors
+///
+/// Same failure modes as [`crate::query::materialize::materialize_read_plan_i64_le`].
 pub fn materialize_read_plan_i64_le_parallel(
     mmap: &[u8],
     plan: &ReadPlan,

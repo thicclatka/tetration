@@ -52,6 +52,7 @@ impl SpillPathAllowlist {
         }
     }
 
+    /// True when no spill roots were configured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.roots.is_empty()
@@ -287,6 +288,11 @@ fn platform_cache_roots() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// First resolved platform cache directory (`…/tetration`), shared by spill temps and CLI history.
+pub(crate) fn platform_tetration_cache_dir() -> Option<PathBuf> {
+    platform_cache_roots().into_iter().next()
 }
 
 fn user_home_dir() -> Option<PathBuf> {

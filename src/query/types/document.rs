@@ -1,3 +1,8 @@
+//! JSON query document wire types (`QueryDocument`, selection slices, operations).
+//!
+//! Parsed by [`crate::query::parse_query_json`] and validated by [`crate::query::validate_query`].
+//! See `docs/query_engine.md` for the full schema.
+
 use serde::{Deserialize, Serialize};
 
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
@@ -9,6 +14,11 @@ pub struct AxisSlice {
     pub step: Option<u64>,
 }
 
+/// Reduction or aggregate over the logical selection.
+///
+/// Each variant carries `axes`: decimal dimension indices (`"0"`, `"1"`, …) to reduce along.
+/// An empty `axes` list reduces all elements to a scalar. Tier-A/B ops stream over chunks;
+/// tier-C ops (`median`, `quantile`, `histogram`) may materialize the full logical tensor.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
@@ -57,13 +67,17 @@ impl Operation {
     }
 }
 
+/// Caller preference for where large query results should land.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutputHint {
+    /// Keep results inline in the JSON response.
     InlineJson,
+    /// Spill a dense array to a caller-managed file identified by `handle`.
     SpillArray { handle: String },
 }
 
+/// Optional output routing hints on a query document.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct OutputHints {
@@ -71,18 +85,25 @@ pub struct OutputHints {
     pub preferred: Option<OutputHint>,
 }
 
+/// Top-level JSON query document accepted by the engine and `tet query`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryDocument {
+    /// Optional layout version hint (currently informational).
     #[serde(default)]
     pub layout_version: Option<u32>,
+    /// Dataset name as stored in the `.tet` catalog.
     pub dataset: String,
+    /// Per-axis half-open slices; omitted means the full dataset extent on each axis.
     #[serde(default)]
     pub selection: Option<Vec<AxisSlice>>,
+    /// Optional reduction over the logical selection.
     #[serde(default)]
     pub operation: Option<Operation>,
+    /// Optional output routing hints.
     #[serde(default)]
     pub output: Option<OutputHints>,
+    /// Host-side memory budget overrides for execution.
     #[serde(default)]
     pub execution: Option<ExecutionHints>,
 }
