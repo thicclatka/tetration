@@ -75,6 +75,24 @@ impl WelfordAccum {
     pub fn population_std(&self) -> f64 {
         self.population_variance().sqrt()
     }
+
+    /// Merge another online accumulator (Chan parallel algorithm).
+    pub fn merge_from(&mut self, other: &Self) {
+        if other.count_f == 0.0 {
+            return;
+        }
+        if self.count_f == 0.0 {
+            *self = *other;
+            return;
+        }
+        let n_a = self.count_f;
+        let n_b = other.count_f;
+        let n = n_a + n_b;
+        let delta = other.mean - self.mean;
+        self.mean += delta * (n_b / n);
+        self.m2 += other.m2 + delta * delta * n_a * n_b / n;
+        self.count_f = n;
+    }
 }
 
 /// Single-pass accumulator for one scalar or partial-reduction cell.
@@ -170,6 +188,35 @@ impl ValueAccum {
         }
     }
 
+    /// Combine partial accumulators from disjoint chunk visits.
+    pub fn merge_from(&mut self, other: &Self) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            *self = other.clone();
+            return;
+        }
+        self.count += other.count;
+        self.sum += other.sum;
+        self.welford.merge_from(&other.welford);
+        self.product *= other.product;
+        self.norm_l1 += other.norm_l1;
+        self.norm_l2_sq += other.norm_l2_sq;
+        self.all_finite &= other.all_finite;
+        self.any_nan |= other.any_nan;
+        if other.have_min_max {
+            if self.have_min_max {
+                self.min = self.min.min(other.min);
+                self.max = self.max.max(other.max);
+            } else {
+                self.min = other.min;
+                self.max = other.max;
+                self.have_min_max = true;
+            }
+        }
+    }
+
     pub fn finish_scalar(self, kind: ReductionKind) -> ScalarReductionResult {
         let mut sum_scalar = None;
         let mut mean_scalar = None;
@@ -254,6 +301,22 @@ impl ArgIndexAccum {
 
     pub fn index(&self) -> u64 {
         self.best_idx
+    }
+
+    /// Combine partial argmin/argmax state from disjoint chunk visits.
+    pub fn merge_from(&mut self, other: &Self, kind: ReductionKind) {
+        if !other.have {
+            return;
+        }
+        if !self.have {
+            *self = *other;
+            return;
+        }
+        match kind {
+            ReductionKind::ArgMin if other.best_val < self.best_val => *self = *other,
+            ReductionKind::ArgMax if other.best_val > self.best_val => *self = *other,
+            _ => {}
+        }
     }
 
     pub fn finish_scalar(self, kind: ReductionKind, element_count: usize) -> ScalarReductionResult {

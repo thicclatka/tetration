@@ -14,7 +14,7 @@ use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 use crate::query::fold::shared::{FoldPlanOutcome, build_fold_plan_outcome, validate_fold_preview};
 
-fn partial_arg_fields(
+pub(crate) fn partial_arg_fields(
     kind: ReductionKind,
     element_count: usize,
     out_shape: &[u64],
@@ -34,7 +34,7 @@ fn partial_arg_fields(
     fields
 }
 
-fn partial_fields(
+pub(crate) fn partial_fields(
     kind: ReductionKind,
     element_count: usize,
     out_shape: &[u64],
@@ -78,6 +78,15 @@ pub(crate) fn fold_read_plan_partial_operation(
     kind: ReductionKind,
     axis_labels: &[String],
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_parallel(
+            mmap,
+            plan,
+            max_f32,
+            kind,
+            axis_labels,
+        );
+    }
     fold_read_plan_partial_operation_impl(mmap, plan, max_f32, kind, axis_labels, false)
 }
 
@@ -204,6 +213,15 @@ pub(crate) fn fold_read_plan_partial_operation_f64(
     kind: ReductionKind,
     axis_labels: &[String],
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_f64_parallel(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            axis_labels,
+        );
+    }
     fold_read_plan_partial_operation_impl(mmap, plan, max_preview, kind, axis_labels, true)
 }
 
@@ -506,7 +524,7 @@ fn run_partial_promoted_i64(
     }
 }
 
-fn validate_fold_preview_f64(
+pub(crate) fn validate_fold_preview_f64(
     saw_any: bool,
     preview: &[f64],
     preview_cap: usize,

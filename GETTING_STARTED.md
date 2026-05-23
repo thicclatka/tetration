@@ -148,7 +148,7 @@ Extend tier A–C **`operation`** when the result is still a **reduction or QC s
 
 ### Other
 
-- [ ] **Parallel streaming fold** — Rayon over chunks for tier-A/B ops (partial accumulators + merge); today fold is sequential (~2 min for 20 GiB full `mean` on SSD — see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
+- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when `chunk_count > 1` ([`src/query/fold/parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
 - [ ] **GPU-friendly materialize** — optional device copy after CPU decode (binding concern; format stays mmap-first).
 - [ ] **Layout / codec evolution** — v2 only when v1 guarantees are insufficient (new dtypes, filters, dedicated metadata regions).
@@ -181,4 +181,4 @@ TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 4. **History events v2:** structured transform event + session flush API.
 5. **Python repo scaffold:** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
 6. **Histogram:** caller-supplied `min` / `max` for bin edges.
-7. **Parallel streaming fold:** Phase 8 — Rayon over chunks for tier-A/B ops (see below).
+7. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).

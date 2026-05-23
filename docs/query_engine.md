@@ -126,7 +126,7 @@ Example relative spill beside the dataset: `"handle": "slice.bin"` → next to `
 
 ### Streaming fold performance
 
-**v1 behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops call [`fold_read_plan_scalar_operation`](../src/query/materialize/mod.rs) / partial-axis twins, which loop **`read_plan.chunks` in order** — one mmap slice + decode pass per chunk. **Multi-chunk materialize** (`materialize_read_plan_f32_le_parallel`, …) already uses Rayon when `chunk_count > 1`; **streaming fold does not yet**.
+**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops call [`fold_read_plan_scalar_operation`](../src/query/materialize/mod.rs) / partial-axis twins. When **`read_plan.chunk_count > 1`**, fold uses [`parallel_fold.rs`](../src/query/fold/parallel_fold.rs) (Rayon over disjoint chunks, partial accumulators + merge — same pattern as [`materialize_read_plan_f32_le_parallel`](../src/query/materialize/parallel.rs)). Single-chunk plans stay sequential.
 
 So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator (e.g. mean adds each `f32`). Wall time is dominated by **page-cache / disk bandwidth** and sequential CPU over the selection, not by JSON planning.
 
@@ -146,7 +146,7 @@ On a warm SSD, expect on the order of **~2 minutes** (~150–180 MiB/s effecti
 
 A **single-chunk** slice (`selection` stopping after 16 777 216 elements) completes in a few seconds — same fold path, one chunk.
 
-**Planned — parallel streaming fold:** Rayon (or similar) over **disjoint chunks**, each worker holding a **partial accumulator** (sum + count for mean/min/max, merge rules per op), then a cheap combine step. Same memory story as today; target speedup when `chunk_count` ≫ core count and I/O is not already saturated.
+**Parallel fold:** per-chunk partial [`ValueAccum`](../src/query/fold/reduction.rs) / [`ArgIndexAccum`](../src/query/fold/reduction.rs) with **`merge_from`**, then combine. Same memory story as sequential fold (no dense logical buffer). Speedup depends on cores vs disk bandwidth; re-benchmark large fixtures after enabling.
 
 ## Materialization and operations
 
@@ -431,7 +431,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ## Intentional gaps (v1)
 
-- Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution picks parallel only for multi-chunk **materialize** paths. Tier-A/B **`operation`** paths use **`streaming_fold`** (sequential chunk loop in v1; parallel fold planned — see [Streaming fold performance](#streaming-fold-performance)).
+- Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution and fold both pick parallel decode when **`chunk_count > 1`** (see [Streaming fold performance](#streaming-fold-performance)).
 - **`operation.axes`** uses **decimal dimension indices**, not dataset name labels.
 - Spill path must lie under default roots (`.tet` dir + platform `…/tetration` cache dirs) or `--spill-allow`; relative handles are relative to the `.tet` directory.
 - Integer dtypes (`i32` / `i64`) are supported in writers and query execution (aggregates promote to `f64` for fold paths).

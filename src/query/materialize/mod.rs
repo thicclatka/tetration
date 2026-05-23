@@ -195,6 +195,11 @@ pub(crate) fn fold_read_plan_scalar_operation(
     max_f32: usize,
     kind: ReductionKind,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_parallel(
+            mmap, plan, max_f32, kind,
+        );
+    }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_f32.min(n);
     let mut preview = vec![f32::NAN; preview_cap];
@@ -757,6 +762,14 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
     max_preview: usize,
     kind: ReductionKind,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_f64_parallel(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+        );
+    }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
     let mut f64_preview = vec![f64::NAN; preview_cap];
