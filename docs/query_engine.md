@@ -1,8 +1,8 @@
 # Query engine
 
-The **query engine** (`src/query/engine/`) turns a validated JSON [`QueryDocument`](../src/query/types/document.rs) into a [`QueryResponse`](../src/query/types/response.rs): catalog resolution, a chunk-level **read plan**, and optionally mmap-backed **`f32`** or **`f64`** decode plus **`operation`** aggregates.
+The **query engine** (`src/query/`) turns a validated JSON [`QueryDocument`](../src/query/types/document.rs) into a [`QueryResponse`](../src/query/types/response.rs): catalog resolution, a chunk-level **read plan**, and optionally mmap-backed decode plus **`operation`** aggregates.
 
-JSON parsing and schema validation live in **`document.rs`**; wire types live in **`types/`** (`document`, `plan`, `response`, `error`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
+JSON parsing and schema validation live in **`document.rs`**; wire types live in **`types/`** (`document`, `plan`, `response`, `error`). Planning and decode live in **`plan/`** and **`decode/`**; materialize, fold, and dtype routing in **`materialize/`**, **`fold/`**, and **`dispatch.rs`**; orchestration in **`engine/`** (`run`, `operations`, `budget`, `spill_policy`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
 
 See [JSON security (input and output)](#json-security-input-and-output) for trust boundaries and hardening notes.
 
@@ -30,7 +30,7 @@ flowchart TD
         Chunks["chunk_coords_intersecting_strided"]
     end
 
-    subgraph planning["Planning"]
+    subgraph planning["plan/"]
         Sel["selection resolved_dense_global_box"]
         RP["read_plan build_read_plan"]
         PQM --> Summary --> Match
@@ -59,22 +59,14 @@ flowchart TD
 
 ## Module map
 
-| Module                | File                   | Responsibility                                                                                                         |
-| --------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **run**               | `run.rs`               | Public entrypoints: `plan_query_empty`, `plan_query_with_tet_mmap`; builds `QueryResponse`; dataset match / miss.      |
-| **selection**         | `selection.rs`         | JSON `selection` → half-open global box `[g0, g1)` and per-axis `step` (default full tensor, step 1).                  |
-| **read_plan**         | `read_plan.rs`         | `ReadPlan`: chunk I/O rows + selection geometry (`logical_selection_shape`, `logical_f32_element_count`).              |
-| **indexing**          | `indexing.rs`          | Row-major linear index ↔ multi-dimensional coords (shared by materialize and reductions).                              |
-| **chunk_decode**      | `chunk_decode.rs`      | Mmap slice bounds, codec decode (raw **0**, zstd **1**), `visit_planned_chunk` / `_f64`, scatter into logical buffers. |
-| **materialize**       | `materialize.rs`       | Full/capped materialize (f32/f64), export spill, logical RAM/temp-spill backing, scalar fold entry points.             |
-| **materialize_stats** | `materialize_stats.rs` | Tier-C **`median`**, **`quantile`**, **`histogram`** over materialized selections (scalar + partial axes).             |
-| **partial_geometry**  | `partial_geometry.rs`  | Shared partial-axis output shape and index mapping for tier-B/C gather.                                                |
-| **parallel**          | `parallel.rs`          | Rayon `par_iter` over `ReadPlan.chunks`; f32/f64 parallel materialize (disjoint logical-index writes).                 |
-| **partial_fold**      | `partial_fold.rs`      | Streaming partial-axis reductions (no full logical tensor).                                                            |
-| **fold**              | `fold.rs`              | Shared fold preview validation + `FoldPlanOutcome`.                                                                    |
-| **budget**            | `budget.rs`            | `ExecutionBudget::resolve` — host RAM × percent, `.tet` TIDX header, query `execution.*`; picks `MemoryStrategy`.      |
-| **reduction**         | `reduction.rs`         | `ReductionKind`, `ValueAccum`, preview field mapping for scalar and partial outputs.                                   |
-| **operations**        | `operations.rs`        | `build_execution_preview` — dtype routing, memory strategy, fold/spill, tier-C dispatch.                               |
+| Submodule          | Files                                             | Responsibility                                                                              |
+| ------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **`plan/`**        | `selection.rs`, `read_plan.rs`                    | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.       |
+| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                  | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords. |
+| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`     | Full/capped materialize (f32/f64/i32/i64), export spill, parallel fill, tier-C stats.       |
+| **`fold/`**        | `shared.rs`, `reduction.rs`, `partial_fold.rs`, … | `FoldPlanOutcome`, `ReductionKind`, streaming partial-axis reductions.                      |
+| **`dispatch.rs`**  | —                                                 | Dtype routing for materialize, spill, scalar/partial fold.                                  |
+| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …         | `plan_query_*`, `build_execution_preview`, budget and spill policy.                         |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …).
 
@@ -82,10 +74,10 @@ Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and
 
 From `QueryDocument` + catalog metadata:
 
-1. **`selection.rs`** — resolve per-axis box → `g0`, `g1_exclusive`, `step`.
+1. **`plan/selection.rs`** — resolve per-axis box → `g0`, `g1_exclusive`, `step`.
 2. **Chunk-touch policy** — if any `step ≠ 1`, use `strided_half_open`; else `dense_half_open_unit_step`.
 3. **`catalog`** — `chunk_coords_intersecting_strided` → chunk coord list.
-4. **`read_plan.rs`** — `build_read_plan` → `ReadPlan` (chunk I/O rows + `logical_selection_shape`).
+4. **`plan/read_plan.rs`** — `build_read_plan` → `ReadPlan` (chunk I/O rows + `logical_selection_shape`).
 
 Each `ReadPlan.chunks` entry names one on-disk tile that intersects the selection. Chunk iteration order follows the catalog writer (last axis fastest); **decoded values** are **not** in chunk order—they are scattered into logical row-major selection order during materialization.
 
@@ -317,7 +309,7 @@ These match the product vision but belong **beside** the reduction enum:
 | Capability                              | Why separate                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | **Read / export**                       | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)). |
-| **`cast` / integer dtypes**               | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                  |
+| **`cast` / integer dtypes**             | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                  |
 | **Named axis labels**                   | Resolve `"time"` → index via dataset metadata before reductions.                                   |
 | **`rechunk` / resample**                | Writer / transform path, not read-time aggregate.                                                  |
 | **Linear algebra** (`matmul`, `einsum`) | Belongs in caller libraries on materialized slabs.                                                 |
@@ -337,12 +329,12 @@ The JSON query plane is a **declarative control document**, not executable code.
 
 ### Threat model (v1)
 
-| Surface             | Source                                                   | Risk if mishandled                                                                                       |
-| ------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **Query JSON in**   | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep JSON), logic abuse (absurd selection), confused deputy (if a host passes paths from JSON) |
-| **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))          |
-| **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                    |
-| **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                            |
+| Surface             | Source                                                   | Risk if mishandled                                                                                        |
+| ------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Query JSON in**   | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep JSON), logic abuse (absurd selection), confused deputy (if a host passes paths from JSON)  |
+| **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))           |
+| **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                     |
+| **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                             |
 | **Spill path**      | `output.preferred.spill_array.handle` in query JSON      | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs) |
 
 The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
@@ -356,7 +348,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 3. **Axis tokens restricted** — `operation.axes` entries must be non-empty **ASCII decimal** strings (e.g. `"0"`), not arbitrary expressions or Unicode axis names ([`validate_operation_axis_token`](../src/query/document.rs)).
 4. **Slice sanity** — `step != 0`; when both `start` and `stop` are set, `start < stop`.
 5. **Non-empty `dataset`** — Whitespace-only names rejected.
-6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/engine/selection.rs)); JSON cannot name chunk file offsets directly.
+6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/plan/selection.rs)); JSON cannot name chunk file offsets directly.
 7. **No `.tet` path in query JSON** — Opening a `.tet` file uses the **host** path (`--tet`, API argument), not a field inside the query document. Spill **output** paths _are_ in JSON today; deployments should allowlist or rewrite them.
 8. **Size and shape caps** — [`parse_query_json`](../src/query/document.rs) rejects payloads over [`QueryLimits::DEFAULT.max_json_bytes`](../src/query/document.rs) (1 MiB) and nesting depth over [`QueryLimits::DEFAULT.max_json_depth`](../src/query/document.rs) (64). [`validate_query`](../src/query/document.rs) caps `dataset` length, `selection` rank and `operation.axes` count (≤ [`MAX_NDIM`](../src/catalog/mod.rs)), and per-axis label length via **`QueryLimits::DEFAULT`**.
 9. **`deny_unknown_fields`** — [`QueryDocument`](../src/query/types/document.rs) and nested input types reject unexpected JSON keys at parse time.
