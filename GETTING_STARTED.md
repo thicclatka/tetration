@@ -46,7 +46,8 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Spill path allowlist** — host `SpillPathAllowlist` + `plan_query_with_tet_mmap_ex`; CLI `--spill-allow DIR` (repeatable).
 - [x] **Tier-2 index ops** — `arg_min` / `arg_max` (scalar + partial axes; JSON snake_case tags).
 - [x] **Scalar `median`** (tier-C): in-RAM when logical selection ≤ budget, else temp spill + mmap + cleanup (`in_memory_materialize` / `temp_spill_materialize`).
-- [ ] **Non-`f32` dtypes**, partial-axis `median`, and other tier-C stats (`quantile`, …); see [operations roadmap](docs/query_engine.md#operations-roadmap-planned).
+- [x] **`f64` execution** (`DTYPE_F64 = 2`): decode/materialize/preview/spill/ops mirror the `f32` path; `execution.f64_preview` when dtype is f64.
+- [x] **Tier-C partial stats:** partial-axis **`median`**, scalar + partial **`quantile`**, scalar + partial **`histogram`** (equal-width bins per reduced cell).
 
 ## Phase 5 — Interop and bindings (later)
 
@@ -65,6 +66,6 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Suggested next PR-sized slices (pick one):**
 
-1. **Operations:** partial-axis `median`, quantile / histogram in [query engine roadmap](docs/query_engine.md#tier-2--still-tensor-stats-heavier).
-2. **Dtypes:** `f64` / integer read paths on disk and in materialize.
-3. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
+1. **Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.
+2. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
+3. **Histogram:** caller-supplied `min` / `max` for bin edges.

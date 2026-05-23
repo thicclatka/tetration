@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::catalog::{
-    CatalogError, DTYPE_F32, TetFileSummaryV1, chunk_coords_intersecting_strided,
-    f32_tensor_bytes_from_shape, read_tet_summary_v1,
+    CatalogError, DTYPE_F32, DTYPE_F64, TetFileSummaryV1, chunk_coords_intersecting_strided,
+    f32_tensor_bytes_from_shape, f64_tensor_bytes_from_shape, read_tet_summary_v1,
 };
 use crate::query::types::{
     CHUNK_TOUCH_POLICY, DatasetResolution, QueryDocument, QueryExecutionPreview, QueryResponse,
@@ -224,6 +224,9 @@ fn plan_query_matched_dataset(
             dataset_f32_bytes: (rec.dtype == DTYPE_F32)
                 .then(|| f32_tensor_bytes_from_shape(&rec.shape))
                 .flatten(),
+            dataset_f64_bytes: (rec.dtype == DTYPE_F64)
+                .then(|| f64_tensor_bytes_from_shape(&rec.shape))
+                .flatten(),
             file_execution: Some(summary.file_execution),
             available_datasets: None,
         }),
@@ -250,6 +253,7 @@ fn plan_query_unmatched_dataset(
             chunk_shape: None,
             chunk_index_rows: None,
             dataset_f32_bytes: None,
+            dataset_f64_bytes: None,
             file_execution: Some(summary.file_execution),
             available_datasets: Some(names),
         }),

@@ -120,8 +120,24 @@ pub fn validate_query(doc: &QueryDocument) -> Result<(), TetError> {
     }
     if let Some(op) = &doc.operation {
         validate_operation_axes_v1(op)?;
+        validate_operation_params(op)?;
     }
     Ok(())
+}
+
+fn validate_operation_params(op: &Operation) -> Result<(), TetError> {
+    match op {
+        Operation::Quantile { q, .. } if !(0.0..=1.0).contains(q) => Err(TetError::Validation(
+            format!("quantile q must be in [0.0, 1.0], got {q}"),
+        )),
+        Operation::Histogram { bins, .. } if *bins == 0 => {
+            Err(TetError::Validation("histogram bins must be >= 1".into()))
+        }
+        Operation::Histogram { bins, .. } if *bins > 4096 => Err(TetError::Validation(format!(
+            "histogram bins exceeds maximum 4096 (got {bins})"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 fn validate_operation_axis_token(s: &str) -> Result<(), TetError> {

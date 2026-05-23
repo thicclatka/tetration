@@ -4,7 +4,10 @@ mod fixture;
 
 use std::path::{Path, PathBuf};
 
-use fixture::{CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_tiles, write_multichunk_2x3_zero_zstd};
+use fixture::{
+    CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_f64_tiles, write_multichunk_2x3_tiles,
+    write_multichunk_2x3_zero_zstd,
+};
 use tetration::{
     CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DTYPE_F32, OneChunkRawWrite, RawArrayWrite,
     SpillPathAllowlist, TempSpillFile, create_empty_v1_file, materialize_read_plan_f32_le,
@@ -13,6 +16,12 @@ use tetration::{
     plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
     write_one_chunk_raw_file, write_raw_array_file,
 };
+
+/// JSON string literal for a filesystem path embedded in test query fixtures.
+fn json_path_handle(path: &Path) -> String {
+    let s = path.display().to_string();
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
 
 // --- JSON / plan-only ---
 
@@ -61,6 +70,8 @@ fn accepts_min_max_count_operations() {
         r#"{"dataset":"a","operation":{"std":{"axes":["0"]}}}"#,
         r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#,
         r#"{"dataset":"a","operation":{"median":{"axes":[]}}}"#,
+        r#"{"dataset":"a","operation":{"quantile":{"axes":[],"q":0.5}}}"#,
+        r#"{"dataset":"a","operation":{"histogram":{"axes":[],"bins":4}}}"#,
     ] {
         let doc = parse_query_json(json).unwrap();
         validate_query(&doc).unwrap();
@@ -772,8 +783,8 @@ fn spill_path_allowlist_rejects_outside_root() {
     let policy = SpillPathAllowlist::default_for_tet(&path, std::iter::empty::<PathBuf>()).unwrap();
     let spill_out = outside_dir.path().join("out.bin");
     let json = format!(
-        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":"{}"}}}}}}}}"#,
-        spill_out.display()
+        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":{}}}}}}}}}"#,
+        json_path_handle(&spill_out)
     );
     let doc = parse_query_json(&json).unwrap();
     let err = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap_err();
@@ -797,8 +808,8 @@ fn spill_path_allowlist_rejects_outside_root() {
     let policy = SpillPathAllowlist::default_for_tet(&path, [allow.clone()]).unwrap();
     let spill_ok = allow.join("out.bin");
     let json = format!(
-        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":"{}"}}}}}}}}"#,
-        spill_ok.display()
+        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":{}}}}}}}}}"#,
+        json_path_handle(&spill_ok)
     );
     let doc = parse_query_json(&json).unwrap();
     let resp = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap();
@@ -860,6 +871,89 @@ fn plan_query_operation_median_scalar_temp_spill_when_over_budget() {
     assert!((ex.operation_median.unwrap() - 3.5).abs() < 1e-5);
     assert_eq!(ex.memory_strategy, Some("temp_spill_materialize"));
     assert!(ex.spill_f32_path.is_none());
+}
+
+#[test]
+fn plan_query_f64_preview_and_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f64.tet");
+    write_multichunk_2x3_f64_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.f64_preview.len(), 4);
+    assert!(ex.f64_preview_truncated);
+    assert_eq!(ex.f32_preview.len(), 0);
+    assert!((ex.operation_sum.unwrap() - 21.0).abs() < 1e-9);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_f64_bytes, Some(48));
+}
+
+#[test]
+fn plan_query_operation_median_partial_axis_0() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"median":{"axes":["0"]}},"execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_reduced_shape, Some(vec![3]));
+    let medians = ex.operation_reduced_median.as_ref().unwrap();
+    assert_eq!(medians.len(), 3);
+    assert!((medians[0] - 2.5).abs() < 1e-5);
+    assert!((medians[1] - 3.5).abs() < 1e-5);
+    assert!((medians[2] - 4.5).abs() < 1e-5);
+}
+
+#[test]
+fn plan_query_operation_quantile_scalar() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"quantile":{"axes":[],"q":0.95}},"execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert!((ex.operation_quantile.unwrap() - 5.75).abs() < 1e-5);
+}
+
+#[test]
+fn plan_query_operation_histogram_scalar() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"histogram":{"axes":[],"bins":3}},"execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    let counts = ex.operation_histogram_counts.as_ref().unwrap();
+    let edges = ex.operation_histogram_edges.as_ref().unwrap();
+    assert_eq!(counts.len(), 3);
+    assert_eq!(edges.len(), 4);
+    assert_eq!(counts.iter().sum::<f64>() as u32, 6);
+}
+
+#[test]
+fn plan_query_f64_median_temp_spill_when_over_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f64.tet");
+    write_multichunk_2x3_f64_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":16}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(2)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert!((ex.operation_median.unwrap() - 3.5).abs() < 1e-5);
+    assert_eq!(ex.memory_strategy, Some("temp_spill_materialize"));
 }
 
 // --- spill policy (from src/query/engine/spill_policy.rs) ---

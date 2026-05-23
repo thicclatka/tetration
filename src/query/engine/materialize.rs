@@ -5,11 +5,18 @@ use std::path::Path;
 use memmap2::Mmap;
 
 use crate::query::types::{ReadPlan, TetError};
+use crate::utils::dtype::ElementDtype;
+use crate::utils::f64_le;
 
 use super::budget::{ExecutionBudget, MemoryStrategy};
-use super::chunk_decode::{scatter_chunk_into_plan, visit_planned_chunk};
+use super::chunk_decode::{
+    scatter_chunk_into_plan, scatter_chunk_into_plan_f64, visit_planned_chunk,
+    visit_planned_chunk_f64,
+};
 use super::fold::{build_fold_plan_outcome, validate_fold_preview};
-use super::parallel::materialize_read_plan_f32_le_parallel;
+use super::parallel::{
+    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel,
+};
 use super::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 use super::spill_policy::{SpillPathAllowlist, TempSpillFile};
 
@@ -308,10 +315,22 @@ pub(crate) enum LogicalF32Backing {
     TempSpill(TempSpillFile),
 }
 
-pub(crate) struct MaterializedLogical {
-    pub backing: LogicalF32Backing,
-    pub total_bytes_read_from_disk: u64,
-    pub strategy: MemoryStrategy,
+pub(crate) enum LogicalF64Backing {
+    InMemory(Vec<f64>),
+    TempSpill(TempSpillFile),
+}
+
+pub(crate) enum MaterializedLogical {
+    F32 {
+        backing: LogicalF32Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    F64 {
+        backing: LogicalF64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
 }
 
 fn materialize_into_vec(mmap: &[u8], plan: &ReadPlan) -> Result<(Vec<f32>, u64), TetError> {
@@ -326,37 +345,89 @@ fn materialize_into_vec(mmap: &[u8], plan: &ReadPlan) -> Result<(Vec<f32>, u64),
     })
 }
 
+fn materialize_into_vec_f64(mmap: &[u8], plan: &ReadPlan) -> Result<(Vec<f64>, u64), TetError> {
+    if plan.chunks.len() <= 1 {
+        materialize_read_plan_f64_le(mmap, plan, None)
+    } else {
+        materialize_read_plan_f64_le_parallel(mmap, plan, None)
+    }
+    .map(|(v, truncated, bytes)| {
+        debug_assert!(!truncated);
+        (v, bytes)
+    })
+}
+
 /// Decode the full logical selection, choosing RAM vs temp spill from the memory budget.
-///
-/// # Errors
-///
-/// Propagates materialize / spill / validation failures.
 pub(crate) fn materialize_logical_selection(
     mmap: &[u8],
     plan: &ReadPlan,
     budget: &ExecutionBudget,
     allowlist: &SpillPathAllowlist,
+    dtype: ElementDtype,
 ) -> Result<MaterializedLogical, TetError> {
-    if budget.full_tensor_exceeds_budget(plan)? {
+    if budget.full_tensor_exceeds_budget(plan, dtype)? {
         let temp = TempSpillFile::create(allowlist)?;
-        let bytes = spill_read_plan_f32_le(mmap, plan, temp.path())?;
-        Ok(MaterializedLogical {
-            backing: LogicalF32Backing::TempSpill(temp),
-            total_bytes_read_from_disk: bytes,
-            strategy: MemoryStrategy::TempSpillMaterialize,
+        let bytes = match dtype {
+            ElementDtype::F32 => spill_read_plan_f32_le(mmap, plan, temp.path())?,
+            ElementDtype::F64 => spill_read_plan_f64_le(mmap, plan, temp.path())?,
+        };
+        Ok(match dtype {
+            ElementDtype::F32 => MaterializedLogical::F32 {
+                backing: LogicalF32Backing::TempSpill(temp),
+                total_bytes_read_from_disk: bytes,
+                strategy: MemoryStrategy::TempSpillMaterialize,
+            },
+            ElementDtype::F64 => MaterializedLogical::F64 {
+                backing: LogicalF64Backing::TempSpill(temp),
+                total_bytes_read_from_disk: bytes,
+                strategy: MemoryStrategy::TempSpillMaterialize,
+            },
         })
     } else {
-        let (vec, bytes) = materialize_into_vec(mmap, plan)?;
-        Ok(MaterializedLogical {
-            backing: LogicalF32Backing::InMemory(vec),
-            total_bytes_read_from_disk: bytes,
-            strategy: MemoryStrategy::InMemoryMaterialize,
-        })
+        match dtype {
+            ElementDtype::F32 => {
+                let (vec, bytes) = materialize_into_vec(mmap, plan)?;
+                Ok(MaterializedLogical::F32 {
+                    backing: LogicalF32Backing::InMemory(vec),
+                    total_bytes_read_from_disk: bytes,
+                    strategy: MemoryStrategy::InMemoryMaterialize,
+                })
+            }
+            ElementDtype::F64 => {
+                let (vec, bytes) = materialize_into_vec_f64(mmap, plan)?;
+                Ok(MaterializedLogical::F64 {
+                    backing: LogicalF64Backing::InMemory(vec),
+                    total_bytes_read_from_disk: bytes,
+                    strategy: MemoryStrategy::InMemoryMaterialize,
+                })
+            }
+        }
     }
 }
 
-/// First `max_f32` logical values without a second full decode (from RAM or spill file).
+/// First `max` logical values without a second full decode (from RAM or spill file).
 pub(crate) fn preview_from_materialized(
+    materialized: &MaterializedLogical,
+    logical_len: usize,
+    max: usize,
+) -> Result<(Vec<f32>, Vec<f64>, bool, bool), TetError> {
+    let cap = max.min(logical_len);
+    if cap == 0 {
+        return Ok((Vec::new(), Vec::new(), logical_len > 0, logical_len > 0));
+    }
+    match materialized {
+        MaterializedLogical::F32 { backing, .. } => {
+            let (p, t) = preview_from_materialized_f32(backing, logical_len, max)?;
+            Ok((p, Vec::new(), t, false))
+        }
+        MaterializedLogical::F64 { backing, .. } => {
+            let (p, t) = preview_from_materialized_f64(backing, logical_len, max)?;
+            Ok((Vec::new(), p, false, t))
+        }
+    }
+}
+
+fn preview_from_materialized_f32(
     backing: &LogicalF32Backing,
     logical_len: usize,
     max_f32: usize,
@@ -368,12 +439,29 @@ pub(crate) fn preview_from_materialized(
     match backing {
         LogicalF32Backing::InMemory(v) => Ok((v[..cap].to_vec(), logical_len > max_f32)),
         LogicalF32Backing::TempSpill(temp) => {
-            preview_from_spill_file(temp.path(), cap, logical_len)
+            preview_from_spill_file_f32(temp.path(), cap, logical_len)
         }
     }
 }
 
-fn preview_from_spill_file(
+fn preview_from_materialized_f64(
+    backing: &LogicalF64Backing,
+    logical_len: usize,
+    max: usize,
+) -> Result<(Vec<f64>, bool), TetError> {
+    let cap = max.min(logical_len);
+    if cap == 0 {
+        return Ok((Vec::new(), logical_len > 0));
+    }
+    match backing {
+        LogicalF64Backing::InMemory(v) => Ok((v[..cap].to_vec(), logical_len > max)),
+        LogicalF64Backing::TempSpill(temp) => {
+            preview_from_spill_file_f64(temp.path(), cap, logical_len)
+        }
+    }
+}
+
+fn preview_from_spill_file_f32(
     path: &Path,
     cap: usize,
     logical_len: usize,
@@ -393,12 +481,221 @@ fn preview_from_spill_file(
     Ok((slice[..cap].to_vec(), logical_len > cap))
 }
 
+fn preview_from_spill_file_f64(
+    path: &Path,
+    cap: usize,
+    logical_len: usize,
+) -> Result<(Vec<f64>, bool), TetError> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| TetError::Validation(format!("temp spill read failed: {e}")))?;
+    let mmap = unsafe {
+        Mmap::map(&file)
+            .map_err(|e| TetError::Validation(format!("temp spill mmap failed: {e}")))?
+    };
+    let slice: &[f64] = bytemuck::cast_slice(&mmap);
+    if slice.len() < cap {
+        return Err(TetError::Validation(
+            "temp spill shorter than logical selection".into(),
+        ));
+    }
+    Ok((slice[..cap].to_vec(), logical_len > cap))
+}
+
 /// Preview from an export spill file (single decode pass for spill + preview).
 pub(crate) fn preview_from_spill_export_file(
     path: &Path,
     logical_len: usize,
-    max_f32: usize,
-) -> Result<(Vec<f32>, bool), TetError> {
-    let cap = max_f32.min(logical_len);
-    preview_from_spill_file(path, cap, logical_len)
+    max: usize,
+    dtype: ElementDtype,
+) -> Result<(Vec<f32>, Vec<f64>, bool, bool), TetError> {
+    let cap = max.min(logical_len);
+    match dtype {
+        ElementDtype::F32 => {
+            let (p, t) = preview_from_spill_file_f32(path, cap, logical_len)?;
+            Ok((p, Vec::new(), t, false))
+        }
+        ElementDtype::F64 => {
+            let (p, t) = preview_from_spill_file_f64(path, cap, logical_len)?;
+            Ok((Vec::new(), p, false, t))
+        }
+    }
+}
+
+// --- f64 materialize / fold / spill ---
+
+type ScatterFillF64Fn = fn(&[u8], &ReadPlan, &mut [f64]) -> Result<u64, TetError>;
+
+fn check_materialized_complete_f64(out: &[f64]) -> Result<(), TetError> {
+    if out.iter().any(|v| v.is_nan()) {
+        return Err(TetError::Validation(
+            "materialized selection has unset elements (chunk payloads vs selection mismatch)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn materialize_read_plan_f64_le_core(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_elements: Option<usize>,
+    scatter_fill: ScatterFillF64Fn,
+) -> Result<(Vec<f64>, bool, u64), TetError> {
+    if matches!(max_elements, Some(0)) {
+        return Ok((Vec::new(), false, 0));
+    }
+    let n = plan.logical_f32_element_count;
+    let cap = max_elements.map(|m| m.min(n));
+    let (buf_len, truncated) = match cap {
+        Some(c) if c < n => (c, true),
+        _ => (n, max_elements.is_some_and(|m| m < n)),
+    };
+    let mut out = vec![f64::NAN; buf_len];
+    let total_bytes_read_from_disk = scatter_fill(mmap, plan, &mut out)?;
+    check_materialized_complete_f64(&out)?;
+    Ok((out, truncated, total_bytes_read_from_disk))
+}
+
+pub fn materialize_read_plan_f64_le(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_elements: Option<usize>,
+) -> Result<(Vec<f64>, bool, u64), TetError> {
+    materialize_read_plan_f64_le_core(mmap, plan, max_elements, materialize_scatter_fill_f64)
+}
+
+pub(crate) fn materialize_scatter_fill_f64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    out: &mut [f64],
+) -> Result<u64, TetError> {
+    validate_read_plan_geometry(plan, out.len())?;
+    let mut total_bytes_read_from_disk: u64 = 0;
+    for c in &plan.chunks {
+        let n = scatter_chunk_into_plan_f64(mmap, plan, c, out)?;
+        total_bytes_read_from_disk = total_bytes_read_from_disk
+            .checked_add(n)
+            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+    }
+    Ok(total_bytes_read_from_disk)
+}
+
+pub fn spill_read_plan_f64_le(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    path: &std::path::Path,
+) -> Result<u64, TetError> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    use memmap2::MmapMut;
+
+    let n = plan.logical_f32_element_count;
+    let byte_len = u64::try_from(n)
+        .map_err(|_| TetError::Validation("logical element count overflow".into()))?;
+    let byte_len = f64_le::bytes_from_elem_count(byte_len)
+        .ok_or_else(|| TetError::Validation("spill byte length overflow".into()))?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| TetError::Validation(format!("spill open failed: {e}")))?;
+    file.set_len(byte_len)
+        .map_err(|e| TetError::Validation(format!("spill set_len failed: {e}")))?;
+    file.flush()
+        .map_err(|e| TetError::Validation(format!("spill flush failed: {e}")))?;
+    let mut out_mmap = unsafe {
+        MmapMut::map_mut(&file)
+            .map_err(|e| TetError::Validation(format!("spill mmap failed: {e}")))?
+    };
+    let out = bytemuck::cast_slice_mut(out_mmap.as_mut());
+    validate_full_read_plan_buffer(plan, out.len())?;
+    let total = materialize_scatter_fill_f64(mmap, plan, out)?;
+    check_materialized_complete_f64(out)?;
+    out_mmap
+        .flush()
+        .map_err(|e| TetError::Validation(format!("spill mmap flush failed: {e}")))?;
+    Ok(total)
+}
+
+pub(crate) fn fold_read_plan_scalar_operation_f64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+) -> Result<FoldPlanOutcome, TetError> {
+    let n = plan.logical_f32_element_count;
+    let preview_cap = max_preview.min(n);
+    let mut f64_preview = vec![f64::NAN; preview_cap];
+    let mut total_bytes_read_from_disk: u64 = 0;
+
+    let operation = match kind {
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            let mut acc = ArgIndexAccum::default();
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
+                    acc.push_f64(li as u64, v, kind);
+                    if li < preview_cap {
+                        f64_preview[li] = v;
+                    }
+                    Ok(())
+                })?;
+                total_bytes_read_from_disk = total_bytes_read_from_disk
+                    .checked_add(chunk_bytes)
+                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+            }
+            if acc.is_empty() {
+                return Err(TetError::Validation(
+                    "operation requires at least one decoded value from the read plan".into(),
+                ));
+            }
+            if preview_cap > 0 && f64_preview.iter().any(|v| v.is_nan()) {
+                return Err(TetError::Validation(
+                    "materialized selection has unset preview elements".into(),
+                ));
+            }
+            acc.finish_scalar(kind, n).into()
+        }
+        _ => {
+            let mut acc = ValueAccum::default();
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
+                    acc.push_f64(v);
+                    if li < preview_cap {
+                        f64_preview[li] = v;
+                    }
+                    Ok(())
+                })?;
+                total_bytes_read_from_disk = total_bytes_read_from_disk
+                    .checked_add(chunk_bytes)
+                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+            }
+            if acc.is_empty() {
+                return Err(TetError::Validation(
+                    "operation requires at least one decoded value from the read plan".into(),
+                ));
+            }
+            if preview_cap > 0 && f64_preview.iter().any(|v| v.is_nan()) {
+                return Err(TetError::Validation(
+                    "materialized selection has unset preview elements".into(),
+                ));
+            }
+            acc.finish_scalar(kind).into()
+        }
+    };
+
+    Ok(FoldPlanOutcome {
+        f32_preview: Vec::new(),
+        f64_preview: if max_preview == 0 {
+            Vec::new()
+        } else {
+            f64_preview
+        },
+        f32_preview_truncated: false,
+        f64_preview_truncated: n > max_preview,
+        total_bytes_read_from_disk,
+        operation,
+    })
 }

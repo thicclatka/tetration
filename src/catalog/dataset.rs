@@ -6,7 +6,9 @@ use crate::utils::wire;
 
 use super::execution::FileExecutionSettingsV1;
 use super::tile;
-use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, MAX_NDIM, OneChunkRawWrite};
+use super::{
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, DTYPE_F64, MAX_NDIM, OneChunkRawWrite,
+};
 
 /// Full tensor + tiling for [`super::write_raw_array_file`](crate::catalog::write_raw_array_file).
 #[derive(Debug, Clone)]
@@ -18,7 +20,7 @@ pub struct RawArrayWrite<'a> {
     /// Per-chunk payload codec (`u32` wire tag). Use [`CHUNK_PAYLOAD_CODEC_V1`](crate::catalog::CHUNK_PAYLOAD_CODEC_V1)
     /// (see [`ChunkPayloadCodecV1`](crate::catalog::ChunkPayloadCodecV1)).
     pub chunk_codec: u32,
-    /// Row-major tensor bytes (`4 * product(shape)` for [`DTYPE_F32`]).
+    /// Row-major tensor bytes (`4 * product(shape)` for [`DTYPE_F32`], `8 *` for [`DTYPE_F64`]).
     pub data: &'a [u8],
     /// Optional execution settings written into the chunk index header; `None` = engine defaults.
     pub file_execution: Option<FileExecutionSettingsV1>,
@@ -56,22 +58,21 @@ pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), C
             ));
         }
     }
-    if spec.dtype != DTYPE_F32 {
+    if spec.dtype != DTYPE_F32 && spec.dtype != DTYPE_F64 {
         return Err(CatalogError::InvalidWriteSpec(
-            "only dtype f32 (DTYPE_F32) is supported",
+            "only dtype f32 (DTYPE_F32) or f64 (DTYPE_F64) is supported",
         ));
     }
-    let elems: u64 = spec
+    let _elems: u64 = spec
         .shape
         .iter()
         .try_fold(1u64, |a, &b| a.checked_mul(b))
         .ok_or(CatalogError::InvalidWriteSpec("element count overflow"))?;
-    let need = elems
-        .checked_mul(4)
+    let need = super::tensor_bytes_from_shape(spec.shape, spec.dtype)
         .ok_or(CatalogError::InvalidWriteSpec("payload size overflow"))?;
     if spec.data.len() as u64 != need {
         return Err(CatalogError::InvalidWriteSpec(
-            "f32 data length must equal 4 * product(shape)",
+            "tensor data length must equal element_size * product(shape)",
         ));
     }
     let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);

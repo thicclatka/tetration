@@ -20,6 +20,9 @@ pub struct DatasetResolution {
     /// `4 * product(shape)` when dtype is `f32` and the dataset matched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_f32_bytes: Option<u64>,
+    /// `8 * product(shape)` when dtype is `f64` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_f64_bytes: Option<u64>,
     /// Execution preferences from the `.tet` chunk index header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_execution: Option<crate::catalog::FileExecutionSettingsV1>,
@@ -35,6 +38,9 @@ pub(crate) struct OperationPreviewFields {
     pub sum: Option<f64>,
     pub mean: Option<f64>,
     pub median: Option<f64>,
+    pub quantile: Option<f64>,
+    pub histogram_counts: Option<Vec<f64>>,
+    pub histogram_edges: Option<Vec<f64>>,
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub var: Option<f64>,
@@ -49,6 +55,9 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_shape: Option<Vec<u64>>,
     pub reduced_sum: Option<Vec<f64>>,
     pub reduced_mean: Option<Vec<f64>>,
+    pub reduced_median: Option<Vec<f64>>,
+    pub reduced_quantile: Option<Vec<f64>>,
+    pub reduced_histogram_counts: Option<Vec<f64>>,
     pub reduced_min: Option<Vec<f64>>,
     pub reduced_max: Option<Vec<f64>>,
     pub reduced_count: Option<Vec<f64>>,
@@ -77,6 +86,8 @@ pub struct QueryExecutionPreview {
     pub total_bytes_read_from_disk: u64,
     pub f32_preview: Vec<f32>,
     pub f32_preview_truncated: bool,
+    pub f64_preview: Vec<f64>,
+    pub f64_preview_truncated: bool,
     /// Set when an operation ran: number of `f32` values aggregated (full planned decode).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_element_count: Option<usize>,
@@ -87,6 +98,12 @@ pub struct QueryExecutionPreview {
     pub operation_mean: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_median: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_quantile: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_histogram_counts: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_histogram_edges: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_min: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,9 +141,12 @@ pub struct QueryExecutionPreview {
     /// Host available RAM when the budget was resolved, if detectable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host_available_ram_bytes: Option<u64>,
-    /// Logical selection size in bytes (`4 * logical_f32_element_count`).
+    /// Logical selection size in bytes (`4 * logical_f32_element_count` for f32 datasets).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logical_selection_f32_bytes: Option<u64>,
+    /// Logical selection size in bytes (`elem_size * logical_f32_element_count`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_selection_bytes: Option<u64>,
     /// Shape after reducing along `operation.axes` (decimal dimension indices); row-major flattened payloads follow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_shape: Option<Vec<u64>>,
@@ -134,6 +154,12 @@ pub struct QueryExecutionPreview {
     pub operation_reduced_sum: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_mean: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_median: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_quantile: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_histogram_counts: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_min: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,6 +193,9 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_sum: operation.sum,
             operation_mean: operation.mean,
             operation_median: operation.median,
+            operation_quantile: operation.quantile,
+            operation_histogram_counts: operation.histogram_counts,
+            operation_histogram_edges: operation.histogram_edges,
             operation_min: operation.min,
             operation_max: operation.max,
             operation_var: operation.var,
@@ -181,6 +210,9 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_shape: operation.reduced_shape,
             operation_reduced_sum: operation.reduced_sum,
             operation_reduced_mean: operation.reduced_mean,
+            operation_reduced_median: operation.reduced_median,
+            operation_reduced_quantile: operation.reduced_quantile,
+            operation_reduced_histogram_counts: operation.reduced_histogram_counts,
             operation_reduced_min: operation.reduced_min,
             operation_reduced_max: operation.reduced_max,
             operation_reduced_count: operation.reduced_count,
@@ -214,11 +246,14 @@ impl QueryExecutionPreview {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub(crate) fn with_operation_and_io(
         total_bytes_read_from_disk: u64,
         f32_preview: Vec<f32>,
         f32_preview_truncated: bool,
+        f64_preview: Vec<f64>,
+        f64_preview_truncated: bool,
         operation: OperationPreviewFields,
         memory_strategy: Option<&'static str>,
         spill_f32_path: Option<String>,
@@ -228,6 +263,8 @@ impl QueryExecutionPreview {
             total_bytes_read_from_disk,
             f32_preview,
             f32_preview_truncated,
+            f64_preview,
+            f64_preview_truncated,
             memory_strategy,
             spill_f32_path,
             spill_f32_bytes,

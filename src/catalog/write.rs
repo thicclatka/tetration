@@ -11,14 +11,16 @@ use super::dataset::{self, RawArrayWrite};
 use super::index::{self, ChunkIndexEntryV1};
 use super::tile;
 use super::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, FileExecutionSettingsV1, MAX_NDIM, OneChunkRawWrite,
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, DTYPE_F64, FileExecutionSettingsV1, MAX_NDIM,
+    OneChunkRawWrite,
 };
+use crate::utils::dtype::ElementDtype;
 
-/// Write a `.tet` with one dataset and any number of **`f32` chunks** (`4` bytes per element,
-/// row-major), each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](super::ChunkPayloadCodecV1::raw) or
+/// Write a `.tet` with one dataset and any number of chunks (row-major `f32` or `f64` elements),
+/// each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](super::ChunkPayloadCodecV1::raw) or
 /// [`zstd`](super::ChunkPayloadCodecV1::zstd) per `spec.chunk_codec`.
 ///
-/// `data` must be the full tensor in **row-major** order (`4 * product(shape)` bytes).
+/// `data` must be the full tensor in **row-major** order (`element_size * product(shape)` bytes).
 ///
 /// # Errors
 ///
@@ -28,6 +30,7 @@ pub fn write_raw_array_file(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(),
     write_raw_array_file_inner(path, spec)
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(), CatalogError> {
     let blob = dataset::encode_dataset_blob(spec.name, spec.dtype, spec.shape, spec.chunk_shape)?;
     let dataset_blob_len = blob.len() as u64;
@@ -55,14 +58,25 @@ fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(
     let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(n_usize);
     let mut cursor = payload_start;
 
+    let elem_size = match spec.dtype {
+        DTYPE_F32 => ElementDtype::F32.elem_size(),
+        DTYPE_F64 => ElementDtype::F64.elem_size(),
+        _ => {
+            return Err(CatalogError::InvalidWriteSpec(
+                "unsupported dtype for tile extraction",
+            ));
+        }
+    };
+
     for k in 0..n_chunks {
         let coord = tile::chunk_coord_from_linear(k, &counts, ndim);
-        let tile_bytes = tile::extract_f32_tile_row_major(
+        let tile_bytes = tile::extract_tile_row_major(
             spec.data,
             spec.shape,
             spec.chunk_shape,
             &coord[..ndim],
             ndim,
+            elem_size,
         )?;
         let raw_len =
             u64::try_from(tile_bytes.len()).map_err(|_| CatalogError::TooLargeForPlatform {

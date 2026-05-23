@@ -178,15 +178,18 @@ flowchart TD
 | `catalog`                                  | Always with `--tet` / `plan_query_with_tet_mmap`.                                                                  |
 | `catalog.file_execution`                   | Matched dataset; mirrors TIDX header execution settings.                                                           |
 | `catalog.dataset_f32_bytes`                | Matched **`f32`** dataset; `4 × product(shape)`.                                                                     |
+| `catalog.dataset_f64_bytes`                | Matched **`f64`** dataset; `8 × product(shape)`.                                                                     |
 | `read_plan`                                | Dataset matched; lists touched chunks and selection geometry.                                                      |
 | `execution`                                | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set).                                    |
-| `execution.f32_preview`                      | First `n` logical row-major floats (`n = 0` → empty vec).                                                          |
+| `execution.f32_preview`                      | First `n` logical row-major floats (`n = 0` → empty vec); **`f32`** datasets only.                                 |
+| `execution.f64_preview`                      | First `n` logical row-major doubles (`n = 0` → empty vec); **`f64`** datasets only.                                 |
 | `execution.operation_*`                    | Scalar aggregates over full logical selection; preview cap does not truncate them.                                 |
 | `execution.operation_reduced_*`            | Partial-axis reductions + `operation_reduced_shape`.                                                               |
 | `execution.memory_strategy`                | `streaming_fold`, `capped_in_memory`, `mmap_spill`, `in_memory_materialize`, `temp_spill_materialize`.             |
 | `execution.memory_budget_bytes`            | Resolved RAM budget used for this run.                                                                             |
 | `execution.host_available_ram_bytes`       | Host probe at budget resolution, when available.                                                                   |
-| `execution.logical_selection_f32_bytes`    | `4 × logical_f32_element_count`.                                                                                   |
+| `execution.logical_selection_f32_bytes`    | `4 × logical_f32_element_count` (f32 datasets).                                                                    |
+| `execution.logical_selection_bytes`          | `elem_size × logical_f32_element_count` for the dataset dtype.                                                     |
 | `execution.spill_f32_path` / `spill_f32_bytes` | After **`mmap_spill`** decode.                                                                                 |
 
 ## Chunk-touch policy strings
@@ -221,9 +224,32 @@ JSON `operation` is a tagged object with decimal **`axes`** (dimension indices a
 | **`any_nan`**    | `any_nan`      | `operation_any_nan`              | `operation_reduced_any_nan` + `operation_reduced_shape`      |
 | **`arg_min`**    | `arg_min`      | `operation_argmin_index`         | `operation_reduced_argmin` + `operation_reduced_shape`       |
 | **`arg_max`**    | `arg_max`      | `operation_argmax_index`         | `operation_reduced_argmax` + `operation_reduced_shape`       |
-| **`median`**     | `median`       | `operation_median` (scalar only)   | not supported yet (partial median deferred)                  |
+| **`median`**     | `median`       | `operation_median`                 | `operation_reduced_median` + `operation_reduced_shape`       |
+| **`quantile`**   | `quantile`     | `operation_quantile` (`q` field) | `operation_reduced_quantile` + `operation_reduced_shape`     |
+| **`histogram`**  | `histogram`    | `operation_histogram_counts`, `operation_histogram_edges` | `operation_reduced_histogram_counts` (flat `out_len × bins`, row-major; edges omitted) + `operation_reduced_shape` |
 
 Population **`var` / `std`**, `ddof = 0`. **`norm_l2`** is √(sum of squares).
+
+### Dtypes
+
+| Wire tag | Name   | Writer | Query execution |
+| -------- | ------ | ------ | --------------- |
+| `1`      | `f32`  | yes    | yes (preview in `f32_preview`) |
+| `2`      | `f64`  | yes    | yes (preview in `f64_preview`) |
+
+Integer tags are reserved for a follow-up; [`ElementDtype`](../src/utils/dtype.rs) centralizes element size and budget math.
+
+Quantile example (exact selection on sorted values, linear blend between adjacent ranks):
+
+```json
+{ "dataset": "a", "operation": { "quantile": { "axes": [], "q": 0.95 } } }
+```
+
+Histogram example (equal-width bins from per-cell min/max; scalar returns edges):
+
+```json
+{ "dataset": "a", "operation": { "histogram": { "axes": ["0"], "bins": 10 } } }
+```
 
 Example:
 
@@ -248,10 +274,10 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
 - **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (`axes: []`) via **`fold_read_plan_scalar_operation`**; partial axes via **`partial_fold_read_plan_operation`**. Preview is still the first `n` logical values when `raw_f32_preview_max > 0`.
-- **Materialize-required ops** (`median`, scalar only for now) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
-- **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode).
+- **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
+- **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode; dtype-native bytes).
 
-All of the above are **`f32`** / `DTYPE_F32` only. The preview cap does **not** truncate `operation_*` aggregates.
+Supported dtypes: **`f32`** (`DTYPE_F32 = 1`) and **`f64`** (`DTYPE_F64 = 2`). The preview cap does **not** truncate `operation_*` aggregates.
 
 ## Operations roadmap (planned)
 
@@ -277,8 +303,8 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 | Op                           | Tier (typical) | Notes                                                                           |
 | ---------------------------- | -------------- | ------------------------------------------------------------------------------- |
 | **`argmin` / `argmax`**      | C → **A/B**    | **Done** as `arg_min` / `arg_max`.                                              |
-| **`median`**                 | C              | **Done** (scalar `axes: []` only); partial axes deferred.                      |
-| **`quantile` / `histogram`** | C              | Often fixed bins so partial results can be merged.                              |
+| **`median`**                 | C              | **Done** (scalar + partial axes).                                              |
+| **`quantile` / `histogram`** | C              | **Done** (scalar + partial axes; histogram partial returns counts only).       |
 
 ### Tier 3 — not `Operation` enum variants
 

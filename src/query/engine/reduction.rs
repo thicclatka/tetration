@@ -37,8 +37,8 @@ impl From<&Operation> for ReductionKind {
             Operation::AnyNan { .. } => Self::AnyNan,
             Operation::ArgMin { .. } => Self::ArgMin,
             Operation::ArgMax { .. } => Self::ArgMax,
-            Operation::Median { .. } => {
-                unreachable!("median uses materialize-required execution path")
+            Operation::Median { .. } | Operation::Quantile { .. } | Operation::Histogram { .. } => {
+                unreachable!("tier-C stats use materialize-required execution path")
             }
         }
     }
@@ -117,21 +117,24 @@ impl ValueAccum {
     }
 
     pub fn push(&mut self, v: f32) {
+        self.push_f64(f64::from(v));
+    }
+
+    pub fn push_f64(&mut self, v: f64) {
         self.count += 1;
-        let x = f64::from(v);
-        self.sum += x;
-        self.welford.push(x);
-        self.product *= x;
-        self.norm_l1 += x.abs();
-        self.norm_l2_sq += x * x;
+        self.sum += v;
+        self.welford.push(v);
+        self.product *= v;
+        self.norm_l1 += v.abs();
+        self.norm_l2_sq += v * v;
         self.all_finite &= v.is_finite();
         self.any_nan |= v.is_nan();
         if self.have_min_max {
-            self.min = self.min.min(x);
-            self.max = self.max.max(x);
+            self.min = self.min.min(v);
+            self.max = self.max.max(v);
         } else {
-            self.min = x;
-            self.max = x;
+            self.min = v;
+            self.max = v;
             self.have_min_max = true;
         }
     }
@@ -226,20 +229,23 @@ impl ArgIndexAccum {
     }
 
     pub fn push(&mut self, idx: u64, v: f32, kind: ReductionKind) {
-        let x = f64::from(v);
+        self.push_f64(idx, f64::from(v), kind);
+    }
+
+    pub fn push_f64(&mut self, idx: u64, v: f64, kind: ReductionKind) {
         if !self.have {
-            self.best_val = x;
+            self.best_val = v;
             self.best_idx = idx;
             self.have = true;
             return;
         }
         match kind {
-            ReductionKind::ArgMin if x < self.best_val => {
-                self.best_val = x;
+            ReductionKind::ArgMin if v < self.best_val => {
+                self.best_val = v;
                 self.best_idx = idx;
             }
-            ReductionKind::ArgMax if x > self.best_val => {
-                self.best_val = x;
+            ReductionKind::ArgMax if v > self.best_val => {
+                self.best_val = v;
                 self.best_idx = idx;
             }
             _ => {}

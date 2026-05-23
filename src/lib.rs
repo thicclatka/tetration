@@ -10,10 +10,10 @@ pub mod query;
 pub use catalog::{
     CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1,
     ChunkIndexHeaderV1, ChunkPayloadCodecV1, DEFAULT_MEMORY_BUDGET_PERCENT_BPS, DTYPE_F32,
-    DatasetRecordV1, FileExecutionSettingsV1, MAX_NDIM, OneChunkRawWrite, RawArrayWrite,
+    DTYPE_F64, DatasetRecordV1, FileExecutionSettingsV1, MAX_NDIM, OneChunkRawWrite, RawArrayWrite,
     TetFileSummaryV1, chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided,
-    f32_tensor_bytes_from_shape, read_tet_summary_v1, validate_chunk_payloads,
-    write_one_chunk_raw_file, write_raw_array_file,
+    f32_tensor_bytes_from_shape, f64_tensor_bytes_from_shape, read_tet_summary_v1,
+    validate_chunk_payloads, write_one_chunk_raw_file, write_raw_array_file,
 };
 pub use layout::{
     LAYOUT_VERSION_V1, LayoutError, LayoutOpenError, MAGIC, SUPERBLOCK_V1_LEN, SuperblockV1,

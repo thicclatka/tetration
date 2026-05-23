@@ -7,8 +7,8 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 | Area                                                                        | Status                                                                                                                                                                       |
 | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Phases 0–3 (spec, writer/reader, chunk addressing, zstd + index robustness) | **Done**                                                                                                                                                                     |
-| Phase 4 (query execute)                                                     | **Core done** — plan, mmap materialize, parallel multi-chunk decode, memory-aware routing, mmap spill, streaming scalar + partial-axis folds for all v1 `Operation` variants |
-| Phase 4 remainder                                                           | Non-`f32` dtypes; partial-axis `median`; quantile / histogram                                                                                                                |
+| Phase 4 (query execute)                                                     | **Done** — plan, mmap materialize, parallel multi-chunk decode, memory-aware routing, mmap spill, streaming scalar + partial-axis folds, **`f64`** execution, tier-C **`median`** / **`quantile`** / **`histogram`** (scalar + partial axes) |
+| Phase 4 remainder                                                           | **Done**                                                                                                                                                                     |
 | Phase 5 (convert / bindings)                                                | **Not started** (CLI stubs only)                                                                                                                                             |
 | JSON security                                                               | **Done (v1)** — `QueryLimits`, `deny_unknown_fields`, caps in `document.rs`; proptest in `tests/query.rs`                                                                    |
 
@@ -21,7 +21,7 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 
 ## Implemented (layout v1)
 
-- **`utils`:** Crate-private helpers. **`utils::wire`** — LE primitives, `align8`, byte-span checks. **`utils::f32_le`** — `read_f32_le_at`, `try_cast_f32_le`, `f32_count`, `bytes_from_elem_count`. **`utils::host_memory`** — best-effort host RAM probe (Linux `MemAvailable`, macOS free+inactive pages).
+- **`utils`:** Crate-private helpers. **`utils::wire`** — LE primitives, `align8`, byte-span checks. **`utils::f32_le`** / **`utils::f64_le`** — typed LE reads and byte counts. **`utils::dtype`** — `ElementDtype` from wire tags. **`utils::host_memory`** — best-effort host RAM probe (Linux `MemAvailable`, macOS free+inactive pages).
 - **`layout`:** 32-byte `TETR` superblock v1, mmap open (`mmap_file_read`), superblock parse, empty v1 file creation (`create_empty_v1_file`). See `docs/layout_v1.md`.
 - **`catalog`:** Dataset directory, chunk index header/entries (including optional **execution settings** in TIDX bytes 16–31), validation (`validate_chunk_payloads`), `read_tet_summary_v1`. Writers in **`catalog/write.rs`**. Chunk geometry in **`catalog/tile.rs`** (`pub`): `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided`. **`ChunkPayloadCodecV1::encode_tile_payload` / `decode_tile_payload`** (raw + zstd).
 - **Writers:**
@@ -36,7 +36,9 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
   | `read_plan.rs`    | `ReadPlan` (chunk I/O rows + logical geometry)                               |
   | `indexing.rs`     | Row-major index ↔ coords                                                     |
   | `chunk_decode.rs` | Mmap slice bounds, codec decode, `visit_planned_chunk`, scatter              |
-  | `materialize.rs`  | Full/capped materialize, export spill, logical RAM/temp-spill backing for tier-C ops |
+  | `materialize.rs`  | Full/capped materialize (f32/f64), export spill, logical RAM/temp-spill backing for tier-C ops |
+  | `materialize_stats.rs` | Tier-C **`median`**, **`quantile`**, **`histogram`** over materialized selections |
+  | `partial_geometry.rs` | Shared partial-axis output shape and index mapping |
   | `parallel.rs`     | Rayon parallel scatter fill                                                  |
   | `partial_fold.rs` | Streaming partial-axis reductions (no full logical tensor)                   |
   | `fold.rs`         | Shared fold preview validation + `FoldPlanOutcome`                           |
@@ -45,7 +47,7 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
   | `reduction.rs`    | `ReductionKind`, `ValueAccum`, preview field mapping                         |
   | `operations.rs`   | `build_execution_preview` — memory strategy routing, tier-C ops, fold/spill  |
 
-  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers; capped preview allocates `min(cap, logical)` only. **`build_execution_preview`** picks **`MemoryStrategy`**: `streaming_fold` (tier-A/B ops), `in_memory_materialize` / `temp_spill_materialize` (tier-C ops such as scalar **`median`**), `mmap_spill` (export spill + single-pass preview), `capped_in_memory` (preview-only). Temp spills live under platform cache allowlist roots and are deleted when execution finishes. Budget from host RAM (default **25%**), query `execution.*`, or per-file TIDX settings. **Operations (f32 only):** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `arg_min`, `arg_max`, `median` (scalar) — streaming fold for tier-A/B; materialize path for tier-C. Population **`var` / `std`**, `ddof = 0`. Preview: `--preview-f32 N` (default **64**); **`0`** with `operation` skips preview floats.
+  **Execution:** `planned_chunk_mmap_slices` (raw codec **0** only). Materialize: sequential + parallel, `_into` caller buffers; capped preview allocates `min(cap, logical)` only. **`build_execution_preview`** picks **`MemoryStrategy`**: `streaming_fold` (tier-A/B ops), `in_memory_materialize` / `temp_spill_materialize` (tier-C ops: **`median`**, **`quantile`**, **`histogram`**), `mmap_spill` (export spill + single-pass preview), `capped_in_memory` (preview-only). Temp spills live under platform cache allowlist roots and are deleted when execution finishes. Budget from host RAM (default **25%**), query `execution.*`, or per-file TIDX settings. **Operations (`f32` and `f64`):** tier-A/B streaming ops plus tier-C **`median`**, **`quantile`**, **`histogram`** (scalar and partial axes where applicable). Population **`var` / `std`**, `ddof = 0`. Preview: `--preview-f32 N` (default **64**; applies to f32 or f64 preview fields); **`0`** with `operation` skips preview floats.
 
 ## CLI (`tet`)
 

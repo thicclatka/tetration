@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use tetration::{
-    CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DTYPE_F32,
+    CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DTYPE_F32, DTYPE_F64,
     FileExecutionSettingsV1, RawArrayWrite, mmap_file_read, read_tet_summary_v1,
     write_raw_array_file,
 };
@@ -76,12 +76,27 @@ pub fn le_row_major_2x3_f32_one_to_six() -> Vec<u8> {
     data
 }
 
-fn write_multichunk_2x3(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
+/// Row-major `f64` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_f64_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 48];
+    for (slot, n) in data.chunks_exact_mut(8).zip(1_u64..=6) {
+        slot.copy_from_slice(&(n as f64).to_le_bytes());
+    }
+    data
+}
+
+fn write_multichunk_2x3(
+    path: &Path,
+    dataset_name: &str,
+    chunk_codec: u32,
+    dtype: u32,
+    data: &[u8],
+) {
     write_raw_array_file(
         path,
         &RawArrayWrite {
             name: dataset_name,
-            dtype: DTYPE_F32,
+            dtype,
             shape: &SHAPE_2X3,
             chunk_shape: &CHUNK_2X2,
             chunk_codec,
@@ -92,9 +107,13 @@ fn write_multichunk_2x3(path: &Path, dataset_name: &str, chunk_codec: u32, data:
     .unwrap();
 }
 
+fn write_multichunk_2x3_f32(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
+    write_multichunk_2x3(path, dataset_name, chunk_codec, DTYPE_F32, data);
+}
+
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f32` file (values 1..6).
 pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
-    write_multichunk_2x3(
+    write_multichunk_2x3_f32(
         path,
         dataset_name,
         CHUNK_PAYLOAD_CODEC_V1.raw,
@@ -102,9 +121,23 @@ pub fn write_multichunk_2x3_tiles(path: &Path, dataset_name: &str) {
     );
 }
 
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f64` file (values 1..6).
+pub fn write_multichunk_2x3_f64_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3_f64(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        &le_row_major_2x3_f64_one_to_six(),
+    );
+}
+
+fn write_multichunk_2x3_f64(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
+    write_multichunk_2x3(path, dataset_name, chunk_codec, DTYPE_F64, data);
+}
+
 /// Same geometry as [`write_multichunk_2x3_tiles`], but chunk payloads are **zstd**-compressed.
 pub fn write_multichunk_2x3_zstd(path: &Path, dataset_name: &str, data: &[u8]) {
-    write_multichunk_2x3(path, dataset_name, CHUNK_PAYLOAD_CODEC_V1.zstd, data);
+    write_multichunk_2x3_f32(path, dataset_name, CHUNK_PAYLOAD_CODEC_V1.zstd, data);
 }
 
 /// Same geometry as [`write_multichunk_2x3_tiles`], with per-file execution settings in the index header.

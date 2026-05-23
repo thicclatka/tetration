@@ -27,6 +27,8 @@ pub enum Operation {
     ArgMin { axes: Vec<String> },
     ArgMax { axes: Vec<String> },
     Median { axes: Vec<String> },
+    Quantile { axes: Vec<String>, q: f64 },
+    Histogram { axes: Vec<String>, bins: u32 },
 }
 
 impl Operation {
@@ -48,7 +50,9 @@ impl Operation {
             | Self::AnyNan { axes }
             | Self::ArgMin { axes }
             | Self::ArgMax { axes }
-            | Self::Median { axes } => axes,
+            | Self::Median { axes }
+            | Self::Quantile { axes, .. }
+            | Self::Histogram { axes, .. } => axes,
         }
     }
 }

@@ -220,20 +220,24 @@ pub fn chunk_coords_intersecting_global_box(
     chunk_coords_intersecting_strided(shape, chunk_shape, g0, g1_exclusive, &steps[..ndim])
 }
 
-/// Copy one `f32` tile (row-major) from a full row-major tensor buffer into a new byte vec.
-pub(crate) fn extract_f32_tile_row_major(
+/// Copy one tile (row-major) from a full row-major tensor buffer into a new byte vec.
+pub(crate) fn extract_tile_row_major(
     full: &[u8],
     shape: &[u64],
     chunk_shape: &[u64],
     chunk_coord: &[u64],
     ndim: usize,
+    elem_size: usize,
 ) -> Result<Vec<u8>, CatalogError> {
     let tile = tile_extent(shape, chunk_shape, chunk_coord, ndim);
     let nelem: u64 = tile.iter().try_fold(1u64, |a, &b| a.checked_mul(b)).ok_or(
         CatalogError::InvalidWriteSpec("tile element count overflow"),
     )?;
     let nbytes_u64 = nelem
-        .checked_mul(4)
+        .checked_mul(
+            u64::try_from(elem_size)
+                .map_err(|_| CatalogError::InvalidWriteSpec("element size overflow"))?,
+        )
         .ok_or(CatalogError::InvalidWriteSpec("tile byte length overflow"))?;
     let nbytes = usize::try_from(nbytes_u64).map_err(|_| CatalogError::TooLargeForPlatform {
         field: "tile_byte_length",
@@ -253,15 +257,27 @@ pub(crate) fn extract_f32_tile_row_major(
                 field: "linear_element_index",
                 value: li,
             })?
-            .checked_mul(4)
+            .checked_mul(elem_size)
             .ok_or(CatalogError::InvalidWriteSpec("byte offset overflow"))?;
-        if src + 4 > full.len() {
+        if src + elem_size > full.len() {
             return Err(CatalogError::InvalidWriteSpec(
                 "full tensor buffer shorter than implied by shape",
             ));
         }
-        out[o..o + 4].copy_from_slice(&full[src..src + 4]);
-        o += 4;
+        out[o..o + elem_size].copy_from_slice(&full[src..src + elem_size]);
+        o += elem_size;
     }
     Ok(out)
+}
+
+/// Copy one `f32` tile (row-major) from a full row-major tensor buffer into a new byte vec.
+#[allow(dead_code)]
+pub(crate) fn extract_f32_tile_row_major(
+    full: &[u8],
+    shape: &[u64],
+    chunk_shape: &[u64],
+    chunk_coord: &[u64],
+    ndim: usize,
+) -> Result<Vec<u8>, CatalogError> {
+    extract_tile_row_major(full, shape, chunk_shape, chunk_coord, ndim, 4)
 }

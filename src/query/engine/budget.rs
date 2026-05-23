@@ -2,6 +2,7 @@
 
 use crate::catalog::FileExecutionSettingsV1;
 use crate::query::types::{ExecutionHints, ReadPlan, TetError};
+use crate::utils::dtype::ElementDtype;
 use crate::utils::host_memory;
 
 /// Fallback cap when host RAM cannot be detected and no fixed budget is set (256 MiB).
@@ -98,26 +99,60 @@ impl ExecutionBudget {
     /// # Errors
     ///
     /// Returns [`TetError::Validation`] when the element count or byte product overflows.
-    pub fn logical_f32_bytes(&self, element_count: usize) -> Result<u64, TetError> {
+    pub fn logical_element_bytes(
+        &self,
+        dtype: ElementDtype,
+        element_count: usize,
+    ) -> Result<u64, TetError> {
         let count = u64::try_from(element_count)
             .map_err(|_| TetError::Validation("logical element count overflow".into()))?;
-        crate::utils::f32_le::bytes_from_elem_count(count)
-            .ok_or_else(|| TetError::Validation("logical f32 byte size overflow".into()))
+        dtype
+            .bytes_from_elem_count(count)
+            .ok_or_else(|| TetError::Validation("logical element byte size overflow".into()))
+    }
+
+    /// # Errors
+    ///
+    /// Returns [`TetError::Validation`] when the element count or byte product overflows.
+    pub fn logical_f32_bytes(&self, element_count: usize) -> Result<u64, TetError> {
+        self.logical_element_bytes(ElementDtype::F32, element_count)
+    }
+
+    /// # Errors
+    ///
+    /// Propagates errors from [`Self::logical_element_bytes`].
+    pub fn exceeds_budget(
+        &self,
+        dtype: ElementDtype,
+        element_count: usize,
+    ) -> Result<bool, TetError> {
+        Ok(self.logical_element_bytes(dtype, element_count)? > self.memory_budget_bytes)
     }
 
     /// # Errors
     ///
     /// Propagates errors from [`Self::logical_f32_bytes`].
-    pub fn exceeds_budget(&self, element_count: usize) -> Result<bool, TetError> {
-        Ok(self.logical_f32_bytes(element_count)? > self.memory_budget_bytes)
+    pub fn exceeds_budget_f32(&self, element_count: usize) -> Result<bool, TetError> {
+        self.exceeds_budget(ElementDtype::F32, element_count)
     }
 
-    /// Whether a dense in-memory logical buffer for `plan` would exceed the RAM budget.
-    ///
     /// # Errors
     ///
     /// Propagates errors from [`Self::exceeds_budget`].
-    pub fn full_tensor_exceeds_budget(&self, plan: &ReadPlan) -> Result<bool, TetError> {
-        self.exceeds_budget(plan.logical_f32_element_count)
+    pub fn full_tensor_exceeds_budget(
+        &self,
+        plan: &ReadPlan,
+        dtype: ElementDtype,
+    ) -> Result<bool, TetError> {
+        self.exceeds_budget(dtype, plan.logical_f32_element_count)
+    }
+
+    /// Whether a dense in-memory logical buffer for `plan` would exceed the RAM budget (f32 bytes).
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from [`Self::exceeds_budget_f32`].
+    pub fn full_tensor_exceeds_budget_f32(&self, plan: &ReadPlan) -> Result<bool, TetError> {
+        self.full_tensor_exceeds_budget(plan, ElementDtype::F32)
     }
 }

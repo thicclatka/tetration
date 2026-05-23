@@ -8,15 +8,16 @@ use fixture::{
         self, ENTRY_CODEC_OFFSET, ENTRY_PAYLOAD_OFFSET, ENTRY_RAW_BYTE_LEN_OFFSET,
         ENTRY_STORED_BYTE_LEN_OFFSET,
     },
-    le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_tiles, write_multichunk_2x3_zero_zstd,
+    le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_f64_tiles, write_multichunk_2x3_tiles,
+    write_multichunk_2x3_zero_zstd,
 };
 use proptest::prelude::*;
 use tetration::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DTYPE_F32, MAX_NDIM, OneChunkRawWrite,
-    chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided, create_empty_v1_file,
-    materialize_read_plan_f32_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
-    read_f32_le_at, read_tet_summary_v1, try_cast_f32_le, validate_chunk_payloads, validate_query,
-    write_one_chunk_raw_file,
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DTYPE_F32, DTYPE_F64, MAX_NDIM,
+    OneChunkRawWrite, chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided,
+    create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
+    plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
+    validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
 };
 
 // --- roundtrip ---
@@ -62,6 +63,46 @@ fn one_chunk_f32_roundtrip() {
     let off = usize::try_from(s.chunks[0].payload_offset).unwrap();
     let len = usize::try_from(s.chunks[0].stored_byte_len).unwrap();
     assert_eq!(&mmap[off..off + len], &payload[..]);
+}
+
+#[test]
+fn one_chunk_f64_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grid_f64.tet");
+    let shape = SHAPE_2X3;
+    let chunk_shape = [2u64, 3];
+    let payload = fixture::le_row_major_2x3_f64_one_to_six();
+    write_one_chunk_raw_file(
+        &path,
+        &OneChunkRawWrite {
+            name: "pressure",
+            dtype: DTYPE_F64,
+            shape: &shape,
+            chunk_shape: &chunk_shape,
+            payload: &payload,
+        },
+    )
+    .unwrap();
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets[0].dtype, DTYPE_F64);
+    assert_eq!(s.datasets[0].shape, vec![2, 3]);
+    let off = usize::try_from(s.chunks[0].payload_offset).unwrap();
+    let len = usize::try_from(s.chunks[0].stored_byte_len).unwrap();
+    assert_eq!(&mmap[off..off + len], &payload[..]);
+}
+
+#[test]
+fn multi_chunk_f64_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiles_f64.tet");
+    write_multichunk_2x3_f64_tiles(&path, "a");
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets[0].dtype, DTYPE_F64);
+    assert_eq!(s.chunks.len(), 2);
 }
 
 #[test]
