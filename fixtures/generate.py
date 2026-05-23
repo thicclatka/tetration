@@ -624,12 +624,46 @@ def generate_large(*, quiet: bool) -> None:
         print(f"Done: {ROOT / 'large'}")
 
 
+def generate_large_h5(*, quiet: bool) -> None:
+    if not quiet:
+        gib = LARGE_PER_FORMAT_BYTES / (1024**3)
+        print(f"Generating large HDF5 under {LARGE_H5} ({gib:.2f} GiB logical f32)")
+    _write_h5_large(LARGE_H5 / "tensor_large.h5", quiet=quiet)
+    if not quiet:
+        print(f"Done: {LARGE_H5}")
+
+
+def generate_large_netcdf(*, quiet: bool) -> None:
+    if not quiet:
+        gib = LARGE_PER_FORMAT_BYTES / (1024**3)
+        print(f"Generating large NetCDF under {LARGE_NC} ({gib:.2f} GiB logical f32)")
+    _write_nc_large(LARGE_NC / "tensor_large.nc", quiet=quiet)
+    if not quiet:
+        print(f"Done: {LARGE_NC}")
+
+
+def generate_large_zarr(*, quiet: bool) -> None:
+    if not quiet:
+        gib = LARGE_PER_FORMAT_BYTES / (1024**3)
+        print(f"Generating large Zarr under {LARGE_ZARR} ({gib:.2f} GiB logical f32)")
+    _write_zarr_large(LARGE_ZARR / "tensor_large", quiet=quiet)
+    if not quiet:
+        print(f"Done: {LARGE_ZARR}")
+
+
 ExtraLargeTarget = Literal["extra-large-h5", "extra-large-netcdf", "extra-large-zarr"]
+LargeSingleTarget = Literal["large-h5", "large-netcdf", "large-zarr"]
 
 EXTRA_LARGE_TARGETS: dict[ExtraLargeTarget, Callable[..., None]] = {
     "extra-large-h5": generate_extra_large_h5,
     "extra-large-netcdf": generate_extra_large_netcdf,
     "extra-large-zarr": generate_extra_large_zarr,
+}
+
+LARGE_SINGLE_TARGETS: dict[LargeSingleTarget, Callable[..., None]] = {
+    "large-h5": generate_large_h5,
+    "large-netcdf": generate_large_netcdf,
+    "large-zarr": generate_large_zarr,
 }
 
 
@@ -641,6 +675,9 @@ def main(argv: list[str] | None = None) -> int:
         choices=(
             "small",
             "large",
+            "large-h5",
+            "large-netcdf",
+            "large-zarr",
             "all",
             "extra-large-h5",
             "extra-large-netcdf",
@@ -650,6 +687,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "small: tracked baseline + groups/cf/zarr; "
             "large: ~20 GiB total across h5/nc/zarr (untracked); "
+            "large-*: one ~6.67 GiB file for that format (untracked); "
             "extra-large-*: one 20 GiB file for that format (untracked); "
             "all: small + large suite only"
         ),
@@ -665,6 +703,8 @@ def main(argv: list[str] | None = None) -> int:
         generate_small(quiet=args.quiet)
     if args.target in ("large", "all"):
         generate_large(quiet=args.quiet)
+    if args.target in LARGE_SINGLE_TARGETS:
+        LARGE_SINGLE_TARGETS[args.target](quiet=args.quiet)
     if args.target in EXTRA_LARGE_TARGETS:
         EXTRA_LARGE_TARGETS[args.target](quiet=args.quiet)
     return 0

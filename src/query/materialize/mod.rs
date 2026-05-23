@@ -9,7 +9,7 @@ use std::path::Path;
 use memmap2::Mmap;
 
 use crate::query::decode::chunk_decode::{
-    scatter_chunk_into_plan, scatter_chunk_into_plan_f64, visit_planned_chunk,
+    fold_planned_chunk_f32, scatter_chunk_into_plan, scatter_chunk_into_plan_f64,
     visit_planned_chunk_f64,
 };
 use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
@@ -209,13 +209,15 @@ pub(crate) fn fold_read_plan_scalar_operation(
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut acc = ArgIndexAccum::default();
             for c in &plan.chunks {
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
-                    acc.push(li as u64, v, kind);
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    Ok(())
-                })?;
+                let chunk_bytes = fold_planned_chunk_f32(
+                    mmap,
+                    plan,
+                    c,
+                    kind,
+                    &mut ValueAccum::default(),
+                    &mut acc,
+                    &mut preview,
+                )?;
                 total_bytes_read_from_disk = total_bytes_read_from_disk
                     .checked_add(chunk_bytes)
                     .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
@@ -225,14 +227,10 @@ pub(crate) fn fold_read_plan_scalar_operation(
         }
         _ => {
             let mut acc = ValueAccum::default();
+            let mut arg = ArgIndexAccum::default();
             for c in &plan.chunks {
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
-                    acc.push(v);
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    Ok(())
-                })?;
+                let chunk_bytes =
+                    fold_planned_chunk_f32(mmap, plan, c, kind, &mut acc, &mut arg, &mut preview)?;
                 total_bytes_read_from_disk = total_bytes_read_from_disk
                     .checked_add(chunk_bytes)
                     .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;

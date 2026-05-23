@@ -68,11 +68,34 @@ mise run fixtures:clean-extra-large
 | Consumer | What it checks |
 | -------- | -------------- |
 | `tests/convert.rs` | `tet convert` on **`tensor_*`** and **`cf_3d`** (root dtypes); byte equality vs source; parallel `--jobs 4` smoke |
-| Manual / bench | `fixtures/large/*` — throughput and peak RAM (`tet convert … --jobs 0`) |
+| Manual / bench | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks) |
 
 **`groups_3d`** and **Zarr** stores are generated for upcoming Phase 5 import work; convert tests will expand when importers land.
 
 Regenerate tracked small files after changing `generate.py`, then re-run `cargo test --test convert`.
+
+## Benchmarks
+
+Sequential per **tier**, then wipe the whole **format** tree before the next format.
+
+1. Generate source  
+2. Source mean (native, chunked)  
+3. Convert → `.tet`  
+4. **Delete source** (only `.tet` needed from here)  
+5. `.tet` mean  
+6. **Delete `.tet`**  
+7. After both tiers (large + extra): **delete `large/{format}/` and `extra_large/{format}/`**
+
+**Primary comparison:** full-tensor **mean** on the native file vs **`.tet`** query mean.  
+**Secondary:** **convert** time (one-time import).
+
+```bash
+mise run bench              # h5, netcdf, zarr (large ~6.67 GiB + extra_large 20 GiB each)
+mise run bench:h5           # one format only
+uv run --directory fixtures bench-large --skip-mean   # convert timing only
+```
+
+Results: `fixtures/bench_results/latest.md` (gitignored). Peak disk per **extra_large** row ≈ **one** 20 GiB file (source or `.tet`, not both).
 
 ## Regenerate
 
@@ -81,6 +104,9 @@ From the repo root (via [mise](https://mise.jdx.dev/)):
 ```bash
 mise run fixtures:small        # baseline + groups + cf + zarr (tracked)
 mise run fixtures:large        # h5 + nc + zarr ≈ 20 GiB total; needs ~20 GiB disk
+mise run fixtures:large-h5     # ~6.67 GiB HDF5 only
+mise run fixtures:large-netcdf
+mise run fixtures:large-zarr
 mise run fixtures:extra-large-h5       # one 20 GiB HDF5 (~20 GiB disk)
 mise run fixtures:extra-large-netcdf   # one 20 GiB NetCDF
 mise run fixtures:extra-large-zarr     # one 20 GiB Zarr store

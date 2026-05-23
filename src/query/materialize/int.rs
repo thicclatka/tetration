@@ -652,7 +652,11 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
 ) -> Result<FoldPlanOutcome, TetError> {
     if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
         return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_int_parallel(
-            mmap, plan, max_preview, kind, dtype,
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            dtype,
         );
     }
     let visit = match dtype {

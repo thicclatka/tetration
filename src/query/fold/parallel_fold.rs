@@ -2,7 +2,9 @@
 
 use rayon::prelude::*;
 
-use crate::query::decode::chunk_decode::{visit_planned_chunk, visit_planned_chunk_f64};
+use crate::query::decode::chunk_decode::{
+    fold_planned_chunk_f32, fold_planned_chunk_f64, visit_planned_chunk, visit_planned_chunk_f64,
+};
 use crate::query::decode::indexing::coords_from_linear_row_major;
 use crate::query::fold::partial_fold::{
     partial_arg_fields, partial_fields, validate_fold_preview_f64,
@@ -143,7 +145,62 @@ enum ScalarFoldVisit {
     Int(IntVisit),
 }
 
+struct ScalarFoldChunkCtx<'a> {
+    kind: ReductionKind,
+    value: &'a mut ValueAccum,
+    arg: &'a mut ArgIndexAccum,
+    preview_addr: usize,
+    preview_len: usize,
+}
+
 impl ScalarFoldVisit {
+    fn fold_chunk(
+        self,
+        mmap: &[u8],
+        plan: &ReadPlan,
+        c: &crate::query::types::PlannedChunkIo,
+        ctx: &mut ScalarFoldChunkCtx<'_>,
+    ) -> Result<u64, TetError> {
+        match self {
+            Self::F32 => {
+                let preview = if ctx.preview_len == 0 {
+                    &mut []
+                } else {
+                    unsafe {
+                        std::slice::from_raw_parts_mut(
+                            ctx.preview_addr as *mut f32,
+                            ctx.preview_len,
+                        )
+                    }
+                };
+                fold_planned_chunk_f32(mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview)
+            }
+            Self::F64 => {
+                let preview = if ctx.preview_len == 0 {
+                    &mut []
+                } else {
+                    unsafe {
+                        std::slice::from_raw_parts_mut(
+                            ctx.preview_addr as *mut f64,
+                            ctx.preview_len,
+                        )
+                    }
+                };
+                fold_planned_chunk_f64(mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview)
+            }
+            Self::Int(_) => self.visit_chunk(mmap, plan, c, |li, val| {
+                match ctx.kind {
+                    ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                        self.push_arg(ctx.arg, li, val, ctx.kind);
+                    }
+                    _ => self.push_value(ctx.value, val),
+                }
+                self.write_preview(ctx.preview_addr, ctx.preview_len, li, val);
+                Ok(())
+            }),
+        }
+    }
+
     fn visit_chunk<F>(
         self,
         mmap: &[u8],
@@ -179,8 +236,12 @@ impl ScalarFoldVisit {
         match self {
             Self::F32 => write_disjoint_preview_f32(preview_addr, preview_len, li, v as f32),
             Self::F64 => write_disjoint_preview_f64(preview_addr, preview_len, li, v),
-            Self::Int(IntVisit::I32) => write_disjoint_preview_i32(preview_addr, preview_len, li, v),
-            Self::Int(IntVisit::I64) => write_disjoint_preview_i64(preview_addr, preview_len, li, v),
+            Self::Int(IntVisit::I32) => {
+                write_disjoint_preview_i32(preview_addr, preview_len, li, v);
+            }
+            Self::Int(IntVisit::I64) => {
+                write_disjoint_preview_i64(preview_addr, preview_len, li, v);
+            }
         }
     }
 }
@@ -201,8 +262,12 @@ fn fold_read_plan_scalar_parallel(
     let (preview_addr, preview_len) = match visit {
         ScalarFoldVisit::F32 => (f32_preview.as_mut_ptr() as usize, f32_preview.len()),
         ScalarFoldVisit::F64 => (f64_preview.as_mut_ptr() as usize, f64_preview.len()),
-        ScalarFoldVisit::Int(IntVisit::I32) => (i32_preview.as_mut_ptr() as usize, i32_preview.len()),
-        ScalarFoldVisit::Int(IntVisit::I64) => (i64_preview.as_mut_ptr() as usize, i64_preview.len()),
+        ScalarFoldVisit::Int(IntVisit::I32) => {
+            (i32_preview.as_mut_ptr() as usize, i32_preview.len())
+        }
+        ScalarFoldVisit::Int(IntVisit::I64) => {
+            (i64_preview.as_mut_ptr() as usize, i64_preview.len())
+        }
     };
 
     let parts: Vec<ScalarChunkWork> = plan
@@ -211,16 +276,14 @@ fn fold_read_plan_scalar_parallel(
         .map(|c| {
             let mut value = ValueAccum::default();
             let mut arg = ArgIndexAccum::default();
-            let bytes = visit.visit_chunk(mmap, plan, c, |li, v| {
-                match kind {
-                    ReductionKind::ArgMin | ReductionKind::ArgMax => {
-                        visit.push_arg(&mut arg, li, v, kind);
-                    }
-                    _ => visit.push_value(&mut value, v),
-                }
-                visit.write_preview(preview_addr, preview_len, li, v);
-                Ok(())
-            })?;
+            let mut ctx = ScalarFoldChunkCtx {
+                kind,
+                value: &mut value,
+                arg: &mut arg,
+                preview_addr,
+                preview_len,
+            };
+            let bytes = visit.fold_chunk(mmap, plan, c, &mut ctx)?;
             Ok(ScalarChunkWork { bytes, value, arg })
         })
         .collect::<Result<Vec<_>, TetError>>()?;
@@ -566,7 +629,14 @@ pub(crate) fn fold_read_plan_partial_operation_parallel(
     kind: ReductionKind,
     axis_labels: &[String],
 ) -> Result<FoldPlanOutcome, TetError> {
-    parallel_partial_axis_fold(mmap, plan, max_preview, kind, axis_labels, PartialFoldVisit::F32)
+    parallel_partial_axis_fold(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        axis_labels,
+        PartialFoldVisit::F32,
+    )
 }
 
 /// Parallel partial-axis fold (`f64`).
@@ -577,5 +647,12 @@ pub(crate) fn fold_read_plan_partial_operation_f64_parallel(
     kind: ReductionKind,
     axis_labels: &[String],
 ) -> Result<FoldPlanOutcome, TetError> {
-    parallel_partial_axis_fold(mmap, plan, max_preview, kind, axis_labels, PartialFoldVisit::F64)
+    parallel_partial_axis_fold(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        axis_labels,
+        PartialFoldVisit::F64,
+    )
 }
