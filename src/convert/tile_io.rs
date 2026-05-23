@@ -5,18 +5,14 @@ use crate::catalog::tile;
 use crate::utils::dtype::ElementDtype;
 
 use super::ConvertError;
+use super::shared::ImportTileRead;
 
 /// Half-open `[start, end)` index ranges per axis for one tile.
-pub(crate) fn tile_axis_ranges(
-    shape: &[u64],
-    chunk_shape: &[u64],
-    chunk_coord: &[u64],
-    ndim: usize,
-) -> Vec<(u64, u64)> {
-    let extent = tile::tile_extent(shape, chunk_shape, chunk_coord, ndim);
-    (0..ndim)
+pub(crate) fn tile_axis_ranges(spec: ImportTileRead<'_>) -> Vec<(u64, u64)> {
+    let extent = tile::tile_extent(spec.shape, spec.chunk_shape, spec.chunk_coord, spec.ndim);
+    (0..spec.ndim)
         .map(|d| {
-            let start = chunk_coord[d] * chunk_shape[d];
+            let start = spec.chunk_coord[d] * spec.chunk_shape[d];
             let end = start + extent[d];
             (start, end)
         })
@@ -26,20 +22,20 @@ pub(crate) fn tile_axis_ranges(
 #[cfg(feature = "tetration-hdf5")]
 pub(crate) fn read_hdf5_tile_le_into(
     ds: &hdf5_metno::Dataset,
-    dtype: ElementDtype,
-    shape: &[u64],
-    chunk_shape: &[u64],
-    chunk_coord: &[u64],
-    ndim: usize,
+    spec: ImportTileRead<'_>,
     buf: &mut [u8],
 ) -> Result<(), ConvertError> {
-    let ranges = tile_axis_ranges(shape, chunk_shape, chunk_coord, ndim);
-    match dtype {
-        ElementDtype::F32 => read_hdf5_tile_typed_into::<f32>(ds, &ranges, ndim, buf),
-        ElementDtype::F64 => read_hdf5_tile_typed_into::<f64>(ds, &ranges, ndim, buf),
-        ElementDtype::I32 => read_hdf5_tile_typed_into::<i32>(ds, &ranges, ndim, buf),
-        ElementDtype::I64 => read_hdf5_tile_typed_into::<i64>(ds, &ranges, ndim, buf),
+    let ranges = tile_axis_ranges(spec);
+    match spec.dtype {
+        ElementDtype::F32 => read_hdf5_tile_typed_into::<f32>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::F64 => read_hdf5_tile_typed_into::<f64>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::I32 => read_hdf5_tile_typed_into::<i32>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::I64 => read_hdf5_tile_typed_into::<i64>(ds, &ranges, spec.ndim, buf),
+    }?;
+    if let Some(cf) = spec.cf {
+        cf.apply_tile_le(spec.dtype, buf)?;
     }
+    Ok(())
 }
 
 #[cfg(feature = "tetration-hdf5")]
@@ -181,20 +177,22 @@ fn hdf5_index_slice(index: u64) -> Result<hdf5_metno::SliceOrIndex, ConvertError
 #[cfg(feature = "tetration-netcdf")]
 pub(crate) fn read_netcdf_tile_le_into(
     var: &netcdf::Variable<'_>,
-    shape: &[u64],
-    chunk_shape: &[u64],
-    chunk_coord: &[u64],
-    ndim: usize,
+    spec: ImportTileRead<'_>,
     buf: &mut [u8],
 ) -> Result<(), ConvertError> {
-    if !(1..=8).contains(&ndim) {
+    if !(1..=8).contains(&spec.ndim) {
         return Err(ConvertError::Catalog(
-            crate::catalog::CatalogError::BadNdim { ndim },
+            crate::catalog::CatalogError::BadNdim { ndim: spec.ndim },
         ));
     }
-    let ranges = tile_axis_ranges(shape, chunk_shape, chunk_coord, ndim);
+    let ranges = tile_axis_ranges(spec);
     let slices = netcdf_axis_ranges(&ranges)?;
-    read_netcdf_raw_values_into(var, &slices, buf).map_err(|e| ConvertError::Netcdf(e.to_string()))
+    read_netcdf_raw_values_into(var, &slices, buf)
+        .map_err(|e| ConvertError::Netcdf(e.to_string()))?;
+    if let Some(cf) = spec.cf {
+        cf.apply_tile_le(spec.dtype, buf)?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "tetration-netcdf")]

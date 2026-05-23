@@ -8,9 +8,9 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Phases 0–3 (spec, writer/reader, chunk addressing, zstd + index robustness) | **Done**                                                                                                                                                                                                                                                                         |
 | Phase 4 (query execute)                                                     | **Done** — plan, mmap materialize, parallel multi-chunk decode, memory-aware routing, mmap spill, streaming scalar + partial-axis folds, **`f32`** / **`f64`** / **`i32`** / **`i64`** execution, tier-C **`median`** / **`quantile`** / **`histogram`** (scalar + partial axes) |
-| Phase 5 (convert)                                                           | **Baseline done** — HDF5/NetCDF → `.tet`, extension sniff, parallel import; **next:** richer HDF5/NetCDF, Zarr |
-| Phase 6 (bindings)                                                        | **Not started** — separate Python repo (PyPI rename), pins crates.io `tetration`; Python-ecosystem convert |
-| Phase 7 (metadata & history)                                              | **Baseline done** — history footer + convert events; **next:** header attrs, dataset metadata, session writer |
+| Phase 5 (convert)                                                           | **Baseline done** — HDF5/NetCDF → `.tet`, extension sniff, parallel import; **next:** richer HDF5/NetCDF, Zarr                                                                                                                                                                   |
+| Phase 6 (bindings)                                                          | **Not started** — separate Python repo (PyPI rename), pins crates.io `tetration`; Python-ecosystem convert                                                                                                                                                                       |
+| Phase 7 (metadata & history)                                                | **Baseline done** — history footer + convert events; **next:** header attrs, dataset metadata, session writer                                                                                                                                                                    |
 | JSON security                                                               | **Done (v1)** — `QueryLimits`, `deny_unknown_fields`, caps in `document.rs`; proptest in `tests/query.rs`                                                                                                                                                                        |
 
 **Branch:** `main` ([PR #1](https://github.com/thicclatka/tetration/pull/1) layout/query v1; [PR #2](https://github.com/thicclatka/tetration/pull/2) integer dtypes).
@@ -43,14 +43,14 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 
 ## CLI (`tet`)
 
-| Command                                     | Behavior                                                                                                                                                                                                       |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tet info <path.tet>`                       | Mmap, v1 superblock + catalog summary → pretty JSON.                                                                                                                                                           |
-| `tet query [-f path \| stdin]`              | Parse/validate query JSON; plan-only echo without `--tet`.                                                                                                                                                     |
-| `tet query … --tet path.tet`                | Catalog + `ReadPlan` in response (`dataset_f32_bytes` / `dataset_f64_bytes`, `file_execution` when matched).                                                                                                   |
-| `tet query … --tet path.tet --execute`      | Plan + **`build_execution_preview`**: mmap tiles (raw **0** / zstd **1**), capped previews, optional **`operation_*`**; appends to platform query history on success. |
-| `tet history [--clear] [-n N]`              | List or clear recent query JSON (`…/tetration/query_history.jsonl`; not in `.tet`). |
-| `tet convert <input> <output.tet> [--jobs N]` | HDF5 / NetCDF → `.tet` (parallel chunk reads; `--jobs 0` = auto). |
+| Command                                       | Behavior                                                                                                                                                              |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tet info <path.tet>`                         | Mmap, v1 superblock + catalog summary → pretty JSON.                                                                                                                  |
+| `tet query [-f path \| stdin]`                | Parse/validate query JSON; plan-only echo without `--tet`.                                                                                                            |
+| `tet query … --tet path.tet`                  | Catalog + `ReadPlan` in response (`dataset_f32_bytes` / `dataset_f64_bytes`, `file_execution` when matched).                                                          |
+| `tet query … --tet path.tet --execute`        | Plan + **`build_execution_preview`**: mmap tiles (raw **0** / zstd **1**), capped previews, optional **`operation_*`**; appends to platform query history on success. |
+| `tet history [--clear] [-n N]`                | List or clear recent query JSON (`…/tetration/query_history.jsonl`; not in `.tet`).                                                                                   |
+| `tet convert <input> <output.tet> [--jobs N]` | HDF5 / NetCDF → `.tet` (parallel chunk reads; `--jobs 0` = auto).                                                                                                     |
 
 Run: `cargo run -- …` or `cargo build --release` then `./target/release/tet …`.
 

@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use super::zarr::is_zarr_v3_directory;
 use super::{ConvertError, ConvertInputFormat};
 
 /// HDF5 convert input recognition (extensions + file signature).
@@ -26,6 +27,14 @@ impl NetcdfConvertInput {
     pub const SUPPORTED_EXTENSIONS: &str = ".nc, .netcdf, .nc4, .nc3, .cdf, .ncdf";
 }
 
+/// Zarr v3 directory store recognition (`.zarr` extension or root `zarr.json`).
+pub struct ZarrConvertInput;
+
+impl ZarrConvertInput {
+    pub const EXTENSIONS: &[&str] = &["zarr"];
+    pub const SUPPORTED_EXTENSIONS: &str = ".zarr directory store (v3 zarr.json at root)";
+}
+
 /// Compression suffixes stripped before extension matching during convert sniff.
 pub struct ConvertCompressionSuffixes;
 
@@ -39,13 +48,18 @@ impl ConvertCompressionSuffixes {
 /// are stripped once before matching (e.g. `model.nc.gz` → `NetCDF`). When the extension is
 /// missing or unrecognized, classic `NetCDF` (`CDF\\x01` / `CDF\\x02`) and HDF5
 /// (`\\x89HDF\\r\\n\\x1a\\n`) signatures are checked. NetCDF-4 (HDF5 container) should use
-/// a `NetCDF` extension so the `NetCDF` importer is selected.
+/// a `NetCDF` extension so the `NetCDF` importer is selected. Zarr v3 directory stores are
+/// detected when the path is a directory containing root `zarr.json` (`zarr_format: 3`).
 ///
 /// # Errors
 ///
 /// Returns [`ConvertError::UnsupportedInputExtension`] when neither extension nor signature
 /// match, or [`ConvertError::Catalog`] on I/O failure while sniffing.
 pub fn detect_convert_format(path: &Path) -> Result<ConvertInputFormat, ConvertError> {
+    if path.is_dir() && is_zarr_v3_directory(path) {
+        return Ok(ConvertInputFormat::Zarr);
+    }
+
     let logical = logical_path_for_detection(path);
     let ext = logical
         .extension()
@@ -55,6 +69,10 @@ pub fn detect_convert_format(path: &Path) -> Result<ConvertInputFormat, ConvertE
 
     if let Some(fmt) = format_from_extension(&ext) {
         return Ok(fmt);
+    }
+
+    if path.is_dir() && is_zarr_v3_directory(path) {
+        return Ok(ConvertInputFormat::Zarr);
     }
 
     match sniff_format_from_file(path) {
@@ -69,6 +87,8 @@ fn format_from_extension(ext: &str) -> Option<ConvertInputFormat> {
         Some(ConvertInputFormat::H5)
     } else if NetcdfConvertInput::EXTENSIONS.contains(&ext) {
         Some(ConvertInputFormat::Netcdf)
+    } else if ZarrConvertInput::EXTENSIONS.contains(&ext) {
+        Some(ConvertInputFormat::Zarr)
     } else {
         None
     }
@@ -114,5 +134,6 @@ fn unsupported_input(path: &Path, ext: &str) -> ConvertError {
         ext: ext.to_owned(),
         h5_ext: Hdf5ConvertInput::SUPPORTED_EXTENSIONS,
         nc_ext: NetcdfConvertInput::SUPPORTED_EXTENSIONS,
+        zarr_ext: ZarrConvertInput::SUPPORTED_EXTENSIONS,
     }
 }

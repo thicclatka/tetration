@@ -1,6 +1,6 @@
 # Getting started — Tetration
 
-Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **execution** (`tet query --tet … --execute`), and **`tet convert`** from **HDF5 / NetCDF** (extension sniff, streaming + parallel chunk import).
+Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **execution** (`tet query --tet … --execute`), and **`tet convert`** from **HDF5 / NetCDF / Zarr v3** (extension or directory sniff, streaming + parallel chunk import).
 
 **Fixtures:** tracked import tensors and generators live in [`fixtures/README.md`](fixtures/README.md) (Phase 5 convert tests + local 20 GiB stress).
 
@@ -73,21 +73,16 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Goal:** import chunked numeric arrays from common scientific containers into `.tet` (reuse streaming writer + parallel tile fill). **Fixtures:** [`fixtures/README.md`](fixtures/README.md).
 
-### Baseline (done)
-
-- [x] **`tet convert <input> <output.tet> [--jobs N]`** — format from extension / file signature (HDF5, NetCDF); history footer (`convert` / `h5` | `nc`).
-- [x] **HDF5** (`tetration-hdf5`): root-level **`f32` / `f64` / `i32` / `i64`** datasets; chunked hyperslab read → `.tet` (feature-gated).
-- [x] **NetCDF** (`tetration-netcdf`): same dtypes; **`get_raw_values_into`** tile path; feature-gated.
+- [x] **`tet convert <input> <output.tet> [--jobs N]`** — HDF5 / NetCDF from extension or file signature; **Zarr v3** from directory store (root `zarr.json`); history footer (`convert` / `h5` | `nc` | `zarr`).
+- [x] **HDF5** (`tetration-hdf5`): **`f32` / `f64` / `i32` / `i64`**; nested groups → slash catalog names (`primary/f32`); **CF** decode (`scale_factor`, `add_offset`, `_FillValue`) at import; chunked hyperslab read → `.tet`.
+- [x] **NetCDF** (`tetration-netcdf`): same dtypes + groups + CF; **`get_raw_values_into`** tile path.
+- [x] **Zarr v3 directory store** — regular chunk grid, **`bytes` + `zstd`** codecs (fixture layout); nested groups; map Zarr chunks → `.tet` tiles.
 - [x] **Streaming write** — one chunk in RAM at a time (≈ **`jobs` × tile** under parallel import); sequential payload append when layout allows.
-- [x] **Fixtures + tests** — `fixtures/small/` byte roundtrips (`tests/convert.rs`); `fixtures/large/` 20 GiB stress (gitignored, `mise run fixtures:large`).
+- [x] **Fixtures + tests** — `fixtures/small/` (`tensor_*`, `groups_3d`, `cf_3d`, zarr) in `tests/convert.rs`; `fixtures/large/` / `fixtures/extra_large/` for local stress (gitignored, `mise run fixtures:large` / `fixtures:extra-large-*`).
 
-### Phase 5 focus (next)
+**Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks):** HDF5 ~**8 s**, Zarr ~**10 s** for **20 GiB** logical → `.tet` on a fast SSD.
 
-- [ ] **Richer HDF5** — groups / nested paths (`/group/var` → catalog names); reuse source chunking; clearer errors for unsupported dtypes.
-- [ ] **Richer NetCDF** — groups; **CF** numeric conventions (`scale_factor`, `add_offset`, `_FillValue`) at import; coordinate variables as separate datasets where useful.
-- [ ] **Zarr → `.tet`** — v2/v3 directory (or zip) store; map Zarr chunks to `.tet` tiles; add `fixtures/small/zarr/` when landed.
-
-### Could add later (not Phase 5 yet)
+### Could add later (not Phase 5)
 
 Other dense-grid formats may follow the same pipeline if there is demand — e.g. **`.npy` / `.npz`**, **COG/GeoTIFF**, **GRIB2**, **NIfTI**. **CSV / Parquet** are poor fits (mixed or columnar types vs one dense dtype). Pick per domain after HDF5/NetCDF depth + Zarr.
 
@@ -112,7 +107,7 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 - [x] **Documented layout** — [`docs/layout_v1.md`](docs/layout_v1.md) for standalone readers.
 - [x] **JSON + CLI** — `tet query`, `tet info`, `tet convert`; shell out or HTTP-post query documents from any runtime.
-- [x] **Rust convert** — `tet convert` for fast CLI import (parallel HDF5/NetCDF); Python convert is a separate, ecosystem-native path.
+- [x] **Rust convert** — `tet convert` for fast CLI import (parallel HDF5 / NetCDF / Zarr); Python convert is a separate, ecosystem-native path.
 
 ## Phase 7 — Metadata & history
 
@@ -121,7 +116,7 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 ### Baseline (done)
 
 - [x] **Optional history footer** — `THST` tail, JSON `{"history":[[op, source, unix_secs],…]}`, superblock **`flags` bit 1**; payload bounds exclude footer (`catalog/history.rs`).
-- [x] **Convert provenance** — `append_convert_history` on `tet convert` (`convert` / `h5` | `nc` / timestamp); **not** used for read/query events.
+- [x] **Convert provenance** — `append_convert_history` on `tet convert` (`convert` / `h5` | `nc` | `zarr` / timestamp); **not** used for read/query events.
 - [x] **`tet info` / summary** — `read_tet_summary_v1` surfaces parsed `history` alongside superblock + catalog.
 - [x] **CLI query history** — `tet history` lists last **10** queries from platform cache (`query_history.jsonl`); `TET_NO_QUERY_HISTORY=1` disables; `TET_QUERY_HISTORY_FILE` overrides path.
 
@@ -181,10 +176,9 @@ TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 **Suggested next PR-sized slices (pick one):**
 
 1. ~~**Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.~~ **Done** — wire tags `3`/`4`, writers, query preview/spill/ops.
-2. ~~**Convert baseline:** HDF5 + NetCDF → `.tet` with streaming + parallel import.~~ **Done** — `tet convert`, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).
-3. **Richer NetCDF/HDF5:** groups + CF decode at import (+ fixture variants in `generate.py`).
-4. **Zarr import:** `fixtures/small/zarr/` + directory → `.tet` roundtrip.
-5. **Metadata scaffold:** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
-6. **History events v2:** structured transform event + session flush API.
-7. **Python repo scaffold:** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
-8. **Histogram:** caller-supplied `min` / `max` for bin edges.
+2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).
+3. **Metadata scaffold:** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
+4. **History events v2:** structured transform event + session flush API.
+5. **Python repo scaffold:** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+6. **Histogram:** caller-supplied `min` / `max` for bin edges.
+7. **Parallel streaming fold:** Phase 8 — Rayon over chunks for tier-A/B ops (see below).

@@ -8,15 +8,18 @@ use hdf5_metno::types::{FloatSize, IntSize, TypeDescriptor};
 
 use crate::utils::dtype::ElementDtype;
 
+use super::cf::cf_from_hdf5;
 use super::parallel::H5ParallelSource;
-use super::shared::{ImportPlan, chunk_shape_for_import, ensure_non_empty, write_plans_streaming};
+use super::shared::{
+    ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
+};
 use super::{ConvertError, ConvertProgress, ConvertReport, report};
 use crate::catalog::append_convert_history;
 
-/// Import all supported root-level numeric datasets from an HDF5 file into one `.tet`.
+/// Import all supported numeric datasets from an HDF5 file into one `.tet`.
 ///
-/// Supported element types: `f32`, `f64`, `i32`, `i64`. Peak host RAM is roughly
-/// `parallel_jobs` chunk tiles (plus index metadata), not the full logical tensor size.
+/// Walks nested groups (`group/var` → catalog name `group/var`). Supported element types:
+/// `f32`, `f64`, `i32`, `i64`. CF `scale_factor` / `add_offset` / `_FillValue` are decoded at import.
 ///
 /// # Errors
 ///
@@ -40,25 +43,9 @@ pub fn convert_h5_to_tet_with_progress(
 ) -> Result<ConvertReport, ConvertError> {
     let started = Instant::now();
     let file = File::open(input).map_err(|e| ConvertError::Hdf5(e.to_string()))?;
-    let mut names: Vec<String> = file
-        .member_names()
-        .map_err(|e| ConvertError::Hdf5(e.to_string()))?
-        .into_iter()
-        .filter(|name| file.dataset(name).is_ok())
-        .collect();
-    names.sort();
-
     let mut plans = Vec::new();
-    for name in &names {
-        let ds = file
-            .dataset(name)
-            .map_err(|e| ConvertError::Hdf5(e.to_string()))?;
-        match plan_dataset(name, &ds) {
-            Ok(plan) => plans.push(plan),
-            Err(ConvertError::UnsupportedDtype { .. }) => {}
-            Err(e) => return Err(e),
-        }
-    }
+    collect_h5_plans(&file, "", &mut plans)?;
+
     ensure_non_empty(
         input,
         &plans.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
@@ -94,6 +81,31 @@ pub fn convert_h5_to_tet_with_progress(
     ))
 }
 
+fn collect_h5_plans(
+    loc: &hdf5_metno::Group,
+    prefix: &str,
+    plans: &mut Vec<ImportPlan>,
+) -> Result<(), ConvertError> {
+    let err = |e: hdf5_metno::Error| ConvertError::Hdf5(e.to_string());
+    let mut names = loc.member_names().map_err(err)?;
+    names.sort();
+    for name in names {
+        if loc.dataset(&name).is_ok() {
+            let ds = loc.dataset(&name).map_err(err)?;
+            let path = join_catalog_path(prefix, &name);
+            match plan_dataset(&path, &ds) {
+                Ok(plan) => plans.push(plan),
+                Err(ConvertError::UnsupportedDtype { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        } else if loc.group(&name).is_ok() {
+            let grp = loc.group(&name).map_err(err)?;
+            collect_h5_plans(&grp, &join_catalog_path(prefix, &name), plans)?;
+        }
+    }
+    Ok(())
+}
+
 fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, ConvertError> {
     let dtype = map_hdf5_dtype(ds, name)?;
     let shape: Vec<u64> = ds
@@ -107,12 +119,19 @@ fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, Conv
             detail: "empty or scalar dataset".into(),
         });
     }
-    let chunk_shape = chunk_shape_for_import(&shape, hdf5_chunk_shape(ds));
+    let cf = cf_from_hdf5(ds);
+    let chunk_shape = if cf.is_some() {
+        chunk_shape_for_import(&shape, None)
+    } else {
+        chunk_shape_for_import(&shape, hdf5_chunk_shape(ds))
+    };
     Ok(ImportPlan {
         name: name.to_owned(),
         dtype,
         shape,
         chunk_shape,
+        cf,
+        zarr_array_rel: None,
     })
 }
 

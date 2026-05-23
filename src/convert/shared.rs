@@ -1,5 +1,7 @@
 //! Shared helpers for foreign-format import.
 
+use super::cf::CfTransform;
+
 use crate::catalog::{
     ArrayWriteMeta, CHUNK_PAYLOAD_CODEC_V1, CatalogError, StreamTileJob, StreamWriteProgress,
     write_multi_raw_array_streaming,
@@ -15,6 +17,41 @@ pub(crate) struct ImportPlan {
     pub dtype: ElementDtype,
     pub shape: Vec<u64>,
     pub chunk_shape: Vec<u64>,
+    pub cf: Option<CfTransform>,
+    /// Zarr array path relative to store root (`primary/f32`); `None` for HDF5/NetCDF.
+    pub zarr_array_rel: Option<String>,
+}
+
+pub(crate) fn join_catalog_path(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}/{name}")
+    }
+}
+
+/// One tile read during import: geometry from the plan plus the chunk coordinate from the stream job.
+#[derive(Clone, Copy)]
+pub(crate) struct ImportTileRead<'a> {
+    pub dtype: ElementDtype,
+    pub shape: &'a [u64],
+    pub chunk_shape: &'a [u64],
+    pub chunk_coord: &'a [u64],
+    pub ndim: usize,
+    pub cf: Option<CfTransform>,
+}
+
+impl ImportPlan {
+    pub(crate) fn tile_read<'a>(&'a self, job: &'a StreamTileJob<'_>) -> ImportTileRead<'a> {
+        ImportTileRead {
+            dtype: self.dtype,
+            shape: &self.shape,
+            chunk_shape: &self.chunk_shape,
+            chunk_coord: &job.chunk_coord[..job.ndim],
+            ndim: job.ndim,
+            cf: self.cf,
+        }
+    }
 }
 
 /// Pick a v1 chunk grid: reuse source chunking when it matches rank, else one tile per array.

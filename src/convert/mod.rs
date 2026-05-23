@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::catalog::CatalogError;
 
+mod cf;
 #[cfg(feature = "tetration-hdf5")]
 mod hdf5;
 #[cfg(feature = "tetration-netcdf")]
@@ -14,6 +15,7 @@ mod parallel;
 mod shared;
 mod sniff;
 mod tile_io;
+mod zarr;
 
 pub use parallel::{default_parallel_jobs, resolve_parallel_jobs};
 
@@ -21,21 +23,24 @@ pub use parallel::{default_parallel_jobs, resolve_parallel_jobs};
 pub use hdf5::{convert_h5_to_tet, convert_h5_to_tet_with_progress};
 #[cfg(feature = "tetration-netcdf")]
 pub use netcdf::{convert_netcdf_to_tet, convert_netcdf_to_tet_with_progress};
+pub use zarr::{convert_zarr_to_tet, convert_zarr_to_tet_with_progress, is_zarr_v3_directory};
 
 /// Supported foreign input formats for [`convert_to_tet`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvertInputFormat {
     H5,
     Netcdf,
+    Zarr,
 }
 
 impl ConvertInputFormat {
-    /// History footer source tag (`"h5"` or `"nc"`).
+    /// History footer source tag (`"h5"`, `"nc"`, or `"zarr"`).
     #[must_use]
     pub const fn history_source(self) -> &'static str {
         match self {
             Self::H5 => "h5",
             Self::Netcdf => "nc",
+            Self::Zarr => "zarr",
         }
     }
 }
@@ -44,7 +49,8 @@ impl ConvertInputFormat {
 ///
 /// See [`detect_convert_format`] and [`Hdf5ConvertInput`] / [`NetcdfConvertInput`].
 pub use sniff::{
-    ConvertCompressionSuffixes, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format,
+    ConvertCompressionSuffixes, Hdf5ConvertInput, NetcdfConvertInput, ZarrConvertInput,
+    detect_convert_format,
 };
 
 /// Convert a foreign array file to `.tet`, picking the importer from the input extension.
@@ -75,6 +81,9 @@ pub fn convert_to_tet_with_progress(
         ConvertInputFormat::H5 => convert_h5_dispatch(input, output, parallel_jobs, progress),
         ConvertInputFormat::Netcdf => {
             convert_netcdf_dispatch(input, output, parallel_jobs, progress)
+        }
+        ConvertInputFormat::Zarr => {
+            convert_zarr_to_tet_with_progress(input, output, parallel_jobs, progress)
         }
     }
 }
@@ -172,16 +181,19 @@ pub enum ConvertError {
     #[cfg(feature = "tetration-hdf5")]
     #[error("HDF5 open/read failed: {0}")]
     Hdf5(String),
+    #[error("Zarr open/read failed: {0}")]
+    Zarr(String),
     #[error("unsupported element type in variable `{name}`: {detail}")]
     UnsupportedDtype { name: String, detail: String },
     #[error(
-        "unsupported convert input `{path}`: extension `{ext}` (supported extensions: {h5_ext}; {nc_ext}; or recognizable HDF5 / NetCDF-3 file signature)"
+        "unsupported convert input `{path}`: extension `{ext}` (supported extensions: {h5_ext}; {nc_ext}; {zarr_ext}; or recognizable HDF5 / NetCDF-3 file signature / Zarr v3 directory store)"
     )]
     UnsupportedInputExtension {
         path: String,
         ext: String,
         h5_ext: &'static str,
         nc_ext: &'static str,
+        zarr_ext: &'static str,
     },
     #[error("{format:?} convert requires Cargo feature `{feature}`")]
     ConvertFeatureDisabled {

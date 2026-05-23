@@ -8,15 +8,18 @@ use netcdf::types::{FloatType, IntType, NcVariableType};
 
 use crate::utils::dtype::ElementDtype;
 
+use super::cf::cf_from_netcdf;
 use super::parallel::NetcdfParallelSource;
-use super::shared::{ImportPlan, chunk_shape_for_import, ensure_non_empty, write_plans_streaming};
+use super::shared::{
+    ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
+};
 use super::{ConvertError, ConvertProgress, ConvertReport, report};
 use crate::catalog::append_convert_history;
 
-/// Import all supported root-level numeric variables from a `NetCDF` file into one `.tet`.
+/// Import all supported numeric variables from a `NetCDF` file into one `.tet`.
 ///
-/// Supported element types: `f32`, `f64`, `i32`, `i64`. Peak host RAM is roughly
-/// `parallel_jobs` chunk tiles (plus index metadata), not the full logical tensor size.
+/// Walks nested groups (`group/var` → catalog name `group/var`). Supported element types:
+/// `f32`, `f64`, `i32`, `i64`. CF `scale_factor` / `add_offset` / `_FillValue` are decoded at import.
 ///
 /// # Errors
 ///
@@ -40,20 +43,24 @@ pub fn convert_netcdf_to_tet_with_progress(
 ) -> Result<ConvertReport, ConvertError> {
     let started = Instant::now();
     let file = netcdf::open(input).map_err(|e| ConvertError::Netcdf(e.to_string()))?;
-    let mut vars: Vec<Variable<'_>> = file.variables().collect();
-    vars.sort_by_key(Variable::name);
-
     let mut plans = Vec::new();
-    for var in &vars {
-        if var.dimensions().is_empty() {
-            continue;
-        }
-        match plan_variable(var) {
-            Ok(plan) => plans.push(plan),
-            Err(ConvertError::UnsupportedDtype { .. }) => {}
-            Err(e) => return Err(e),
+    if let Some(root) = file.root() {
+        collect_nc_plans(&root, "", &mut plans)?;
+    } else {
+        let mut vars: Vec<Variable<'_>> = file.variables().collect();
+        vars.sort_by_key(Variable::name);
+        for var in &vars {
+            if var.dimensions().is_empty() {
+                continue;
+            }
+            match plan_variable(var) {
+                Ok(plan) => plans.push(plan),
+                Err(ConvertError::UnsupportedDtype { .. }) => {}
+                Err(e) => return Err(e),
+            }
         }
     }
+
     ensure_non_empty(
         input,
         &plans.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
@@ -89,9 +96,40 @@ pub fn convert_netcdf_to_tet_with_progress(
     ))
 }
 
+fn collect_nc_plans(
+    grp: &netcdf::Group<'_>,
+    prefix: &str,
+    plans: &mut Vec<ImportPlan>,
+) -> Result<(), ConvertError> {
+    let mut vars: Vec<Variable<'_>> = grp.variables().collect();
+    vars.sort_by_key(Variable::name);
+    for var in vars {
+        if var.dimensions().is_empty() {
+            continue;
+        }
+        let stem = var.name();
+        let path = join_catalog_path(prefix, &stem);
+        match plan_variable_at(&path, &var) {
+            Ok(plan) => plans.push(plan),
+            Err(ConvertError::UnsupportedDtype { .. }) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let mut groups: Vec<netcdf::Group<'_>> = grp.groups().collect();
+    groups.sort_by_key(netcdf::Group::name);
+    for sub in groups {
+        let sub_name = sub.name();
+        collect_nc_plans(&sub, &join_catalog_path(prefix, &sub_name), plans)?;
+    }
+    Ok(())
+}
+
 fn plan_variable(var: &Variable<'_>) -> Result<ImportPlan, ConvertError> {
-    let name = var.name();
-    let dtype = map_netcdf_dtype(&name, var.vartype())?;
+    plan_variable_at(&var.name(), var)
+}
+
+fn plan_variable_at(name: &str, var: &Variable<'_>) -> Result<ImportPlan, ConvertError> {
+    let dtype = map_netcdf_dtype(name, var.vartype())?;
     let shape: Vec<u64> = var
         .dimensions()
         .iter()
@@ -99,16 +137,23 @@ fn plan_variable(var: &Variable<'_>) -> Result<ImportPlan, ConvertError> {
         .collect();
     if shape.contains(&0) {
         return Err(ConvertError::UnsupportedDtype {
-            name,
+            name: name.to_owned(),
             detail: "zero-length dimension".into(),
         });
     }
-    let chunk_shape = chunk_shape_for_import(&shape, var.chunking().ok().flatten());
+    let cf = cf_from_netcdf(var);
+    let chunk_shape = if cf.is_some() {
+        chunk_shape_for_import(&shape, None)
+    } else {
+        chunk_shape_for_import(&shape, var.chunking().ok().flatten())
+    };
     Ok(ImportPlan {
-        name,
+        name: name.to_owned(),
         dtype,
         shape,
         chunk_shape,
+        cf,
+        zarr_array_rel: None,
     })
 }
 

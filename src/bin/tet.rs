@@ -103,10 +103,12 @@ fn run_convert(input: &Path, output: &Path, jobs: usize) -> Result<(), String> {
     let label = match format {
         tetration::ConvertInputFormat::H5 => "HDF5 convert",
         tetration::ConvertInputFormat::Netcdf => "NetCDF convert",
+        tetration::ConvertInputFormat::Zarr => "Zarr convert",
     };
     let progress_prefix = match format {
         tetration::ConvertInputFormat::H5 => "HDF5 → .tet",
         tetration::ConvertInputFormat::Netcdf => "NetCDF → .tet",
+        tetration::ConvertInputFormat::Zarr => "Zarr → .tet",
     };
 
     let pb = ProgressBar::new(0);

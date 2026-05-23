@@ -72,15 +72,8 @@ impl H5ParallelSource {
                 .file
                 .dataset(&plan.name)
                 .map_err(|e| ConvertError::Hdf5(e.to_string()))?;
-            read_hdf5_tile_le_into(
-                &ds,
-                plan.dtype,
-                &plan.shape,
-                &plan.chunk_shape,
-                &job.chunk_coord[..job.ndim],
-                job.ndim,
-                buf,
-            )
+            let spec = plan.tile_read(job);
+            read_hdf5_tile_le_into(&ds, spec, buf)
         })
     }
 }
@@ -136,14 +129,8 @@ impl NetcdfParallelSource {
                 .file
                 .variable(&plan.name)
                 .ok_or_else(|| ConvertError::Netcdf(format!("variable `{}` missing", plan.name)))?;
-            read_netcdf_tile_le_into(
-                &var,
-                &plan.shape,
-                &plan.chunk_shape,
-                &job.chunk_coord[..job.ndim],
-                job.ndim,
-                buf,
-            )
+            let spec = plan.tile_read(job);
+            read_netcdf_tile_le_into(&var, spec, buf)
         })
     }
 }
@@ -153,4 +140,29 @@ struct NetcdfThreadCtx {
     input: PathBuf,
     plans_len: usize,
     file: netcdf::File,
+}
+
+pub(crate) struct ZarrParallelSource {
+    store: PathBuf,
+    plans: Arc<[ImportPlan]>,
+}
+
+impl ZarrParallelSource {
+    pub(crate) fn new(store: PathBuf, plans: Vec<ImportPlan>) -> Self {
+        Self {
+            store,
+            plans: plans.into(),
+        }
+    }
+
+    pub(crate) fn fill_tile(
+        &self,
+        job: &StreamTileJob<'_>,
+        buf: &mut [u8],
+    ) -> Result<(), ConvertError> {
+        let plan = &self.plans[job.dataset_id];
+        let array_rel = plan.zarr_array_rel.as_deref().unwrap_or(plan.name.as_str());
+        let spec = plan.tile_read(job);
+        super::zarr::read_zarr_tile_le_into(&self.store, array_rel, spec, buf)
+    }
 }

@@ -1,0 +1,9 @@
+{
+  "attributes": {
+    "tetration_fixture": "small_5d",
+    "tetration_ndim": 5,
+    "tetration_dtypes": "f32,f64,i32,i64"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

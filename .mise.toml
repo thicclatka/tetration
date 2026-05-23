@@ -8,24 +8,52 @@ dir = "{{config_root}}/fixtures"
 run = "uv sync"
 
 [tasks."fixtures:small"]
-description = "Generate tracked small HDF5/NetCDF fixtures"
+description = "Generate tracked small HDF5/NetCDF/Zarr fixtures (baseline, groups, cf)"
 depends = ["fixtures:sync"]
 dir = "{{config_root}}/fixtures"
 run = "uv run generate-fixtures small"
 
 [tasks."fixtures:large"]
-description = "Generate gitignored 20 GiB HDF5/NetCDF stress fixtures (~40 GiB disk)"
+description = "Generate gitignored large suite (~20 GiB total: h5 + nc + zarr)"
 depends = ["fixtures:sync"]
 dir = "{{config_root}}/fixtures"
 run = "uv run generate-fixtures large"
 
+[tasks."fixtures:extra-large-h5"]
+description = "Generate gitignored single 20 GiB HDF5 under fixtures/extra_large/h5/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures extra-large-h5"
+
+[tasks."fixtures:extra-large-netcdf"]
+description = "Generate gitignored single 20 GiB NetCDF under fixtures/extra_large/netcdf/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures extra-large-netcdf"
+
+[tasks."fixtures:extra-large-zarr"]
+description = "Generate gitignored single 20 GiB Zarr under fixtures/extra_large/zarr/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures extra-large-zarr"
+
 [tasks."fixtures:all"]
-description = "Generate small and large fixtures"
+description = "Generate small and large suite fixtures"
 depends = ["fixtures:sync"]
 dir = "{{config_root}}/fixtures"
 run = "uv run generate-fixtures all"
+
+[tasks."fixtures:clean-all"]
+description = "Remove all generated files under fixtures/"
+confirm = "Delete all files in fixtures/?"
+run = "rm -rf fixtures/large fixtures/extra_large fixtures/small"
 
 [tasks."fixtures:clean-large"]
 description = "Remove generated files under fixtures/large/"
 confirm = "Delete all files in fixtures/large/?"
 run = "rm -rf fixtures/large"
+
+[tasks."fixtures:clean-extra-large"]
+description = "Remove generated files under fixtures/extra_large/"
+confirm = "Delete all files in fixtures/extra_large/?"
+run = "rm -rf fixtures/extra_large"

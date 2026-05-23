@@ -20,9 +20,10 @@ pub use catalog::{
 };
 pub use convert::{
     ConvertCompressionSuffixes, ConvertDatasetSummary, ConvertError, ConvertInputFormat,
-    ConvertProgress, ConvertReport, Hdf5ConvertInput, NetcdfConvertInput, convert_to_tet,
-    convert_to_tet_with_progress, default_parallel_jobs, detect_convert_format,
-    resolve_parallel_jobs,
+    ConvertProgress, ConvertReport, Hdf5ConvertInput, NetcdfConvertInput, ZarrConvertInput,
+    convert_to_tet, convert_to_tet_with_progress, convert_zarr_to_tet,
+    convert_zarr_to_tet_with_progress, default_parallel_jobs, detect_convert_format,
+    is_zarr_v3_directory, resolve_parallel_jobs,
 };
 #[cfg(feature = "tetration-hdf5")]
 pub use convert::{convert_h5_to_tet, convert_h5_to_tet_with_progress};
