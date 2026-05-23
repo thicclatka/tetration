@@ -85,6 +85,7 @@ impl SuperblockV1 {
     }
 }
 
+/// Superblock parse and layout validation failures.
 #[derive(Debug, Error)]
 pub enum LayoutError {
     #[error("file too short for superblock: need {need} bytes, got {got}")]
@@ -198,6 +199,7 @@ pub fn open_superblock_v1(path: &Path) -> Result<(Mmap, SuperblockV1), LayoutOpe
     Ok((mmap, sb))
 }
 
+/// Path open / mmap failures wrapping [`LayoutError`] from superblock parse.
 #[derive(Debug, Error)]
 pub enum LayoutOpenError {
     #[error(transparent)]

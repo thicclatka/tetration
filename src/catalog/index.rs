@@ -18,6 +18,7 @@ pub struct ChunkIndexHeaderV1 {
     pub version: u32,
 }
 
+/// Defined chunk index header for layout v1 (`TIDX` magic, 32-byte header, version 1).
 pub const CHUNK_INDEX_HEADER_V1: ChunkIndexHeaderV1 = ChunkIndexHeaderV1 {
     magic: b"TIDX",
     header_len: 32,
@@ -40,6 +41,7 @@ pub struct ChunkIndexEntryV1 {
 }
 
 impl ChunkIndexEntryV1 {
+    /// On-disk byte length of one chunk index entry (little-endian).
     pub const WIRE_LEN: usize = 8 + MAX_NDIM * 8 + 8 + 8 + 8 + 4 + 4;
     /// Byte offset of `payload_offset` within a wire entry.
     pub const WIRE_PAYLOAD_OFFSET: usize = 8 + MAX_NDIM * 8;

@@ -705,6 +705,12 @@ pub(crate) fn materialize_scatter_fill_f64(
     Ok(total_bytes_read_from_disk)
 }
 
+/// Spill the full logical selection as row-major `f64` LE to `path` using a file-backed mmap
+/// (disk-resident; does not allocate a dense `Vec` in RAM).
+///
+/// # Errors
+///
+/// Same validation failures as [`materialize_read_plan_f64_le`], plus I/O or mmap errors on `path`.
 pub fn spill_read_plan_f64_le(
     mmap: &[u8],
     plan: &ReadPlan,

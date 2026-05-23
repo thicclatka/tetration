@@ -52,6 +52,7 @@ impl SpillPathAllowlist {
         }
     }
 
+    /// True when no spill roots were configured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.roots.is_empty()

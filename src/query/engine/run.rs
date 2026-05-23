@@ -1,3 +1,5 @@
+//! Query planning and execution entrypoints against mmap’d `.tet` files.
+
 use std::path::{Path, PathBuf};
 
 use crate::catalog::{

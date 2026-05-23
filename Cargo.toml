@@ -10,8 +10,8 @@ repository = "https://github.com/thicclatka/tetration"
 homepage = "https://github.com/thicclatka/tetration"
 documentation = "https://docs.rs/tetration"
 readme = "README.md"
-keywords = []
-categories = []
+keywords = ["tensor", "data", "format", "mmap"]
+categories = ["data-formats"]
 default-run = "tet"
 
 # rustdoc on docs.rs: build with default features off (avoid native `netcdf` / etc. when gated).

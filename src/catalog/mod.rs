@@ -179,16 +179,19 @@ pub fn f32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
     crate::utils::dtype::ElementDtype::F32.tensor_bytes_for_shape(shape)
 }
 
+/// Element count × 8 for an `f64` tensor with `shape`.
 #[must_use]
 pub fn f64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
     crate::utils::dtype::ElementDtype::F64.tensor_bytes_for_shape(shape)
 }
 
+/// Element count × 4 for an `i32` tensor with `shape`.
 #[must_use]
 pub fn i32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
     crate::utils::dtype::ElementDtype::I32.tensor_bytes_for_shape(shape)
 }
 
+/// Element count × 8 for an `i64` tensor with `shape`.
 #[must_use]
 pub fn i64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
     crate::utils::dtype::ElementDtype::I64.tensor_bytes_for_shape(shape)
@@ -207,6 +210,7 @@ pub struct TetFileSummaryV1 {
     pub history: Vec<HistoryEventV1>,
 }
 
+/// Catalog read, index validation, codec, and writer failures.
 #[derive(Debug, Error)]
 pub enum CatalogError {
     #[error(transparent)]

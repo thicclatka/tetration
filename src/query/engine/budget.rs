@@ -24,6 +24,7 @@ pub enum MemoryStrategy {
 }
 
 impl MemoryStrategy {
+    /// Stable `snake_case` token written to execution preview JSON.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -91,6 +92,7 @@ impl ExecutionBudget {
         }
     }
 
+    /// Resolve budget from query JSON hints only (no per-file TIDX overrides).
     #[must_use]
     pub fn from_hints(hints: Option<&ExecutionHints>) -> Self {
         Self::resolve(&FileExecutionSettingsV1::default_engine(), hints)
