@@ -4,7 +4,10 @@
 
 use crate::query::types::{OperationPreviewFields, ReadPlan, TetError};
 
-use super::chunk_decode::{visit_planned_chunk, visit_planned_chunk_f64};
+use super::chunk_decode::{
+    visit_planned_chunk, visit_planned_chunk_f64, visit_planned_chunk_i32_as_f64,
+    visit_planned_chunk_i64_as_f64,
+};
 use super::fold::{FoldPlanOutcome, build_fold_plan_outcome, validate_fold_preview};
 use super::indexing::coords_from_linear_row_major;
 use super::partial_geometry::{partial_axis_layout, reduced_index};
@@ -77,6 +80,121 @@ pub(crate) fn fold_read_plan_partial_operation(
     fold_read_plan_partial_operation_impl(mmap, plan, max_f32, kind, axis_labels, false)
 }
 
+/// Stream a **partial-axis** reduction (`i32` / `i64` promoted to `f64` accumulators).
+pub(crate) fn fold_read_plan_partial_operation_int(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    axis_labels: &[String],
+    dtype: crate::utils::dtype::ElementDtype,
+) -> Result<FoldPlanOutcome, TetError> {
+    use crate::utils::dtype::ElementDtype;
+    match dtype {
+        ElementDtype::I32 => {
+            fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels)
+        }
+        ElementDtype::I64 => {
+            fold_read_plan_partial_operation_i64(mmap, plan, max_preview, kind, axis_labels)
+        }
+        _ => Err(TetError::Validation(
+            "integer partial fold requires i32 or i64 dtype".into(),
+        )),
+    }
+}
+
+/// Stream a **partial-axis** reduction without allocating the full logical tensor (`i32` → `f64` accum).
+pub(crate) fn fold_read_plan_partial_operation_i32(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    axis_labels: &[String],
+) -> Result<FoldPlanOutcome, TetError> {
+    fold_read_plan_partial_operation_promoted(mmap, plan, max_preview, kind, axis_labels, true)
+}
+
+/// Stream a **partial-axis** reduction without allocating the full logical tensor (`i64` → `f64` accum).
+pub(crate) fn fold_read_plan_partial_operation_i64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    axis_labels: &[String],
+) -> Result<FoldPlanOutcome, TetError> {
+    fold_read_plan_partial_operation_promoted(mmap, plan, max_preview, kind, axis_labels, false)
+}
+
+fn fold_read_plan_partial_operation_promoted(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    axis_labels: &[String],
+    is_i32: bool,
+) -> Result<FoldPlanOutcome, TetError> {
+    let layout = partial_axis_layout(plan, axis_labels)?;
+    let shape = &plan.logical_selection_shape;
+    let n = plan.logical_f32_element_count;
+    let preview_cap = max_preview.min(n);
+    let mut i32_preview = vec![0i32; preview_cap];
+    let mut i64_preview = vec![0i64; preview_cap];
+    let mut saw_any = false;
+    let mut total_bytes_read_from_disk: u64 = 0;
+    let operation = if is_i32 {
+        run_partial_promoted_i32(
+            mmap,
+            plan,
+            kind,
+            &layout,
+            shape,
+            n,
+            preview_cap,
+            &mut i32_preview,
+            &mut saw_any,
+            &mut total_bytes_read_from_disk,
+        )?
+    } else {
+        run_partial_promoted_i64(
+            mmap,
+            plan,
+            kind,
+            &layout,
+            shape,
+            n,
+            preview_cap,
+            &mut i64_preview,
+            &mut saw_any,
+            &mut total_bytes_read_from_disk,
+        )?
+    };
+    if !saw_any {
+        return Err(TetError::Validation(
+            "operation requires at least one decoded value from the read plan".into(),
+        ));
+    }
+    Ok(FoldPlanOutcome {
+        f32_preview: Vec::new(),
+        f64_preview: Vec::new(),
+        i32_preview: if is_i32 && max_preview > 0 {
+            i32_preview
+        } else {
+            Vec::new()
+        },
+        i64_preview: if !is_i32 && max_preview > 0 {
+            i64_preview
+        } else {
+            Vec::new()
+        },
+        f32_preview_truncated: false,
+        f64_preview_truncated: false,
+        i32_preview_truncated: is_i32 && n > max_preview,
+        i64_preview_truncated: !is_i32 && n > max_preview,
+        total_bytes_read_from_disk,
+        operation,
+    })
+}
+
 /// Stream a **partial-axis** reduction without allocating the full logical tensor (f64).
 pub(crate) fn fold_read_plan_partial_operation_f64(
     mmap: &[u8],
@@ -142,8 +260,12 @@ fn fold_read_plan_partial_operation_impl(
             } else {
                 f64_preview
             },
+            i32_preview: Vec::new(),
+            i64_preview: Vec::new(),
             f32_preview_truncated: false,
             f64_preview_truncated: n > max_preview,
+            i32_preview_truncated: false,
+            i64_preview_truncated: false,
             total_bytes_read_from_disk,
             operation,
         })
@@ -190,9 +312,7 @@ fn run_partial_f32(
                     cells[oi].push(fi, v, kind);
                     Ok(())
                 })?;
-                *total_bytes = total_bytes
-                    .checked_add(chunk_bytes)
-                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
@@ -209,9 +329,7 @@ fn run_partial_f32(
                     cells[oi].push(v);
                     Ok(())
                 })?;
-                *total_bytes = total_bytes
-                    .checked_add(chunk_bytes)
-                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
@@ -250,9 +368,7 @@ fn run_partial_f64(
                     cells[oi].push_f64(fi, v, kind);
                     Ok(())
                 })?;
-                *total_bytes = total_bytes
-                    .checked_add(chunk_bytes)
-                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
@@ -269,9 +385,119 @@ fn run_partial_f64(
                     cells[oi].push_f64(v);
                     Ok(())
                 })?;
-                *total_bytes = total_bytes
-                    .checked_add(chunk_bytes)
-                    .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+            }
+            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
+            Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
+        }
+    }
+}
+
+fn run_partial_promoted_i32(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    kind: ReductionKind,
+    layout: &super::partial_geometry::PartialAxisLayout,
+    shape: &[u64],
+    n: usize,
+    preview_cap: usize,
+    preview: &mut [i32],
+    saw_any: &mut bool,
+    total_bytes: &mut u64,
+) -> Result<OperationPreviewFields, TetError> {
+    match kind {
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
+                    *saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v as i32;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let fi = super::partial_geometry::fiber_linear_index(
+                        &coords,
+                        &layout.axis_indices,
+                        shape,
+                    )? as u64;
+                    cells[oi].push_f64(fi, v, kind);
+                    Ok(())
+                })?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+            }
+            Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
+        }
+        _ => {
+            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
+                    *saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v as i32;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    cells[oi].push_f64(v);
+                    Ok(())
+                })?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+            }
+            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
+            Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
+        }
+    }
+}
+
+fn run_partial_promoted_i64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    kind: ReductionKind,
+    layout: &super::partial_geometry::PartialAxisLayout,
+    shape: &[u64],
+    n: usize,
+    preview_cap: usize,
+    preview: &mut [i64],
+    saw_any: &mut bool,
+    total_bytes: &mut u64,
+) -> Result<OperationPreviewFields, TetError> {
+    match kind {
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
+                    *saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v as i64;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let fi = super::partial_geometry::fiber_linear_index(
+                        &coords,
+                        &layout.axis_indices,
+                        shape,
+                    )? as u64;
+                    cells[oi].push_f64(fi, v, kind);
+                    Ok(())
+                })?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+            }
+            Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
+        }
+        _ => {
+            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            for c in &plan.chunks {
+                let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
+                    *saw_any = true;
+                    if li < preview_cap {
+                        preview[li] = v as i64;
+                    }
+                    let coords = coords_from_linear_row_major(li, shape)?;
+                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    cells[oi].push_f64(v);
+                    Ok(())
+                })?;
+                super::dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))

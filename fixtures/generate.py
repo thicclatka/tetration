@@ -7,7 +7,7 @@ import argparse
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import h5py
 import netCDF4 as nc
@@ -25,6 +25,10 @@ SMALL_SHAPES: dict[int, tuple[int, ...]] = {
     4: (16, 16, 16, 16),
     5: (8, 8, 8, 8, 8),
 }
+
+NUMERIC_DTYPES: tuple[str, ...] = ("f32", "f64", "i32", "i64")
+
+DtypeName = Literal["f32", "f64", "i32", "i64"]
 
 LARGE_LOGICAL_BYTES = 20 * 1024**3  # 20 GiB
 FLOAT32_BYTES = 4  # 4 bytes per f32
@@ -62,35 +66,73 @@ def _progress(
     return tqdm(iterable, total=total, desc=desc, unit=unit, dynamic_ncols=True)
 
 
-def _small_array(ndim: int, seed: int) -> np.ndarray:
+def _seed_for(ndim: int, dtype: DtypeName) -> int:
+    return SEED_SMALL + ndim * 17 + NUMERIC_DTYPES.index(dtype) * 997
+
+
+def _numpy_dtype(dtype: DtypeName) -> np.dtype:
+    return np.dtype({"f32": "f4", "f64": "f8", "i32": "i4", "i64": "i8"}[dtype])
+
+
+def _netcdf_dtype(dtype: DtypeName) -> str:
+    return {"f32": "f4", "f64": "f8", "i32": "i4", "i64": "i8"}[dtype]
+
+
+def _small_array(ndim: int, dtype: DtypeName) -> np.ndarray:
     shape = SMALL_SHAPES[ndim]
-    rng = np.random.default_rng(seed + ndim)
-    # Mild structure so converts are not pure noise; still tiny on disk.
-    base = np.linspace(0.0, 1.0, num=int(np.prod(shape)), dtype=np.float32)
-    noise = rng.standard_normal(shape, dtype=np.float32) * 0.01
-    return (base.reshape(shape) + noise).astype(np.float32, copy=False)
+    n = int(np.prod(shape))
+    rng = np.random.default_rng(_seed_for(ndim, dtype))
+    np_dtype = _numpy_dtype(dtype)
+
+    if dtype in ("f32", "f64"):
+        base = np.linspace(0.0, 1.0, num=n, dtype=np_dtype)
+        noise = rng.standard_normal(shape, dtype=np_dtype) * np_dtype.type(0.01)
+        return (base.reshape(shape) + noise).astype(np_dtype, copy=False)
+
+    modulus = np.int32(1_000) if dtype == "i32" else np.int64(1_000_000)
+    base = (np.arange(n, dtype=np_dtype) % modulus).reshape(shape)
+    noise = rng.integers(-3, 4, size=shape, dtype=np_dtype)
+    return base + noise
 
 
 def _write_h5_small(path: Path, ndim: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = _small_array(ndim, SEED_SMALL)
     with h5py.File(path, "w") as f:
         f.attrs["tetration_fixture"] = f"small_{ndim}d"
         f.attrs["tetration_ndim"] = ndim
-        f.create_dataset("data", data=data, compression="gzip", compression_opts=4)
+        f.attrs["tetration_dtypes"] = ",".join(NUMERIC_DTYPES)
+        for dtype in NUMERIC_DTYPES:
+            data = _small_array(ndim, dtype)
+            dset = f.create_dataset(
+                dtype,
+                data=data,
+                compression="gzip",
+                compression_opts=4,
+            )
+            dset.attrs["tetration_dtype"] = dtype
 
 
 def _write_nc_small(path: Path, ndim: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = _small_array(ndim, SEED_SMALL)
     dim_names = tuple(f"d{i}" for i in range(ndim))
+    shape = SMALL_SHAPES[ndim]
     with nc.Dataset(path, "w", format="NETCDF4") as ds:
         ds.setncattr("tetration_fixture", f"small_{ndim}d")
         ds.setncattr("tetration_ndim", ndim)
-        for name, size in zip(dim_names, data.shape, strict=True):
+        ds.setncattr("tetration_dtypes", ",".join(NUMERIC_DTYPES))
+        for name, size in zip(dim_names, shape, strict=True):
             ds.createDimension(name, size)
-        var = ds.createVariable("data", "f4", dim_names, zlib=True, complevel=4)
-        var[:] = data
+        for dtype in NUMERIC_DTYPES:
+            data = _small_array(ndim, dtype)
+            var = ds.createVariable(
+                dtype,
+                _netcdf_dtype(dtype),
+                dim_names,
+                zlib=True,
+                complevel=4,
+            )
+            var.setncattr("tetration_dtype", dtype)
+            var[:] = data
 
 
 def _write_h5_large(path: Path, *, quiet: bool) -> None:
@@ -160,7 +202,11 @@ def generate_small(*, quiet: bool) -> None:
         jobs.append(("nc", _write_nc_small, SMALL_NC / f"tensor_{ndim}d.nc", ndim))
 
     if not quiet:
-        print(f"Generating {len(jobs)} small fixtures under {ROOT / 'small'}")
+        dtypes = ", ".join(NUMERIC_DTYPES)
+        print(
+            f"Generating {len(jobs)} small fixtures under {ROOT / 'small'} "
+            f"({dtypes} per file)"
+        )
 
     for fmt, writer, path, ndim in _progress(
         jobs, total=len(jobs), desc="small", quiet=quiet

@@ -281,7 +281,7 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 - **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
 - **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode; dtype-native bytes).
 
-Supported dtypes: **`f32`** (`DTYPE_F32 = 1`) and **`f64`** (`DTYPE_F64 = 2`). The preview cap does **not** truncate `operation_*` aggregates.
+Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) (`f32` = 1, `f64` = 2, `i32` = 3, `i64` = 4). The preview cap does **not** truncate `operation_*` aggregates.
 
 ## Operations roadmap (planned)
 

@@ -23,6 +23,12 @@ pub struct DatasetResolution {
     /// `8 * product(shape)` when dtype is `f64` and the dataset matched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_f64_bytes: Option<u64>,
+    /// `4 * product(shape)` when dtype is `i32` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_i32_bytes: Option<u64>,
+    /// `8 * product(shape)` when dtype is `i64` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_i64_bytes: Option<u64>,
     /// Execution preferences from the `.tet` chunk index header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_execution: Option<crate::catalog::FileExecutionSettingsV1>,
@@ -81,6 +87,7 @@ pub(crate) struct OperationPreviewFields {
 /// `operation_reduced_*` vectors (axes are decimal dimension indices).
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct QueryExecutionPreview {
     /// Sum of `stored_byte_len` for all planned chunks (bytes touched on disk).
     pub total_bytes_read_from_disk: u64,
@@ -88,6 +95,10 @@ pub struct QueryExecutionPreview {
     pub f32_preview_truncated: bool,
     pub f64_preview: Vec<f64>,
     pub f64_preview_truncated: bool,
+    pub i32_preview: Vec<i32>,
+    pub i32_preview_truncated: bool,
+    pub i64_preview: Vec<i64>,
+    pub i64_preview_truncated: bool,
     /// Set when an operation ran: number of `f32` values aggregated (full planned decode).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_element_count: Option<usize>,
@@ -247,6 +258,7 @@ impl QueryExecutionPreview {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::fn_params_excessive_bools)]
     #[must_use]
     pub(crate) fn with_operation_and_io(
         total_bytes_read_from_disk: u64,
@@ -254,6 +266,10 @@ impl QueryExecutionPreview {
         f32_preview_truncated: bool,
         f64_preview: Vec<f64>,
         f64_preview_truncated: bool,
+        i32_preview: Vec<i32>,
+        i32_preview_truncated: bool,
+        i64_preview: Vec<i64>,
+        i64_preview_truncated: bool,
         operation: OperationPreviewFields,
         memory_strategy: Option<&'static str>,
         spill_f32_path: Option<String>,
@@ -265,6 +281,10 @@ impl QueryExecutionPreview {
             f32_preview_truncated,
             f64_preview,
             f64_preview_truncated,
+            i32_preview,
+            i32_preview_truncated,
+            i64_preview,
+            i64_preview_truncated,
             memory_strategy,
             spill_f32_path,
             spill_f32_bytes,

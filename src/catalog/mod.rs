@@ -109,35 +109,82 @@ impl ChunkPayloadCodecV1 {
     }
 }
 
-/// `dtype` tag for IEEE754 binary32 elements (`f32`), row-major within a chunk.
-pub const DTYPE_F32: u32 = 1;
-/// `dtype` tag for IEEE754 binary64 elements (`f64`), row-major within a chunk.
-pub const DTYPE_F64: u32 = 2;
+/// v1 dataset element `dtype` wire tags (`u32` in each dataset directory record).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatasetDtypeTagV1 {
+    /// IEEE754 binary32 (`f32`), row-major within each chunk.
+    pub f32: u32,
+    /// IEEE754 binary64 (`f64`), row-major within each chunk.
+    pub f64: u32,
+    /// Two's-complement `i32`, row-major within each chunk.
+    pub i32: u32,
+    /// Two's-complement `i64`, row-major within each chunk.
+    pub i64: u32,
+}
+
+/// Defined dataset element dtypes for layout v1 (see `docs/layout_v1.md`).
+pub const DATASET_DTYPE_TAG_V1: DatasetDtypeTagV1 = DatasetDtypeTagV1 {
+    f32: 1,
+    f64: 2,
+    i32: 3,
+    i64: 4,
+};
+
+impl DatasetDtypeTagV1 {
+    #[must_use]
+    pub const fn is_f32(self, dtype: u32) -> bool {
+        dtype == self.f32
+    }
+
+    #[must_use]
+    pub const fn is_f64(self, dtype: u32) -> bool {
+        dtype == self.f64
+    }
+
+    #[must_use]
+    pub const fn is_i32(self, dtype: u32) -> bool {
+        dtype == self.i32
+    }
+
+    #[must_use]
+    pub const fn is_i64(self, dtype: u32) -> bool {
+        dtype == self.i64
+    }
+
+    #[must_use]
+    pub const fn is_supported(self, dtype: u32) -> bool {
+        self.is_f32(dtype) || self.is_f64(dtype) || self.is_i32(dtype) || self.is_i64(dtype)
+    }
+}
 
 /// Maximum tensor rank supported by the v1 catalog on disk.
 pub const MAX_NDIM: usize = 8;
 
-/// Element count × 4 for an `f32` tensor with `shape` (returns `None` on overflow).
-#[must_use]
-pub fn f32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    tensor_bytes_from_shape(shape, DTYPE_F32)
-}
-
 /// Element count × element size for a tensor with `shape` and wire `dtype`.
 #[must_use]
 pub fn tensor_bytes_from_shape(shape: &[u64], dtype: u32) -> Option<u64> {
-    let elems = shape.iter().try_fold(1u64, |a, &b| a.checked_mul(b))?;
-    match dtype {
-        DTYPE_F32 => crate::utils::f32_le::bytes_from_elem_count(elems),
-        DTYPE_F64 => crate::utils::f64_le::bytes_from_elem_count(elems),
-        _ => None,
-    }
+    crate::utils::dtype::ElementDtype::try_from_wire_tag(dtype)?.tensor_bytes_for_shape(shape)
 }
 
-/// `4 * product(shape)` for `f32`, `8 * product(shape)` for `f64`.
+/// Typed helpers for callers that already know the element type.
+#[must_use]
+pub fn f32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
+    crate::utils::dtype::ElementDtype::F32.tensor_bytes_for_shape(shape)
+}
+
 #[must_use]
 pub fn f64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    tensor_bytes_from_shape(shape, DTYPE_F64)
+    crate::utils::dtype::ElementDtype::F64.tensor_bytes_for_shape(shape)
+}
+
+#[must_use]
+pub fn i32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
+    crate::utils::dtype::ElementDtype::I32.tensor_bytes_for_shape(shape)
+}
+
+#[must_use]
+pub fn i64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
+    crate::utils::dtype::ElementDtype::I64.tensor_bytes_for_shape(shape)
 }
 
 /// High-level view of a mapped `.tet` file (superblock + catalog).

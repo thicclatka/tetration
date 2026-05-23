@@ -11,7 +11,7 @@ use super::dataset::{self, RawArrayWrite};
 use super::index::{self, ChunkIndexEntryV1};
 use super::tile;
 use super::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, DTYPE_F64, FileExecutionSettingsV1, MAX_NDIM,
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, FileExecutionSettingsV1, MAX_NDIM,
     OneChunkRawWrite,
 };
 use crate::utils::dtype::ElementDtype;
@@ -58,14 +58,19 @@ fn write_raw_array_file_inner(path: &Path, spec: &RawArrayWrite<'_>) -> Result<(
     let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(n_usize);
     let mut cursor = payload_start;
 
-    let elem_size = match spec.dtype {
-        DTYPE_F32 => ElementDtype::F32.elem_size(),
-        DTYPE_F64 => ElementDtype::F64.elem_size(),
-        _ => {
-            return Err(CatalogError::InvalidWriteSpec(
-                "unsupported dtype for tile extraction",
-            ));
-        }
+    let tags = DATASET_DTYPE_TAG_V1;
+    let elem_size = if tags.is_f32(spec.dtype) {
+        ElementDtype::F32.elem_size()
+    } else if tags.is_f64(spec.dtype) {
+        ElementDtype::F64.elem_size()
+    } else if tags.is_i32(spec.dtype) {
+        ElementDtype::I32.elem_size()
+    } else if tags.is_i64(spec.dtype) {
+        ElementDtype::I64.elem_size()
+    } else {
+        return Err(CatalogError::InvalidWriteSpec(
+            "unsupported dtype for tile extraction",
+        ));
     };
 
     for k in 0..n_chunks {
