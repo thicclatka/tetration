@@ -3,10 +3,27 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - badzstd
   - bytemuck
+  - cdylib
+  - CUDA
+  - DTYPE
+  - elems
+  - embedders
+  - hyperslab
+  - hyperslabs
+  - maturin
+  - memcpy
+  - multichunk
+  - ndim
+  - nelem
+  - reprojection
   - rkyv
+  - TETR
   - Tetration
   - thiserror
+  - TIDX
+  - trunc
   - zstd
 ignoreWords: []
 import: []

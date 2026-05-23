@@ -5,11 +5,16 @@
 ![Build](https://github.com/thicclatka/tetration/workflows/Build/badge.svg)
 ![Rust](https://img.shields.io/badge/rust-1.95-orange.svg)
 
-[_For those who are more cur_](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
+[_For those who are more cur..._](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
 
 New file format for tensors: **HDF5-shaped** in the stack (one durable home for many large arrays and metadata), **Zarr-shaped** in mechanics (regular chunk grid, per-chunk compression, parallel-friendly I/O)—but **one mmap-friendly file** instead of a directory store of chunk blobs.
 
 **Naming:** the Rust **library** on crates.io is **`tetration`** (`use tetration::…` in code, `tetration` in `Cargo.toml` dependencies). The **command-line tool** that ships in the same package is **`tet`**—short, typed often, and distinct from the library name so docs and issues can say “fix in tetration” vs “run `tet query`” without ambiguity.
+
+**Docs (v1 today):**
+
+- On-disk layout — [`docs/layout_v1.md`](docs/layout_v1.md)
+- JSON query + mmap engine — [`docs/query_engine.md`](docs/query_engine.md) (includes [operations roadmap](docs/query_engine.md#operations-roadmap-planned))
 
 ## Vision: a modern, mmap-first n-dimensional store
 
@@ -34,7 +39,7 @@ Often a dataset is called “impossible to read” because something in the stac
 
 ### JSON query plane (how it fits)
 
-The on-disk layout stays binary and mmap-oriented; JSON sits **above** it as a **stable, versioned interchange** for “what to read or compute,” not as the storage encoding of tensor bytes. A query document might carry `layout_version`, `dataset`, `selection` (per-axis start/stop/step or chunk ranges), optional `operation` (e.g. `sum` / `mean` along named axes), and `output` hints (inline JSON stats vs spill to a new array handle). The implementation will validate requests, map them to chunk index sets, then execute I/O and ops in parallel where selections are disjoint. Over time the set of allowed JSON fields and operations can grow while older clients keep working against documented schema levels.
+The on-disk layout stays binary and mmap-oriented; JSON sits **above** it as a **stable, versioned interchange** for “what to read or compute,” not as the storage encoding of tensor bytes. A query document might carry `layout_version`, `dataset`, `selection` (per-axis start/stop/step), optional `operation` (streaming reductions: **`sum`**, **`mean`**, **`min`**, **`max`**, **`count`**, **`var`**, **`std`**, **`product`**, **`norm_l1`**, **`norm_l2`**, **`all_finite`**, **`any_nan`**, **`arg_min`**, **`arg_max`**; tier-C stats: **`median`**, **`quantile`**, **`histogram`** — all with **`axes: []`** for scalar or **`axes: ["0",…]`** with decimal dimension indices for partial reductions; **`var` / `std`** use population statistics, `ddof = 0`), optional **`execution`** hints (**`memory_budget_bytes`**, **`memory_budget_percent_bps`** — basis points where **10000 = 100%**), and `output` hints (inline JSON stats vs **`spill_array { handle }`** for full logical decode to a caller path). The **`src/query/engine/`** module validates against a mmap’d catalog, builds a **`ReadPlan`**, resolves a memory budget (query JSON → per-file TIDX header → default **25%** of host RAM), and decodes **`f32`** or **`f64`** tiles (raw or zstd) in **logical row-major** selection order; the **`tet`** CLI exposes this via **`--tet`** and **`--execute`**. Tier-A/B **`operation`** queries use **streaming fold**; tier-C ops materialize in RAM or temp spill; preview-only paths are **capped in memory** when the selection fits the budget; spill requests write dtype-native bytes via mmap. Multi-chunk materialize paths decode chunks in parallel (Rayon). Query JSON is **not executable**—hosts should still cap input size, validate spill paths, and treat responses as data when embedding in shells, HTML, or logs ([JSON security](docs/query_engine.md#json-security-input-and-output)).
 
 ### What this will entail (technical direction)
 
@@ -79,7 +84,7 @@ The format already treats **rich headers** and **optional history** as first-cla
 
 The Rust crate **`tetration`** stays the **reference implementation**, but other languages are first-class targets. The plan is layered so bindings stay maintainable:
 
-1. **Documented on-disk layout** — A versioned **file spec** (magic, endianness, header, chunk index, compression flags) lets any language implement a **standalone reader** if needed; it also locks semantics so FFI and Rust cannot drift silently.
+1. **Documented on-disk layout** — A versioned **file spec** ([`docs/layout_v1.md`](docs/layout_v1.md): magic, endianness, superblock, dataset directory, chunk index, per-chunk codecs) lets any language implement a **standalone reader** if needed; it also locks semantics so FFI and Rust cannot drift silently.
 
 2. **Small, stable C ABI** — Expose a **`cdylib`** with a narrow C API (e.g. open path, list or resolve datasets, read chunk bytes into caller-owned memory, query last error, close). C is the **portable FFI floor**: Python, Julia, Go, JVM, .NET, R, etc. can all call it via their usual native interop without depending on Rust ABI stability across toolchains.
 
@@ -93,18 +98,24 @@ Together, **spec + C ABI + Python** cover “used as a library from other langs�
 
 The **`tetration`** crate compiles both the library and a binary named **`tet`**. `cargo install tetration` (or `cargo build --release`) produces a `tet` executable; `default-run` is set to **`tet`**, so `cargo run -- …` runs the CLI without `--bin tet`. The CLI is the ergonomic front door for **JSON querying** and, later, **foreign-format conversion**; embedders link **`tetration`** as a normal dependency.
 
-- **`tet query`** — Load a query document from **`--file` / `-f`** (path to JSON) or from **standard input** (omit `-f`, or pass `-`). The tool parses JSON, runs the same validation rules as the library, and prints a **pretty-printed JSON plan** (status, echoed `dataset`, selection axis count, optional `operation`, and a short message). Full execution against a mmap’d `.tet` file will attach here once the on-disk layout and chunk engine are implemented; until then the CLI is still useful for contract checks and scripting against the query schema.
+- **`tet info <path.tet>`** — Mmap a file and print pretty JSON for the v1 superblock and catalog summary (`read_tet_summary_v1`).
+- **`tet query`** — Load a query document from **`--file` / `-f`** (path to JSON) or from **standard input** (omit `-f`, or pass `-`). The tool parses JSON, runs the same validation rules as the library, and prints a **pretty-printed JSON** [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html). **Without `--tet`**, the library’s **`plan_query_empty`** echoes the validated document only (no catalog or mmap). **With `--tet path.tet`**, **`plan_query_with_tet_mmap`** adds **`catalog`** (dataset resolution, optional **`file_execution`** from the TIDX header) and **`read_plan`** (per-chunk payload regions and selection geometry). **With `--tet`** and **`--execute`**, the engine memory-maps the file, resolves a memory budget, and attaches **`execution`**: capped **`f32_preview`** or **`f64_preview`** when the selection fits RAM (default **64**; **`--preview-f32 0`** with an **`operation`** skips preview floats while still aggregating), **`memory_strategy`**, budget probe fields, or **`spill_f32_*`** when **`output.preferred.spill_array`** is set. When an **`operation`** is set, **`operation_element_count`** and scalar **`operation_*`** fields (`axes: []`) or **`operation_reduced_*`** (decimal axis indices) summarize the **full** logical tensor via **streaming fold** (tier-A/B) or **materialize** (tier-C: **`median`**, **`quantile`**, **`histogram`**). The preview cap does not truncate those stats.
 - **`tet convert h5 <input.h5> <output.tet>`** and **`tet convert netcdf <input.nc> <output.tet>`** — Declared commands for **HDF5 → Tetration** and **NetCDF → Tetration** pipelines. They are **placeholders** today: they parse paths and exit with a clear “not implemented” explanation so CI and installers can ship one binary while importers are developed behind a stable `.tet` writer and optional native dependencies.
 
 Examples:
 
 ```bash
+cargo run -- info data.tet
 cargo run -- query --file query.json
 echo '{"dataset":"temperature","layout_version":1}' | cargo run -- query
+cargo run -- query -f query.json --tet data.tet
+cargo run -- query -f query.json --tet data.tet --execute --preview-f32 128
+# operation stats without preview floats:
+cargo run -- query -f query-with-sum.json --tet data.tet --execute --preview-f32 0
 cargo run -- convert h5 volumes.h5 volumes.tet
 cargo run -- convert netcdf model.nc model.tet
 ```
 
-Query JSON follows the shapes described above (`dataset`, optional `layout_version`, `selection` as per-axis `{ start, stop, step }`, optional `operation` such as `{ "mean": { "axes": ["time"] } }`, optional `output.preferred` for result delivery hints). Exact field evolution will stay aligned with the library types in `tetration::query`.
+Query JSON follows the shapes described above (`dataset`, optional `layout_version`, `selection` as per-axis `{ start, stop, step }`, optional `operation` such as `{ "min": { "axes": [] } }`, `{ "quantile": { "axes": [], "q": 0.95 } }`, or `{ "histogram": { "axes": ["0"], "bins": 10 } }`, optional `execution` memory hints, optional `output.preferred` including spill). Library entrypoints: **`plan_query_empty`**, **`plan_query_with_tet_mmap`**, **`ExecutionBudget`**, f32/f64 **`materialize_read_plan_*_le`** (+ parallel / `_into` twins), **`spill_read_plan_f32_le`** (see [`docs/query_engine.md`](docs/query_engine.md)).
 
 If that matches your use case, the crate is the place where those ideas become concrete types, layout version numbers, and eventually stability guarantees.

@@ -1,57 +1,71 @@
 # Getting started — Tetration
 
-Use this as a working checklist. Today the repo has a **JSON query control plane** (`tetration::query`, `tet query`) and dependencies chosen for the **mmap + chunked** story, but **no `.tet` on-disk layout or I/O** yet.
+Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **optional capped execution preview** (`f32` / `f64` via `tet query --tet … --execute`), and **optional NetCDF** behind the default feature flag.
 
 ## Environment
 
-- [ ] Install Rust **1.95+** (see `rust-version` in `Cargo.toml`).
-- [ ] Clone the repo and run `cargo test` to confirm the baseline passes.
-- [ ] Skim `README.md` for non-goals (no full SQL-on-files day one, etc.) so scope stays focused.
+- [x] Install Rust **1.95+** (see `rust-version` in `Cargo.toml`; `.mise.toml` pins **1.95**).
+- [x] Clone the repo and run `cargo test` to confirm the baseline passes.
+- [x] Skim `README.md` for non-goals (no full SQL-on-files day one, etc.) so scope stays focused.
 
 ## Phase 0 — Spec before bytes
 
-- [ ] Write a short **layout v1** note (magic bytes, endianness, `layout_version` field alignment with query JSON).
-- [ ] Decide **fixed header** vs **bootstrap block** (how big is the header, where does the chunk index start).
-- [ ] Define **dataset record**: `dataset_id`, `name`, `shape`, `dtype`, **chunk grid** (shape or explicit per-axis chunk sizes).
-- [ ] Define **chunk index entry**: `(dataset_id, i0, …, i_{n-1})` → `(file_offset, compressed_len, raw_len, codec)`.
-- [ ] Document **concurrency**: who may write which regions (exclusive create, append-only tail, per-chunk locks, etc.).
+- [x] Write a short **layout v1** note (`docs/layout_v1.md`): magic bytes, endianness, alignment, chunk index wire.
+- [x] **Superblock + bootstrap:** fixed **32-byte** `TETR` block; `chunk_index_offset` / `chunk_index_length`; empty-file rules.
+- [x] **Dataset record:** `name`, `dtype`, `shape`, `chunk_shape` (v1 reference writers; see spec tables).
+- [x] **Chunk index entry:** grid coords → `payload_offset`, `raw_byte_len`, `stored_byte_len`, `codec`, reserved.
+- [x] **Concurrency** (informative): documented in `docs/layout_v1.md` + README (exclusive create, no v1 locking spec).
 
-## Phase 1 — Minimal writer / reader (no compression)
+## Phase 1 — Minimal writer / reader (no compression required)
 
-- [ ] Add a `format` (or `layout`) module with **serialized structs** for header + index (serde for interchange; decide where **rkyv** lands first—header only vs also index).
-- [ ] Implement **`create` path**: write magic, header, empty or single-dataset stub, **uncompressed** chunk payloads laid out contiguously or via index.
-- [ ] Implement **`open` + mmap** (`memmap2`): validate magic/version, parse header + index into memory.
-- [ ] Add **`tet info <file.tet>`** (or library API only at first) to dump dataset names, shapes, chunking—proves the path works.
+- [x] **`layout` + `catalog`** (+ shared **`src/utils/wire.rs`** via **`crate::utils::wire`**): binary structs for superblock + index (hand-rolled LE; **rkyv** is a dependency for later metadata, not required for v1 catalog hot path). **`src/utils/`** is the home for crate-private helpers—keep **chunk/dataset/query** logic in `catalog` / `query`.
+- [x] **`create` path:** `create_empty_v1_file`, `write_one_chunk_raw_file`, `write_raw_array_file` / `RawArrayWrite` (multi-chunk raw **`f32`** or **`f64`**; optional **`file_execution`** → TIDX header).
+- [x] **`open` + mmap** (`memmap2`): `mmap_file_read`, `read_superblock_v1`, `read_tet_summary_v1`.
+- [x] **`tet info`** and library APIs dump catalog / superblock JSON.
 
 ## Phase 2 — Chunk addressing
 
-- [ ] Implement **logical slice → chunk coordinate set** (hyperslab / stepping); unit tests for edge cases (partial chunks, boundaries).
-- [ ] Use **Rayon** where chunk reads are independent; keep APIs explicit about parallelism.
-- [ ] Wire **`plan_query`** (or a sibling) to produce a **physical read plan**: list of byte ranges / chunks (even if execution still returns JSON for a while).
+- [x] **Logical slice → chunk coordinates:** `chunk_coords_intersecting_global_box`, `chunk_coords_intersecting_strided` (see `catalog/tile.rs`).
+- [x] **Rayon** over independent chunk reads in execution: **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**; **`build_execution_preview`** uses parallel decode when the read plan has more than one chunk and materialization is required (`tet query --execute`).
+- [x] **`plan_query_with_tet_mmap`:** produces **`ReadPlan`** (payload offsets, `stored_byte_len`, `raw_byte_len`, `codec` per touched chunk).
 
-## Phase 3 — Compression and robustness
+## Phase 3 — Compression and robustness (complete)
 
-- [ ] **Per-chunk zstd** (already a dependency): store compressed vs raw sizes in the index; decode into caller buffers or scratch.
-- [ ] Fuzz or property-test **index bounds** vs file length; clear errors on truncation/corruption.
-- [ ] Optional: **`bytemuck`** views only where alignment + dtype rules are guaranteed.
+- [x] **Per-chunk zstd** (`codec = 1`): `RawArrayWrite::chunk_codec` vs **`CHUNK_PAYLOAD_CODEC_V1`** (`raw` / `zstd`); index stores `raw_byte_len` vs `stored_byte_len`; query materialization decompresses for **`f32`** / **`f64`** preview.
+- [x] Fuzz or property-test **index bounds** vs file length: `tests/catalog.rs` (property tests + hand-patched robustness cases).
+- [x] **`bytemuck`** for **`f32`** / **`f64`** payloads: `src/utils/f32_le.rs`, `src/utils/f64_le.rs`; materialize uses unaligned-safe reads; covered in `tests/catalog.rs`.
 
 ## Phase 4 — Query execution
 
-- [ ] Connect **`tet query`** / `plan_query` execution to a real `.tet`: mmap, map selection to chunks, read/decompress, apply **`Operation`** where defined (start with `Sum` / `Mean` on small in-memory slices).
-- [ ] Return **`QueryResponse`** fields that reflect real work (`status`, errors, maybe byte ranges touched)—evolve schema carefully.
+- [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, `materialize_read_plan_f32_le` / **`materialize_read_plan_f32_le_into`**, parallel twins **`materialize_read_plan_f32_le_parallel`** / **`_into_parallel`**, CLI **`--execute`** / **`--preview-f32`** (raw and zstd-backed `f32` chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection.
+- [x] **`operation`:** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`).
+- [x] **Streaming reductions** — scalar (`fold_read_plan_scalar_operation`) and partial-axis (`partial_fold_read_plan_operation`) without full logical tensor allocation; orchestrated by **`build_execution_preview`** with **`memory_strategy: streaming_fold`**.
+- [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); budget fields on **`execution`**; per-file settings via **`RawArrayWrite::file_execution`**.
+- [x] **Mmap spill** — `output.preferred.spill_array { handle }` → **`spill_read_plan_f32_le`** (`memory_strategy: mmap_spill`).
+- [x] **Capped preview** without full logical-buffer allocation when `max_elements < logical` (bounded scatter buffer only).
+- [x] **Spill path allowlist** — host `SpillPathAllowlist` + `plan_query_with_tet_mmap_ex`; CLI `--spill-allow DIR` (repeatable).
+- [x] **Tier-2 index ops** — `arg_min` / `arg_max` (scalar + partial axes; JSON snake_case tags).
+- [x] **Scalar `median`** (tier-C): in-RAM when logical selection ≤ budget, else temp spill + mmap + cleanup (`in_memory_materialize` / `temp_spill_materialize`).
+- [x] **`f64` execution** (`DTYPE_F64 = 2`): decode/materialize/preview/spill/ops mirror the `f32` path; `execution.f64_preview` when dtype is f64.
+- [x] **Tier-C partial stats:** partial-axis **`median`**, scalar + partial **`quantile`**, scalar + partial **`histogram`** (equal-width bins per reduced cell).
 
 ## Phase 5 — Interop and bindings (later)
 
-- [ ] **`tet convert h5`**: depend on `hdf5` (or similar), chunked read from HDF5 → `.tet` writer (feature-gated if heavy).
-- [ ] **`tet convert netcdf`**: same pattern with `netcdf` / `netcdf-sys`.
-- [ ] **C ABI** (`cdylib`) + **Python** (PyO3/maturin) per README—after layout is stable enough that churn won’t break FFI.
+- [ ] **`tet convert h5`**: depend on HDF5 stack, chunked read → `.tet` writer (feature-gated if heavy).
+- [ ] **`tet convert netcdf`**: same pattern with `netcdf` / `netcdf-sys` (optional dep already present).
+- [ ] **C ABI** (`cdylib`) + **Python** (PyO3/maturin) per README—after layout + query JSON churn slows.
 
 ## Ongoing hygiene
 
-- [ ] Keep **README** and **layout note** in sync when `layout_version` or query JSON fields change.
-- [ ] Add integration tests that build a temp `.tet`, mmap it, read a hyperslab, compare to expected bytes.
+- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), layout (`tests/layout_roundtrip.rs`); shared fixtures in `tests/fixture.rs`.
+- [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned when `layout_version`, codecs, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
+- [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
 ---
 
-**Suggested first concrete PR-sized slice:** Phase 0 (one markdown or `docs/layout_v1.md`) + Phase 1 writer that emits a **valid empty or tiny** `.tet` and a reader that mmap-parses it—still no compression until that path is boring and tested.
+**Suggested next PR-sized slices (pick one):**
+
+1. **Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.
+2. **Interop:** stub a real `tet convert netcdf` behind `--features tetration-netcdf` reading a tiny variable.
+3. **Histogram:** caller-supplied `min` / `max` for bin edges.

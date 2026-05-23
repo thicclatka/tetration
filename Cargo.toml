@@ -41,6 +41,8 @@ zstd = "0.13.3"
 [dev-dependencies]
 anyhow = "1.0.102"
 log = "0.4.29"
+proptest = "1.9.0"
+tempfile = "3.23.0"
 
 [profile.release]
 codegen-units = 1
