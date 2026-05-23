@@ -3,6 +3,7 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - Accum
   - badzstd
   - bytemuck
   - cdylib
@@ -14,6 +15,7 @@ words:
   - hyperslabs
   - maturin
   - memcpy
+  - metno
   - multichunk
   - ndim
   - nelem

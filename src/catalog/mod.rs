@@ -4,7 +4,9 @@
 
 mod dataset;
 pub mod execution;
+mod history;
 mod index;
+mod stream_write;
 pub mod tile;
 mod write;
 
@@ -19,9 +21,14 @@ use crate::utils::wire;
 
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
 pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
+pub use history::{HistoryEventV1, append_convert_history};
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
+pub use stream_write::{
+    ArrayWriteMeta, StreamTileJob, StreamWriteProgress, total_chunk_count_for_meta,
+    validate_array_write_meta, write_multi_raw_array_streaming,
+};
 pub use tile::{chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided};
-pub use write::{write_one_chunk_raw_file, write_raw_array_file};
+pub use write::{write_multi_raw_array_file, write_one_chunk_raw_file, write_raw_array_file};
 
 /// v1 chunk payload codec wire tags (`u32` values written per chunk in the index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +203,8 @@ pub struct TetFileSummaryV1 {
     pub chunks: Vec<ChunkIndexEntryV1>,
     /// Execution preferences from the chunk index header (defaults when all zero).
     pub file_execution: FileExecutionSettingsV1,
+    /// Optional provenance/history footer (`[["convert","h5"|"nc","<unix_secs>"], …]`).
+    pub history: Vec<HistoryEventV1>,
 }
 
 #[derive(Debug, Error)]
@@ -256,11 +265,13 @@ pub struct OneChunkRawWrite<'a> {
 pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError> {
     let sb = layout::read_superblock_v1(data)?;
     if sb.dataset_count == 0 {
+        let flags = sb.flags;
         return Ok(TetFileSummaryV1 {
             superblock: sb,
             datasets: Vec::new(),
             chunks: Vec::new(),
             file_execution: FileExecutionSettingsV1::default_engine(),
+            history: history::read_history(data, flags)?,
         });
     }
 
@@ -329,13 +340,16 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
     let idx_bytes = &data[idx_start..idx_end];
     let (chunks, file_execution) = index::parse_chunk_index(idx_bytes)?;
 
-    index::validate_chunk_payloads(&chunks, data.len() as u64)?;
+    let payload_len = history::payload_file_len(data, sb.flags)?;
+    index::validate_chunk_payloads(&chunks, payload_len)?;
+    let history = history::read_history(data, sb.flags)?;
 
     Ok(TetFileSummaryV1 {
         superblock: sb,
         datasets,
         chunks,
         file_execution,
+        history,
     })
 }
 

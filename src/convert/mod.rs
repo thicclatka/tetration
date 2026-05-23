@@ -1,0 +1,218 @@
+//! Foreign format → `.tet` conversion (Phase 5).
+
+use std::path::Path;
+
+use serde::Serialize;
+
+use crate::catalog::CatalogError;
+
+#[cfg(feature = "tetration-hdf5")]
+mod hdf5;
+#[cfg(feature = "tetration-netcdf")]
+mod netcdf;
+mod parallel;
+mod shared;
+mod sniff;
+mod tile_io;
+
+pub use parallel::{default_parallel_jobs, resolve_parallel_jobs};
+
+#[cfg(feature = "tetration-hdf5")]
+pub use hdf5::{convert_h5_to_tet, convert_h5_to_tet_with_progress};
+#[cfg(feature = "tetration-netcdf")]
+pub use netcdf::{convert_netcdf_to_tet, convert_netcdf_to_tet_with_progress};
+
+/// Supported foreign input formats for [`convert_to_tet`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvertInputFormat {
+    H5,
+    Netcdf,
+}
+
+impl ConvertInputFormat {
+    /// History footer source tag (`"h5"` or `"nc"`).
+    #[must_use]
+    pub const fn history_source(self) -> &'static str {
+        match self {
+            Self::H5 => "h5",
+            Self::Netcdf => "nc",
+        }
+    }
+}
+
+/// Detect importer from the input path (extension, then file signature).
+///
+/// See [`detect_convert_format`] and [`Hdf5ConvertInput`] / [`NetcdfConvertInput`].
+pub use sniff::{
+    ConvertCompressionSuffixes, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format,
+};
+
+/// Convert a foreign array file to `.tet`, picking the importer from the input extension.
+///
+/// # Errors
+///
+/// Returns [`ConvertError`] when the extension is unsupported, the required feature is disabled,
+/// or import fails.
+pub fn convert_to_tet(input: &Path, output: &Path) -> Result<ConvertReport, ConvertError> {
+    convert_to_tet_with_progress(input, output, 0, None::<fn(ConvertProgress)>)
+}
+
+/// Like [`convert_to_tet`], invoking `progress` after each chunk payload is written.
+///
+/// `parallel_jobs`: chunk read workers (`0` = [`default_parallel_jobs`]).
+///
+/// # Errors
+///
+/// Returns [`ConvertError`] when the extension is unsupported, the required feature is disabled,
+/// or import fails.
+pub fn convert_to_tet_with_progress(
+    input: &Path,
+    output: &Path,
+    parallel_jobs: usize,
+    progress: Option<impl FnMut(ConvertProgress)>,
+) -> Result<ConvertReport, ConvertError> {
+    match detect_convert_format(input)? {
+        ConvertInputFormat::H5 => convert_h5_dispatch(input, output, parallel_jobs, progress),
+        ConvertInputFormat::Netcdf => {
+            convert_netcdf_dispatch(input, output, parallel_jobs, progress)
+        }
+    }
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn convert_h5_dispatch(
+    input: &Path,
+    output: &Path,
+    parallel_jobs: usize,
+    progress: Option<impl FnMut(ConvertProgress)>,
+) -> Result<ConvertReport, ConvertError> {
+    convert_h5_to_tet_with_progress(input, output, parallel_jobs, progress)
+}
+
+#[cfg(not(feature = "tetration-hdf5"))]
+fn convert_h5_dispatch(
+    _input: &Path,
+    _output: &Path,
+    _parallel_jobs: usize,
+    _progress: Option<impl FnMut(ConvertProgress)>,
+) -> Result<ConvertReport, ConvertError> {
+    Err(ConvertError::ConvertFeatureDisabled {
+        format: ConvertInputFormat::H5,
+        feature: "tetration-hdf5",
+    })
+}
+
+#[cfg(feature = "tetration-netcdf")]
+fn convert_netcdf_dispatch(
+    input: &Path,
+    output: &Path,
+    parallel_jobs: usize,
+    progress: Option<impl FnMut(ConvertProgress)>,
+) -> Result<ConvertReport, ConvertError> {
+    convert_netcdf_to_tet_with_progress(input, output, parallel_jobs, progress)
+}
+
+#[cfg(not(feature = "tetration-netcdf"))]
+fn convert_netcdf_dispatch(
+    _input: &Path,
+    _output: &Path,
+    _parallel_jobs: usize,
+    _progress: Option<impl FnMut(ConvertProgress)>,
+) -> Result<ConvertReport, ConvertError> {
+    Err(ConvertError::ConvertFeatureDisabled {
+        format: ConvertInputFormat::Netcdf,
+        feature: "tetration-netcdf",
+    })
+}
+
+/// Progress event emitted while streaming chunk payloads during convert.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConvertProgress {
+    pub chunks_done: u64,
+    pub chunks_total: u64,
+    pub dataset: String,
+}
+
+/// One dataset written during convert.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConvertDatasetSummary {
+    pub name: String,
+    pub ndim: usize,
+    /// Per-axis lengths (same order as on-disk `.tet` / source array).
+    pub dims: Vec<u64>,
+}
+
+/// Summary returned after a successful convert.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ConvertReport {
+    pub input: String,
+    pub output: String,
+    pub dataset_count: usize,
+    pub dataset_names: Vec<String>,
+    pub datasets: Vec<ConvertDatasetSummary>,
+    /// History row written to the `.tet` footer: `(op, source, unix_timestamp)`.
+    pub history: Vec<(String, String, String)>,
+    /// Wall-clock seconds for the full convert (plan + stream write + history footer).
+    pub elapsed_secs: f64,
+}
+
+/// Convert pipeline failures.
+#[derive(Debug, thiserror::Error)]
+pub enum ConvertError {
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
+    #[error("no supported numeric datasets found in {path}")]
+    NoDatasets { path: String },
+    #[cfg(feature = "tetration-netcdf")]
+    #[error("NetCDF open/read failed: {0}")]
+    Netcdf(String),
+    #[cfg(feature = "tetration-hdf5")]
+    #[error("HDF5 open/read failed: {0}")]
+    Hdf5(String),
+    #[error("unsupported element type in variable `{name}`: {detail}")]
+    UnsupportedDtype { name: String, detail: String },
+    #[error(
+        "unsupported convert input `{path}`: extension `{ext}` (supported extensions: {h5_ext}; {nc_ext}; or recognizable HDF5 / NetCDF-3 file signature)"
+    )]
+    UnsupportedInputExtension {
+        path: String,
+        ext: String,
+        h5_ext: &'static str,
+        nc_ext: &'static str,
+    },
+    #[error("{format:?} convert requires Cargo feature `{feature}`")]
+    ConvertFeatureDisabled {
+        format: ConvertInputFormat,
+        feature: &'static str,
+    },
+}
+
+fn report(
+    path_in: &Path,
+    path_out: &Path,
+    plans: &[shared::ImportPlan],
+    history: Vec<(String, String, String)>,
+    elapsed_secs: f64,
+) -> ConvertReport {
+    let datasets: Vec<ConvertDatasetSummary> = plans
+        .iter()
+        .map(|p| ConvertDatasetSummary {
+            name: p.name.clone(),
+            ndim: p.shape.len(),
+            dims: p.shape.clone(),
+        })
+        .collect();
+    let dataset_names: Vec<String> = datasets.iter().map(|d| d.name.clone()).collect();
+    ConvertReport {
+        input: path_in.display().to_string(),
+        output: path_out.display().to_string(),
+        dataset_count: datasets.len(),
+        dataset_names,
+        datasets,
+        history,
+        elapsed_secs,
+    }
+}

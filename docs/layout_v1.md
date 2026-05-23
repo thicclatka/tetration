@@ -42,7 +42,7 @@ This matches the optional `layout_version` field in JSON query documents (`tetra
 | 0      | 4    | `[u8;4]` | `magic`              | Must be `TETR`.                                                                 |
 | 4      | 4    | `u32`    | `layout_version`     | Must be `1`.                                                                    |
 | 8      | 4    | `u32`    | `dataset_count`      | Number of dataset records in the directory blob; **0** means no directory blob. |
-| 12     | 4    | `u32`    | `flags`              | Reserved; write **0**.                                                          |
+| 12     | 4    | `u32`    | `flags`              | Bit **`1`**: optional **history footer** at EOF (see below). Otherwise **0**.   |
 | 16     | 8    | `u64`    | `chunk_index_offset` | Byte offset to the **chunk index** region (see below).                          |
 | 24     | 8    | `u64`    | `chunk_index_length` | Length in bytes of the chunk index region.                                      |
 
@@ -137,12 +137,25 @@ Each index row’s `payload_offset` selects the byte span in region ⑤.
 
 ### Per-chunk payload codecs
 
-| Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                              |
-| ---------- | ------------------------------------------- | ------------------------------------------ |
+| Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                                                  |
+| ---------- | ------------------------------------------- | -------------------------------------------------------------- |
 | **0** raw  | must be equal                               | tensor payload (LE **`f32`** or **`f64`** per dataset `dtype`) |
-| **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes |
+| **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes                     |
 
 See also [`query_engine.md`](query_engine.md) for how the query engine materializes planned chunks.
+
+## Optional history footer (v1 extension)
+
+When superblock **`flags & 1`**, the file may end with a self-describing footer **after** all chunk payloads:
+
+| Region (suffix at EOF) | Size     | Notes                                                                 |
+| ---------------------- | -------- | --------------------------------------------------------------------- |
+| `history_json`         | variable | UTF-8 JSON object: `{"history":[["convert","h5","<unix_secs>"], …]}`. |
+| `history_json_len`     | 8        | `u64` LE byte length of `history_json`.                               |
+| `history_version`      | 4        | `u32` LE; must be **1**.                                              |
+| magic                  | 4        | ASCII **`THST`**.                                                     |
+
+Chunk payload validation uses **`file_len − footer_size`**. Readers without history support ignore the flag and treat the full file length as payload bounds only when the flag is **0**. `tet info` / [`read_tet_summary_v1`](../src/catalog/mod.rs) surface parsed `history`.
 
 ## Reference subset (current Rust writer)
 

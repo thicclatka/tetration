@@ -1,2 +1,31 @@
 [tools]
 rust = "1.95"
+uv = "latest"
+
+[tasks."fixtures:sync"]
+description = "Install Python deps for fixture generation (uv sync)"
+dir = "{{config_root}}/fixtures"
+run = "uv sync"
+
+[tasks."fixtures:small"]
+description = "Generate tracked small HDF5/NetCDF fixtures"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures small"
+
+[tasks."fixtures:large"]
+description = "Generate gitignored 20 GiB HDF5/NetCDF stress fixtures (~40 GiB disk)"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures large"
+
+[tasks."fixtures:all"]
+description = "Generate small and large fixtures"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures all"
+
+[tasks."fixtures:clean-large"]
+description = "Remove generated files under fixtures/large/"
+confirm = "Delete all files in fixtures/large/?"
+run = "rm -rf fixtures/large"

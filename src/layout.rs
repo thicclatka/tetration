@@ -21,6 +21,9 @@ pub const SUPERBLOCK_V1_LEN: usize = 32;
 /// On-disk layout version described by `docs/layout_v1.md`.
 pub const LAYOUT_VERSION_V1: u32 = 1;
 
+/// Superblock `flags`: optional [`catalog::history`] footer at EOF (`THST` magic).
+pub const SUPERBLOCK_FLAG_HISTORY_FOOTER: u32 = 1 << 0;
+
 /// Parsed layout-v1 superblock (fields mirror the spec table).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +62,26 @@ impl SuperblockV1 {
         wire::put_u64_le(&mut buf, &mut o, self.chunk_index_length);
         debug_assert_eq!(o, SUPERBLOCK_V1_LEN);
         buf
+    }
+
+    /// Parse a validated 32-byte superblock (caller must check magic/version separately if needed).
+    pub(crate) fn from_bytes(data: &[u8; SUPERBLOCK_V1_LEN]) -> Result<Self, LayoutError> {
+        let mut m = [0u8; 4];
+        m.copy_from_slice(&data[0..4]);
+        if &m != MAGIC {
+            return Err(LayoutError::BadMagic(m));
+        }
+        let layout_version = wire::u32_le_at(data, 4);
+        if layout_version != LAYOUT_VERSION_V1 {
+            return Err(LayoutError::UnsupportedVersion(layout_version));
+        }
+        Ok(Self {
+            layout_version,
+            dataset_count: wire::u32_le_at(data, 8),
+            flags: wire::u32_le_at(data, 12),
+            chunk_index_offset: wire::u64_le_at(data, 16),
+            chunk_index_length: wire::u64_le_at(data, 24),
+        })
     }
 }
 
