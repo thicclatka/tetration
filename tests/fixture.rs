@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use tetration::{
-    CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DTYPE_F32, DTYPE_F64,
+    CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1,
     FileExecutionSettingsV1, RawArrayWrite, mmap_file_read, read_tet_summary_v1,
     write_raw_array_file,
 };
@@ -76,6 +76,24 @@ pub fn le_row_major_2x3_f32_one_to_six() -> Vec<u8> {
     data
 }
 
+/// Row-major `i32` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_i32_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 24];
+    for (slot, n) in data.chunks_exact_mut(4).zip(1_i32..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `i64` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_i64_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 48];
+    for (slot, n) in data.chunks_exact_mut(8).zip(1_i64..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
 /// Row-major `f64` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
 pub fn le_row_major_2x3_f64_one_to_six() -> Vec<u8> {
     let mut data = vec![0u8; 48];
@@ -108,7 +126,13 @@ fn write_multichunk_2x3(
 }
 
 fn write_multichunk_2x3_f32(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
-    write_multichunk_2x3(path, dataset_name, chunk_codec, DTYPE_F32, data);
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        chunk_codec,
+        DATASET_DTYPE_TAG_V1.f32,
+        data,
+    );
 }
 
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f32` file (values 1..6).
@@ -132,7 +156,37 @@ pub fn write_multichunk_2x3_f64_tiles(path: &Path, dataset_name: &str) {
 }
 
 fn write_multichunk_2x3_f64(path: &Path, dataset_name: &str, chunk_codec: u32, data: &[u8]) {
-    write_multichunk_2x3(path, dataset_name, chunk_codec, DTYPE_F64, data);
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        chunk_codec,
+        DATASET_DTYPE_TAG_V1.f64,
+        data,
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i32` file (values 1..6).
+#[allow(dead_code)]
+pub fn write_multichunk_2x3_i32_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.i32,
+        &le_row_major_2x3_i32_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i64` file (values 1..6).
+#[allow(dead_code)]
+pub fn write_multichunk_2x3_i64_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.i64,
+        &le_row_major_2x3_i64_one_to_six(),
+    );
 }
 
 /// Same geometry as [`write_multichunk_2x3_tiles`], but chunk payloads are **zstd**-compressed.
@@ -151,7 +205,7 @@ pub fn write_multichunk_2x3_with_execution(
         path,
         &RawArrayWrite {
             name: dataset_name,
-            dtype: DTYPE_F32,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
             shape: &SHAPE_2X3,
             chunk_shape: &CHUNK_2X2,
             chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,

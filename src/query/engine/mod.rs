@@ -2,9 +2,11 @@
 
 mod budget;
 mod chunk_decode;
+mod dispatch;
 mod fold;
 mod indexing;
 mod materialize;
+mod materialize_int;
 mod materialize_stats;
 mod operations;
 mod parallel;
@@ -21,6 +23,10 @@ pub use chunk_decode::planned_chunk_mmap_slices;
 pub use materialize::{
     MaterializeReadPlanF32IntoOutcome, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, spill_read_plan_f32_le,
+};
+pub use materialize_int::{
+    materialize_read_plan_i32_le, materialize_read_plan_i64_le, spill_read_plan_i32_le,
+    spill_read_plan_i64_le,
 };
 pub use parallel::{
     materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,

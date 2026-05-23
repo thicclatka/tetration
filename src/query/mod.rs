@@ -12,8 +12,10 @@ pub use engine::{
     DEFAULT_MEMORY_BUDGET_BYTES, ExecutionBudget, MaterializeReadPlanF32IntoOutcome,
     MemoryStrategy, SpillPathAllowlist, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
-    materialize_read_plan_f32_le_parallel, plan_query_empty, plan_query_with_tet_mmap,
+    materialize_read_plan_f32_le_parallel, materialize_read_plan_i32_le,
+    materialize_read_plan_i64_le, plan_query_empty, plan_query_with_tet_mmap,
     plan_query_with_tet_mmap_ex, planned_chunk_mmap_slices, spill_read_plan_f32_le,
+    spill_read_plan_i32_le, spill_read_plan_i64_le,
 };
 pub use types::{
     AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionHints, Operation,

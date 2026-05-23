@@ -7,7 +7,7 @@ use crate::utils::wire;
 use super::execution::FileExecutionSettingsV1;
 use super::tile;
 use super::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DTYPE_F32, DTYPE_F64, MAX_NDIM, OneChunkRawWrite,
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, MAX_NDIM, OneChunkRawWrite,
 };
 
 /// Full tensor + tiling for [`super::write_raw_array_file`](crate::catalog::write_raw_array_file).
@@ -20,7 +20,7 @@ pub struct RawArrayWrite<'a> {
     /// Per-chunk payload codec (`u32` wire tag). Use [`CHUNK_PAYLOAD_CODEC_V1`](crate::catalog::CHUNK_PAYLOAD_CODEC_V1)
     /// (see [`ChunkPayloadCodecV1`](crate::catalog::ChunkPayloadCodecV1)).
     pub chunk_codec: u32,
-    /// Row-major tensor bytes (`4 * product(shape)` for [`DTYPE_F32`], `8 *` for [`DTYPE_F64`]).
+    /// Row-major tensor bytes (`4 * product(shape)` for [`DATASET_DTYPE_TAG_V1`](crate::catalog::DATASET_DTYPE_TAG_V1) `.f32` / `.i32`, `8 *` for `.f64` / `.i64`).
     pub data: &'a [u8],
     /// Optional execution settings written into the chunk index header; `None` = engine defaults.
     pub file_execution: Option<FileExecutionSettingsV1>,
@@ -58,9 +58,9 @@ pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), C
             ));
         }
     }
-    if spec.dtype != DTYPE_F32 && spec.dtype != DTYPE_F64 {
+    if !DATASET_DTYPE_TAG_V1.is_supported(spec.dtype) {
         return Err(CatalogError::InvalidWriteSpec(
-            "only dtype f32 (DTYPE_F32) or f64 (DTYPE_F64) is supported",
+            "only dataset dtype tags in DATASET_DTYPE_TAG_V1 (f32/f64/i32/i64) are supported",
         ));
     }
     let _elems: u64 = spec

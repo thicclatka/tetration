@@ -9,12 +9,13 @@ use fixture::{
     write_multichunk_2x3_zero_zstd,
 };
 use tetration::{
-    CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DTYPE_F32, OneChunkRawWrite, RawArrayWrite,
-    SpillPathAllowlist, TempSpillFile, create_empty_v1_file, materialize_read_plan_f32_le,
-    materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
-    materialize_read_plan_f32_le_parallel, mmap_file_read, parse_query_json, plan_query_empty,
-    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
-    write_one_chunk_raw_file, write_raw_array_file,
+    CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DATASET_DTYPE_TAG_V1, OneChunkRawWrite,
+    RawArrayWrite, SpillPathAllowlist, TempSpillFile, create_empty_v1_file,
+    materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
+    materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
+    mmap_file_read, parse_query_json, plan_query_empty, plan_query_with_tet_mmap,
+    plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query, write_one_chunk_raw_file,
+    write_raw_array_file,
 };
 
 /// JSON string literal for a filesystem path embedded in test query fixtures.
@@ -153,7 +154,7 @@ fn read_plan_strided_step_touches_fewer_chunks_than_dense() {
         &path,
         &RawArrayWrite {
             name: "a",
-            dtype: DTYPE_F32,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
             shape: &shape,
             chunk_shape: &chunk_shape,
             chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
@@ -254,7 +255,7 @@ fn plan_query_unknown_dataset_lists_available() {
         &path,
         &OneChunkRawWrite {
             name: "only_me",
-            dtype: DTYPE_F32,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
             shape: &shape,
             chunk_shape: &shape,
             payload: &payload,
@@ -871,6 +872,37 @@ fn plan_query_operation_median_scalar_temp_spill_when_over_budget() {
     assert!((ex.operation_median.unwrap() - 3.5).abs() < 1e-5);
     assert_eq!(ex.memory_strategy, Some("temp_spill_materialize"));
     assert!(ex.spill_f32_path.is_none());
+}
+
+#[test]
+fn plan_query_i32_preview_and_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("i32.tet");
+    fixture::write_multichunk_2x3_i32_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.i32_preview.len(), 4);
+    assert!(ex.i32_preview_truncated);
+    assert_eq!(ex.f32_preview.len(), 0);
+    assert_eq!(ex.operation_sum.unwrap(), 21.0);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_i32_bytes, Some(24));
+}
+
+#[test]
+fn plan_query_i64_preview_materialize() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("i64.tet");
+    fixture::write_multichunk_2x3_i64_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a"}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(6)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.i64_preview, vec![1, 2, 3, 4, 5, 6]);
+    assert!(!ex.i64_preview_truncated);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_i64_bytes, Some(48));
 }
 
 #[test]

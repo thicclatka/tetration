@@ -204,6 +204,19 @@ pub(crate) fn run_tier_c_operation(
     plan: &ReadPlan,
     op: &Operation,
 ) -> Result<OperationPreviewFields, TetError> {
+    if matches!(
+        materialized,
+        MaterializedLogical::I32 { .. } | MaterializedLogical::I64 { .. }
+    ) {
+        let vec = super::materialize_int::materialized_logical_as_f64(materialized)?;
+        let synthetic = MaterializedLogical::F64 {
+            backing: LogicalF64Backing::InMemory(vec),
+            total_bytes_read_from_disk: 0,
+            strategy: super::budget::MemoryStrategy::InMemoryMaterialize,
+        };
+        return run_tier_c_operation(&synthetic, plan, op);
+    }
+
     let n = plan.logical_f32_element_count;
     let shape = &plan.logical_selection_shape;
     let axes = op.axes();

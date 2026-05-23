@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::catalog::{
-    CatalogError, DTYPE_F32, DTYPE_F64, TetFileSummaryV1, chunk_coords_intersecting_strided,
-    f32_tensor_bytes_from_shape, f64_tensor_bytes_from_shape, read_tet_summary_v1,
+    CatalogError, DATASET_DTYPE_TAG_V1, TetFileSummaryV1, chunk_coords_intersecting_strided,
+    read_tet_summary_v1, tensor_bytes_from_shape,
 };
 use crate::query::types::{
     CHUNK_TOUCH_POLICY, DatasetResolution, QueryDocument, QueryExecutionPreview, QueryResponse,
@@ -14,6 +14,12 @@ use super::operations::build_execution_preview;
 use super::read_plan::{ReadPlanGeometry, build_read_plan};
 use super::selection::resolved_dense_global_box;
 use super::spill_policy::SpillPathAllowlist;
+
+fn dataset_tensor_bytes(dtype: u32, shape: &[u64], expected: u32) -> Option<u64> {
+    (dtype == expected)
+        .then(|| tensor_bytes_from_shape(shape, expected))
+        .flatten()
+}
 
 fn map_geometry_catalog_error(e: CatalogError) -> TetError {
     match e {
@@ -71,7 +77,7 @@ pub fn plan_query_empty(doc: &QueryDocument) -> QueryResponse {
 /// `raw_f32_preview_max`: when `Some(n)` with `n > 0`, read planned chunk payloads from `mmap`
 /// (raw or zstd `f32` tiles, codecs **0** / **1**) and attach up to `n` decoded little-endian `f32`
 /// values under [`QueryResponse::execution`] (requires dataset
-/// [`DTYPE_F32`](crate::catalog::DTYPE_F32)). When `Some(0)`, only attach execution when
+/// [`DATASET_DTYPE_TAG_V1`](crate::catalog::DATASET_DTYPE_TAG_V1) `.f32`). When `Some(0)`, only attach execution when
 /// [`QueryDocument::operation`] is set: the full logical tensor is still decoded for aggregation,
 /// but `f32_preview` is empty. When [`QueryDocument::operation`] is set, a limit must be passed
 /// (use `0` to skip preview floats). Partial reductions populate `operation_reduced_*` fields;
@@ -221,12 +227,26 @@ fn plan_query_matched_dataset(
             shape: Some(rec.shape.clone()),
             chunk_shape: Some(rec.chunk_shape.clone()),
             chunk_index_rows: Some(rows),
-            dataset_f32_bytes: (rec.dtype == DTYPE_F32)
-                .then(|| f32_tensor_bytes_from_shape(&rec.shape))
-                .flatten(),
-            dataset_f64_bytes: (rec.dtype == DTYPE_F64)
-                .then(|| f64_tensor_bytes_from_shape(&rec.shape))
-                .flatten(),
+            dataset_f32_bytes: dataset_tensor_bytes(
+                rec.dtype,
+                &rec.shape,
+                DATASET_DTYPE_TAG_V1.f32,
+            ),
+            dataset_f64_bytes: dataset_tensor_bytes(
+                rec.dtype,
+                &rec.shape,
+                DATASET_DTYPE_TAG_V1.f64,
+            ),
+            dataset_i32_bytes: dataset_tensor_bytes(
+                rec.dtype,
+                &rec.shape,
+                DATASET_DTYPE_TAG_V1.i32,
+            ),
+            dataset_i64_bytes: dataset_tensor_bytes(
+                rec.dtype,
+                &rec.shape,
+                DATASET_DTYPE_TAG_V1.i64,
+            ),
             file_execution: Some(summary.file_execution),
             available_datasets: None,
         }),
@@ -254,6 +274,8 @@ fn plan_query_unmatched_dataset(
             chunk_index_rows: None,
             dataset_f32_bytes: None,
             dataset_f64_bytes: None,
+            dataset_i32_bytes: None,
+            dataset_i64_bytes: None,
             file_execution: Some(summary.file_execution),
             available_datasets: Some(names),
         }),

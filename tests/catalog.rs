@@ -13,7 +13,7 @@ use fixture::{
 };
 use proptest::prelude::*;
 use tetration::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DTYPE_F32, DTYPE_F64, MAX_NDIM,
+    CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, MAX_NDIM,
     OneChunkRawWrite, chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided,
     create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
     plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
@@ -21,6 +21,25 @@ use tetration::{
 };
 
 // --- roundtrip ---
+
+fn assert_one_chunk_roundtrip(
+    path: &std::path::Path,
+    dtype: u32,
+    name: &str,
+    payload: &[u8],
+    shape: &[u64],
+) {
+    let mmap = mmap_file_read(path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets.len(), 1);
+    assert_eq!(s.datasets[0].name, name);
+    assert_eq!(s.datasets[0].dtype, dtype);
+    assert_eq!(s.datasets[0].shape, shape);
+    assert_eq!(s.chunks.len(), 1);
+    let off = usize::try_from(s.chunks[0].payload_offset).unwrap();
+    let len = usize::try_from(s.chunks[0].stored_byte_len).unwrap();
+    assert_eq!(&mmap[off..off + len], payload);
+}
 
 #[test]
 fn empty_file_summary() {
@@ -45,7 +64,7 @@ fn one_chunk_f32_roundtrip() {
         &path,
         &OneChunkRawWrite {
             name: "temperature",
-            dtype: DTYPE_F32,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
             shape: &shape,
             chunk_shape: &chunk_shape,
             payload: &payload,
@@ -53,16 +72,13 @@ fn one_chunk_f32_roundtrip() {
     )
     .unwrap();
 
-    let mmap = mmap_file_read(&path).unwrap();
-    let s = read_tet_summary_v1(&mmap).unwrap();
-    assert_eq!(s.datasets.len(), 1);
-    assert_eq!(s.datasets[0].name, "temperature");
-    assert_eq!(s.datasets[0].dtype, DTYPE_F32);
-    assert_eq!(s.datasets[0].shape, vec![2, 3]);
-    assert_eq!(s.chunks.len(), 1);
-    let off = usize::try_from(s.chunks[0].payload_offset).unwrap();
-    let len = usize::try_from(s.chunks[0].stored_byte_len).unwrap();
-    assert_eq!(&mmap[off..off + len], &payload[..]);
+    assert_one_chunk_roundtrip(
+        &path,
+        DATASET_DTYPE_TAG_V1.f32,
+        "temperature",
+        &payload,
+        &shape,
+    );
 }
 
 #[test]
@@ -76,7 +92,7 @@ fn one_chunk_f64_roundtrip() {
         &path,
         &OneChunkRawWrite {
             name: "pressure",
-            dtype: DTYPE_F64,
+            dtype: DATASET_DTYPE_TAG_V1.f64,
             shape: &shape,
             chunk_shape: &chunk_shape,
             payload: &payload,
@@ -84,13 +100,45 @@ fn one_chunk_f64_roundtrip() {
     )
     .unwrap();
 
+    assert_one_chunk_roundtrip(
+        &path,
+        DATASET_DTYPE_TAG_V1.f64,
+        "pressure",
+        &payload,
+        &shape,
+    );
+}
+
+#[test]
+fn one_chunk_i32_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grid_i32.tet");
+    let shape = SHAPE_2X3;
+    let chunk_shape = [2u64, 3];
+    let payload = fixture::le_row_major_2x3_i32_one_to_six();
+    write_one_chunk_raw_file(
+        &path,
+        &OneChunkRawWrite {
+            name: "counts",
+            dtype: DATASET_DTYPE_TAG_V1.i32,
+            shape: &shape,
+            chunk_shape: &chunk_shape,
+            payload: &payload,
+        },
+    )
+    .unwrap();
+    assert_one_chunk_roundtrip(&path, DATASET_DTYPE_TAG_V1.i32, "counts", &payload, &shape);
+}
+
+#[test]
+fn multi_chunk_i32_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiles_i32.tet");
+    fixture::write_multichunk_2x3_i32_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
     let s = read_tet_summary_v1(&mmap).unwrap();
-    assert_eq!(s.datasets[0].dtype, DTYPE_F64);
-    assert_eq!(s.datasets[0].shape, vec![2, 3]);
-    let off = usize::try_from(s.chunks[0].payload_offset).unwrap();
-    let len = usize::try_from(s.chunks[0].stored_byte_len).unwrap();
-    assert_eq!(&mmap[off..off + len], &payload[..]);
+    assert_eq!(s.datasets[0].dtype, DATASET_DTYPE_TAG_V1.i32);
+    assert_eq!(s.chunks.len(), 2);
 }
 
 #[test]
@@ -101,7 +149,7 @@ fn multi_chunk_f64_roundtrip() {
 
     let mmap = mmap_file_read(&path).unwrap();
     let s = read_tet_summary_v1(&mmap).unwrap();
-    assert_eq!(s.datasets[0].dtype, DTYPE_F64);
+    assert_eq!(s.datasets[0].dtype, DATASET_DTYPE_TAG_V1.f64);
     assert_eq!(s.chunks.len(), 2);
 }
 
