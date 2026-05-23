@@ -35,7 +35,7 @@ fn check_materialized_complete_option<T>(out: &[Option<T>]) -> Result<(), TetErr
 
 fn finalize_option<T: Copy + Default>(out: Vec<Option<T>>) -> Result<Vec<T>, TetError> {
     check_materialized_complete_option(&out)?;
-    Ok(out.into_iter().map(|v| v.unwrap_or_default()).collect())
+    Ok(out.into_iter().map(Option::unwrap_or_default).collect())
 }
 
 fn materialize_read_plan_int_le_core<T, F>(
@@ -148,6 +148,7 @@ macro_rules! define_int_materialize {
         core_fn $core_fn:ident;
         read_fn $read_fn:ident;
         spill_fn $spill_fn:ident;
+        type_label $type_label:literal;
         into_vec_fn $into_vec_fn:ident;
         spill_file_fn $spill_file_fn:ident;
         preview_mat_fn $preview_mat_fn:ident;
@@ -185,6 +186,17 @@ macro_rules! define_int_materialize {
             materialize_read_plan_int_le_core(mmap, plan, max_elements, scatter_fill)
         }
 
+        /// Decode planned raw [`$type_label`] chunk payloads (little-endian) into **logical row-major**
+        /// order for the strided selection on [`ReadPlan`].
+        ///
+        /// `max_elements`: `None` decodes the full logical tensor. `Some(0)` returns an empty vector
+        /// and reads nothing. `Some(n)` for `n > 0` returns the first `n` logical values and sets
+        /// `truncated` when the logical tensor is longer.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`TetError::Validation`] when chunk payloads disagree with tile geometry, the
+        /// strided selection is not fully covered by planned chunks, or mmap bounds fail.
         pub fn $read_fn(
             mmap: &[u8],
             plan: &ReadPlan,
@@ -193,6 +205,12 @@ macro_rules! define_int_materialize {
             $core_fn(mmap, plan, max_elements, $scatter_seq)
         }
 
+        /// Spill the full logical selection as row-major [`$type_label`] LE to `path` via file-backed mmap.
+        ///
+        /// # Errors
+        ///
+        /// Same validation failures as [`$read_fn`], plus logical element count or spill byte length
+        /// overflow, or I/O or mmap errors on `path`.
         pub fn $spill_fn(mmap: &[u8], plan: &ReadPlan, path: &Path) -> Result<u64, TetError> {
             let n = plan.logical_f32_element_count;
             let byte_len = u64::try_from(n)
@@ -264,6 +282,7 @@ define_int_materialize! {
     core_fn materialize_read_plan_i32_le_core;
     read_fn materialize_read_plan_i32_le;
     spill_fn spill_read_plan_i32_le;
+    type_label "i32";
     into_vec_fn materialize_into_vec_i32;
     spill_file_fn preview_from_spill_file_i32;
     preview_mat_fn preview_from_materialized_i32;
@@ -283,6 +302,7 @@ define_int_materialize! {
     core_fn materialize_read_plan_i64_le_core;
     read_fn materialize_read_plan_i64_le;
     spill_fn spill_read_plan_i64_le;
+    type_label "i64";
     into_vec_fn materialize_into_vec_i64;
     spill_file_fn preview_from_spill_file_i64;
     preview_mat_fn preview_from_materialized_i64;

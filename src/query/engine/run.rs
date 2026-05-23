@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::catalog::{
-    CatalogError, DATASET_DTYPE_TAG_V1, TetFileSummaryV1, chunk_coords_intersecting_strided,
-    read_tet_summary_v1, tensor_bytes_from_shape,
+    CatalogError, DATASET_DTYPE_TAG_V1, DatasetRecordV1, TetFileSummaryV1,
+    chunk_coords_intersecting_strided, read_tet_summary_v1, tensor_bytes_from_shape,
 };
 use crate::query::types::{
     CHUNK_TOUCH_POLICY, DatasetResolution, QueryDocument, QueryExecutionPreview, QueryResponse,
@@ -132,22 +132,20 @@ pub fn plan_query_with_tet_mmap_ex(
     }
 }
 
-fn plan_query_matched_dataset(
-    summary: &TetFileSummaryV1,
-    dataset_idx: usize,
-    doc: &QueryDocument,
-    mmap: &[u8],
-    tet_path: Option<&str>,
-    raw_f32_preview_max: Option<usize>,
-    spill_allowlist: Option<&SpillPathAllowlist>,
-) -> Result<QueryResponse, TetError> {
-    let rows = summary
+fn chunk_index_rows_for_dataset(summary: &TetFileSummaryV1, dataset_idx: usize) -> usize {
+    summary
         .chunks
         .iter()
         .filter(|c| c.dataset_id == dataset_idx as u64)
-        .count();
+        .count()
+}
+
+fn build_matched_read_plan(
+    summary: &TetFileSummaryV1,
+    dataset_idx: usize,
+    doc: &QueryDocument,
+) -> Result<ReadPlan, TetError> {
     let rec = &summary.datasets[dataset_idx];
-    let ndim = rec.shape.len();
     let (g0, g1, steps) = resolved_dense_global_box(doc, &rec.shape)?;
     let strided = steps.iter().any(|&t| t != 1);
     let touch_policy = if strided {
@@ -157,14 +155,106 @@ fn plan_query_matched_dataset(
     };
     let coords = chunk_coords_intersecting_strided(&rec.shape, &rec.chunk_shape, &g0, &g1, &steps)
         .map_err(map_geometry_catalog_error)?;
-    let read_plan = build_read_plan(
+    build_read_plan(
         summary,
         dataset_idx,
-        ndim,
+        rec.shape.len(),
         &coords,
         touch_policy,
         &ReadPlanGeometry::new(&rec.shape, &rec.chunk_shape, &g0, &g1, &steps),
-    )?;
+    )
+}
+
+fn matched_dataset_resolution(
+    summary: &TetFileSummaryV1,
+    dataset_idx: usize,
+    rec: &DatasetRecordV1,
+    chunk_rows: usize,
+) -> DatasetResolution {
+    DatasetResolution {
+        matched: true,
+        dataset_index: Some(dataset_idx),
+        dtype: Some(rec.dtype),
+        shape: Some(rec.shape.clone()),
+        chunk_shape: Some(rec.chunk_shape.clone()),
+        chunk_index_rows: Some(chunk_rows),
+        dataset_f32_bytes: dataset_tensor_bytes(rec.dtype, &rec.shape, DATASET_DTYPE_TAG_V1.f32),
+        dataset_f64_bytes: dataset_tensor_bytes(rec.dtype, &rec.shape, DATASET_DTYPE_TAG_V1.f64),
+        dataset_i32_bytes: dataset_tensor_bytes(rec.dtype, &rec.shape, DATASET_DTYPE_TAG_V1.i32),
+        dataset_i64_bytes: dataset_tensor_bytes(rec.dtype, &rec.shape, DATASET_DTYPE_TAG_V1.i64),
+        file_execution: Some(summary.file_execution),
+        available_datasets: None,
+    }
+}
+
+struct MatchedExecutionCtx<'a> {
+    doc: &'a QueryDocument,
+    mmap: &'a [u8],
+    read_plan: &'a ReadPlan,
+    rec: &'a DatasetRecordV1,
+    summary: &'a TetFileSummaryV1,
+    tet_path: Option<&'a str>,
+    raw_f32_preview_max: Option<usize>,
+    spill_allowlist: Option<&'a SpillPathAllowlist>,
+}
+
+fn matched_dataset_execution(
+    ctx: &MatchedExecutionCtx<'_>,
+    message: &mut String,
+) -> Result<Option<QueryExecutionPreview>, TetError> {
+    let Some(limit) = ctx.raw_f32_preview_max else {
+        return Ok(None);
+    };
+    if limit == 0 && ctx.doc.operation.is_none() {
+        return Err(TetError::Validation(
+            "preview limit 0 without `operation` would attach an empty execution block; omit `--execute` or use a positive `--preview-f32`".into(),
+        ));
+    }
+    let default_spill;
+    let spill_ref = match ctx.spill_allowlist {
+        Some(p) => Some(p),
+        None => {
+            if let Some(tp) = ctx.tet_path {
+                default_spill = SpillPathAllowlist::default_for_tet(
+                    Path::new(tp),
+                    std::iter::empty::<PathBuf>(),
+                )?;
+                Some(&default_spill)
+            } else {
+                None
+            }
+        }
+    };
+    let preview = build_execution_preview(&super::operations::ExecutionPreviewInput {
+        mmap: ctx.mmap,
+        plan: ctx.read_plan,
+        dtype: ctx.rec.dtype,
+        operation: ctx.doc.operation.as_ref(),
+        output: ctx.doc.output.as_ref(),
+        max_f32: limit,
+        budget: ExecutionBudget::resolve(&ctx.summary.file_execution, ctx.doc.execution.as_ref()),
+        spill_allowlist: spill_ref,
+    })?;
+    if ctx.doc.operation.is_some() {
+        message.push_str("; operation executed (see execution.memory_strategy and operation_*)");
+    } else {
+        message.push_str("; mmap f32 preview attached (see execution)");
+    }
+    Ok(Some(preview))
+}
+
+fn plan_query_matched_dataset(
+    summary: &TetFileSummaryV1,
+    dataset_idx: usize,
+    doc: &QueryDocument,
+    mmap: &[u8],
+    tet_path: Option<&str>,
+    raw_f32_preview_max: Option<usize>,
+    spill_allowlist: Option<&SpillPathAllowlist>,
+) -> Result<QueryResponse, TetError> {
+    let rec = &summary.datasets[dataset_idx];
+    let rows = chunk_index_rows_for_dataset(summary, dataset_idx);
+    let read_plan = build_matched_read_plan(summary, dataset_idx, doc)?;
     if doc.operation.is_some() && raw_f32_preview_max.is_none() {
         return Err(TetError::Validation(
             "`operation` requires mmap execution with an explicit preview limit (e.g. `--execute --preview-f32 64`, or `--preview-f32 0` to omit preview floats)".into(),
@@ -173,83 +263,24 @@ fn plan_query_matched_dataset(
     let mut message = String::from(
         "query accepted; dataset matched; read_plan lists mmap payload regions for touched chunks",
     );
-    let execution = match raw_f32_preview_max {
-        None => None,
-        Some(0) if doc.operation.is_none() => {
-            return Err(TetError::Validation(
-                "preview limit 0 without `operation` would attach an empty execution block; omit `--execute` or use a positive `--preview-f32`".into(),
-            ));
-        }
-        Some(limit) => {
-            let default_spill;
-            let spill_ref = match spill_allowlist {
-                Some(p) => Some(p),
-                None => {
-                    if let Some(tp) = tet_path {
-                        default_spill = SpillPathAllowlist::default_for_tet(
-                            Path::new(tp),
-                            std::iter::empty::<PathBuf>(),
-                        )?;
-                        Some(&default_spill)
-                    } else {
-                        None
-                    }
-                }
-            };
-            let preview = build_execution_preview(&super::operations::ExecutionPreviewInput {
-                mmap,
-                plan: &read_plan,
-                dtype: rec.dtype,
-                operation: doc.operation.as_ref(),
-                output: doc.output.as_ref(),
-                max_f32: limit,
-                budget: ExecutionBudget::resolve(&summary.file_execution, doc.execution.as_ref()),
-                spill_allowlist: spill_ref,
-            })?;
-            if doc.operation.is_some() {
-                message.push_str(
-                    "; operation executed (see execution.memory_strategy and operation_*)",
-                );
-            } else {
-                message.push_str("; mmap f32 preview attached (see execution)");
-            }
-            Some(preview)
-        }
-    };
+    let execution = matched_dataset_execution(
+        &MatchedExecutionCtx {
+            doc,
+            mmap,
+            read_plan: &read_plan,
+            rec,
+            summary,
+            tet_path,
+            raw_f32_preview_max,
+            spill_allowlist,
+        },
+        &mut message,
+    )?;
     Ok(query_response(
         doc,
         message,
         tet_path,
-        Some(DatasetResolution {
-            matched: true,
-            dataset_index: Some(dataset_idx),
-            dtype: Some(rec.dtype),
-            shape: Some(rec.shape.clone()),
-            chunk_shape: Some(rec.chunk_shape.clone()),
-            chunk_index_rows: Some(rows),
-            dataset_f32_bytes: dataset_tensor_bytes(
-                rec.dtype,
-                &rec.shape,
-                DATASET_DTYPE_TAG_V1.f32,
-            ),
-            dataset_f64_bytes: dataset_tensor_bytes(
-                rec.dtype,
-                &rec.shape,
-                DATASET_DTYPE_TAG_V1.f64,
-            ),
-            dataset_i32_bytes: dataset_tensor_bytes(
-                rec.dtype,
-                &rec.shape,
-                DATASET_DTYPE_TAG_V1.i32,
-            ),
-            dataset_i64_bytes: dataset_tensor_bytes(
-                rec.dtype,
-                &rec.shape,
-                DATASET_DTYPE_TAG_V1.i64,
-            ),
-            file_execution: Some(summary.file_execution),
-            available_datasets: None,
-        }),
+        Some(matched_dataset_resolution(summary, dataset_idx, rec, rows)),
         Some(read_plan),
         execution,
     ))

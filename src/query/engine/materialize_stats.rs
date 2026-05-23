@@ -199,6 +199,94 @@ fn median_f64_spill_file(path: &Path, n: usize) -> Result<f64, TetError> {
     median_f64(&mut slice[..n])
 }
 
+fn run_tier_c_median_f32(
+    backing: &LogicalF32Backing,
+    plan: &ReadPlan,
+    axes: &[String],
+    n: usize,
+    shape: &[u64],
+) -> Result<OperationPreviewFields, TetError> {
+    if axes.is_empty() {
+        let median = match backing {
+            LogicalF32Backing::InMemory(v) => median_f32(&mut v.clone())?,
+            LogicalF32Backing::TempSpill(temp) => median_f32_spill_file(temp.path(), n)?,
+        };
+        return Ok(OperationPreviewFields {
+            element_count: Some(n),
+            median: Some(median),
+            ..OperationPreviewFields::default()
+        });
+    }
+    let layout = partial_axis_layout(plan, axes)?;
+    match backing {
+        LogicalF32Backing::TempSpill(temp) => {
+            let f64_cells = gather_partial_f64(n, shape, &layout, |li| {
+                read_f64_at_spill_f32(temp.path(), li)
+            })?;
+            let medians: Vec<f64> = f64_cells
+                .iter()
+                .map(|c| median_f64(&mut c.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(OperationPreviewFields {
+                element_count: Some(n),
+                reduced_shape: Some(layout.out_shape),
+                reduced_median: Some(medians),
+                ..OperationPreviewFields::default()
+            })
+        }
+        LogicalF32Backing::InMemory(v) => {
+            let mut cells = gather_partial_in_memory(v, shape, &layout)?;
+            let medians: Vec<f64> = cells
+                .iter_mut()
+                .map(|c| median_f32(c))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(OperationPreviewFields {
+                element_count: Some(n),
+                reduced_shape: Some(layout.out_shape),
+                reduced_median: Some(medians),
+                ..OperationPreviewFields::default()
+            })
+        }
+    }
+}
+
+fn run_tier_c_median_f64(
+    backing: &LogicalF64Backing,
+    plan: &ReadPlan,
+    axes: &[String],
+    n: usize,
+    shape: &[u64],
+) -> Result<OperationPreviewFields, TetError> {
+    if axes.is_empty() {
+        let median = match backing {
+            LogicalF64Backing::InMemory(v) => median_f64(&mut v.clone())?,
+            LogicalF64Backing::TempSpill(temp) => median_f64_spill_file(temp.path(), n)?,
+        };
+        return Ok(OperationPreviewFields {
+            element_count: Some(n),
+            median: Some(median),
+            ..OperationPreviewFields::default()
+        });
+    }
+    let layout = partial_axis_layout(plan, axes)?;
+    let mut cells = match backing {
+        LogicalF64Backing::InMemory(v) => gather_partial_in_memory(v, shape, &layout)?,
+        LogicalF64Backing::TempSpill(temp) => gather_partial_f64(n, shape, &layout, |li| {
+            read_f64_at_spill_f64(temp.path(), li)
+        })?,
+    };
+    let medians: Vec<f64> = cells
+        .iter_mut()
+        .map(|c| median_f64(c))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(OperationPreviewFields {
+        element_count: Some(n),
+        reduced_shape: Some(layout.out_shape),
+        reduced_median: Some(medians),
+        ..OperationPreviewFields::default()
+    })
+}
+
 pub(crate) fn run_tier_c_operation(
     materialized: &MaterializedLogical,
     plan: &ReadPlan,
@@ -223,80 +311,10 @@ pub(crate) fn run_tier_c_operation(
 
     match (materialized, op) {
         (MaterializedLogical::F32 { backing, .. }, Operation::Median { .. }) => {
-            if axes.is_empty() {
-                let median = match backing {
-                    LogicalF32Backing::InMemory(v) => median_f32(&mut v.clone())?,
-                    LogicalF32Backing::TempSpill(temp) => median_f32_spill_file(temp.path(), n)?,
-                };
-                return Ok(OperationPreviewFields {
-                    element_count: Some(n),
-                    median: Some(median),
-                    ..OperationPreviewFields::default()
-                });
-            }
-            let layout = partial_axis_layout(plan, axes)?;
-            match backing {
-                LogicalF32Backing::TempSpill(temp) => {
-                    let f64_cells = gather_partial_f64(n, shape, &layout, |li| {
-                        read_f64_at_spill_f32(temp.path(), li)
-                    })?;
-                    let medians: Vec<f64> = f64_cells
-                        .iter()
-                        .map(|c| median_f64(&mut c.clone()))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(OperationPreviewFields {
-                        element_count: Some(n),
-                        reduced_shape: Some(layout.out_shape),
-                        reduced_median: Some(medians),
-                        ..OperationPreviewFields::default()
-                    })
-                }
-                LogicalF32Backing::InMemory(v) => {
-                    let mut cells = gather_partial_in_memory(v, shape, &layout)?;
-                    let medians: Vec<f64> = cells
-                        .iter_mut()
-                        .map(|c| median_f32(c))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(OperationPreviewFields {
-                        element_count: Some(n),
-                        reduced_shape: Some(layout.out_shape),
-                        reduced_median: Some(medians),
-                        ..OperationPreviewFields::default()
-                    })
-                }
-            }
+            run_tier_c_median_f32(backing, plan, axes, n, shape)
         }
         (MaterializedLogical::F64 { backing, .. }, Operation::Median { .. }) => {
-            if axes.is_empty() {
-                let median = match backing {
-                    LogicalF64Backing::InMemory(v) => median_f64(&mut v.clone())?,
-                    LogicalF64Backing::TempSpill(temp) => median_f64_spill_file(temp.path(), n)?,
-                };
-                return Ok(OperationPreviewFields {
-                    element_count: Some(n),
-                    median: Some(median),
-                    ..OperationPreviewFields::default()
-                });
-            }
-            let layout = partial_axis_layout(plan, axes)?;
-            let mut cells = match backing {
-                LogicalF64Backing::InMemory(v) => gather_partial_in_memory(v, shape, &layout)?,
-                LogicalF64Backing::TempSpill(temp) => {
-                    gather_partial_f64(n, shape, &layout, |li| {
-                        read_f64_at_spill_f64(temp.path(), li)
-                    })?
-                }
-            };
-            let medians: Vec<f64> = cells
-                .iter_mut()
-                .map(|c| median_f64(c))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(OperationPreviewFields {
-                element_count: Some(n),
-                reduced_shape: Some(layout.out_shape),
-                reduced_median: Some(medians),
-                ..OperationPreviewFields::default()
-            })
+            run_tier_c_median_f64(backing, plan, axes, n, shape)
         }
         (MaterializedLogical::F32 { backing, .. }, Operation::Quantile { q, .. }) => {
             run_quantile_f32(backing, plan, axes, n, shape, *q)

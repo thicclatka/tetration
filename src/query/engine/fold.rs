@@ -4,6 +4,7 @@ use crate::query::types::{OperationPreviewFields, TetError};
 
 /// Result of scalar or streaming partial fold operations.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct FoldPlanOutcome {
     pub f32_preview: Vec<f32>,
     pub f64_preview: Vec<f64>,

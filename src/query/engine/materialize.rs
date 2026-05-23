@@ -322,6 +322,7 @@ pub(crate) enum LogicalF64Backing {
 
 /// Capped decode previews for all supported element types.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct DecodePreviewBundle {
     pub f32: Vec<f32>,
     pub f64: Vec<f64>,
