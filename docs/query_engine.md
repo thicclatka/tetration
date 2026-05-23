@@ -313,13 +313,17 @@ These match the product vision but belong **beside** the reduction enum:
 | **Named axis labels**                   | Resolve `"time"` → index via dataset metadata before reductions.                                   |
 | **`rechunk` / resample**                | Writer / transform path, not read-time aggregate.                                                  |
 | **Linear algebra** (`matmul`, `einsum`) | Belongs in caller libraries on materialized slabs.                                                 |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.      |
 | **SQL / joins**                         | Explicit non-goal (see [README](../README.md)).                                                    |
+| **CLI query history**                   | **Done** — platform cache JSONL (`tet history`); `.tet` footer history is **write provenance only**. |
 
 ### Non-goals for the JSON `operation` field
 
 - Arbitrary per-chunk user callbacks (needs a sandbox and stable ABI).
 - Plugin codecs or filters beyond the v1 catalog codec tags.
 - Guarantees about numerical order beyond logical row-major **preview** order (aggregates are commutative where noted).
+- **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 6 Python).
+- **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet history` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
 When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial_fold.rs`, and (if tier **C**) `materialize_stats.rs`.
 
