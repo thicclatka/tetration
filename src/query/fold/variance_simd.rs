@@ -60,13 +60,17 @@ mod arch {
         let mut i = 0usize;
         let simd_end = len - (len % 4);
         while i < simd_end {
-            let v = unsafe { _mm_loadu_ps(ptr.add(i)) };
-            let lo = _mm_cvtps_pd(v);
-            let hi = _mm_cvtps_pd(_mm_movehl_ps(v, v));
-            let mut lo_arr = [0.0f64; 2];
-            let mut hi_arr = [0.0f64; 2];
-            _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
-            _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            let (lo_arr, hi_arr) = unsafe {
+                let v = _mm_loadu_ps(ptr.add(i));
+                let lo = _mm_cvtps_pd(v);
+                let hi = _mm_cvtps_pd(_mm_movehl_ps(v, v));
+                let mut lo_arr = [0.0f64; 2];
+                let mut hi_arr = [0.0f64; 2];
+                _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
+                _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
+                (lo_arr, hi_arr)
+            };
             sum += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
             sumsq += lo_arr[0] * lo_arr[0]
                 + lo_arr[1] * lo_arr[1]
