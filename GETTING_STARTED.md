@@ -86,14 +86,85 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 Other dense-grid formats may follow the same pipeline if there is demand — e.g. **`.npy` / `.npz`**, **COG/GeoTIFF**, **GRIB2**, **NIfTI**. **CSV / Parquet** are poor fits (mixed or columnar types vs one dense dtype). Pick per domain after HDF5/NetCDF depth + Zarr.
 
-## Phase 6 — Bindings
+## Phase 6 — CLI & query UX
 
-**Goal:** ship a **separate Python repo** (renamed on PyPI) that pins a published **`tetration`** crates.io version; Rust stays the format engine, Python owns ergonomics and ecosystem import.
+**Goal:** make **`tet`** the polished daily driver — readable output, dependable history, and a query document format that is easier to author than raw JSON. The library keeps accepting JSON today; CLI improvements can add alternate front-end formats without breaking embedders.
+
+### Baseline (done)
+
+- [x] **`tet query`** — validate, plan, optional **`--execute`**; pretty-printed JSON **`QueryResponse`**.
+- [x] **`tet history`** — platform cache (`query_history.jsonl`); **`--clear`**, **`TET_NO_QUERY_HISTORY`**, **`TET_QUERY_HISTORY_FILE`** (see [CLI query history](#cli-query-history)).
+- [x] **`tet info` / `tet convert`** — catalog summary JSON; convert progress bar.
+
+### Phase 6 focus (next)
+
+- [ ] **Focused query output** — human-scoped views (stats-only, table preview, `--quiet` / `--json` toggles) instead of always dumping the full response envelope.
+- [ ] **History ergonomics** — replay (`tet query --replay N`), search/filter, named bookmarks; keep history out of `.tet` files.
+- [ ] **Query document v2** — evaluate **TOML** or a lighter **JSON profile** (fewer nested brackets, line-oriented selection/operation blocks) alongside v1 JSON; shared validation → same `QueryDocument` internally.
+- [ ] **CLI polish** — consistent error messages, `--file` discovery hints, optional interactive plan preview before **`--execute`**.
+
+**Verify:** CLI integration tests; golden query docs in repo; `tet query` UX review on large **`operation_*`** responses.
+
+## Phase 7 — Metadata & history
+
+**Goal:** rich, bounded **file- and dataset-level metadata** plus **write-time lineage** in the `.tet` footer — without slowing mmap hot paths. **Query replay history** is a Phase 6 CLI concern ([`tet history`](#cli-query-history)), not on-disk format. See README “Recording lineage” and [`docs/layout_v1.md`](docs/layout_v1.md) history footer.
+
+### Baseline (done)
+
+- [x] **Optional history footer** — `THST` tail, JSON `{"history":[[op, source, unix_secs],…]}`, superblock **`flags` bit 1**; payload bounds exclude footer (`catalog/history.rs`).
+- [x] **Convert provenance** — `append_convert_history` on `tet convert` (`convert` / `h5` | `nc` | `zarr` / timestamp); **not** used for read/query events.
+- [x] **`tet info` / summary** — `read_tet_summary_v1` surfaces parsed `history` alongside superblock + catalog.
+
+### Phase 7 focus (next)
+
+- [ ] **File header metadata** — structured file-level blob (tool + library versions, creation time, optional git commit / hostname); spec in `layout_v1.md`, surfaced in `tet info`.
+- [ ] **Dataset attributes** — per-dataset key/value metadata (units, `long_name`, CF-style attrs, arbitrary JSON-safe strings); read in catalog summary; writers set on create/convert.
+- [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
+- [ ] **Session / writer API** — accumulate events in memory during a write session; flush to footer (or metadata chunk) on `commit` / `close` (Rust first; Phase 10 bindings wrap it).
+- [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
+- [ ] **Import preservation** — carry selected HDF5/NetCDF/Zarr attrs into dataset metadata on convert.
+
+## Phase 8 — Query ops & interchange (later)
+
+**Goal:** extend tier A–C **`operation`** and export paths when the result is still a **reduction, QC stat, or interchange artifact** — without blocking Phases 6–7.
+
+### Stats lane
+
+- [ ] **Histogram** — caller-supplied `min` / `max` bin edges (already on slice list).
+- [ ] **Covariance / correlation** along an axis (tier C; materialize or multi-pass).
+- [ ] **Named axis labels** — resolve `"time"` → index via Phase 7 dataset metadata.
+
+### Interchange & format
+
+- [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
+- [ ] **Layout / codec evolution** — v2 only when v1 guarantees are insufficient (new dtypes, filters, dedicated metadata regions).
+
+### Out of scope for JSON `operation`
+
+- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled slabs (Phase 10 Python).
+- **Optional client cache** — memoize `(catalog hash, query hash) → plan or result` in CLI session or bindings; never append query logs to `.tet`.
+
+### Already shipped (Phase 4)
+
+- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when `chunk_count > 1` ([`src/query/fold/parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
+
+## Phase 9 — GPU (later)
+
+**Goal:** optional **device materialization** after CPU decode — format stays mmap-first; GPU is a binding/runtime choice, not a different wire layout.
+
+- [ ] **Explicit device routing** — CLI flag or API knob (`cpu` / `cuda:0` / auto with fallback); document when transfer overhead dominates.
+- [ ] **Batched host→device copy** — overlap decode/decompress on CPU with async copies where frameworks allow.
+- [ ] **VRAM guardrails** — cap in-flight bytes, check free device memory, fall back to CPU on OOM.
+- [ ] **Alignment / dtype notes** — document row-major chunk payloads and `f32` / `f16` expectations for fast paths (see README “GPUs and tensors”).
+
+## Phase 10 — Bindings (Python & C ABI)
+
+**Goal:** ship **language bindings** after the CLI and on-disk story are stable — separate Python repo (PyPI rename) pinning published **`tetration`** on crates.io; optional **`cdylib`** for other FFIs.
 
 ### Python package (separate repo)
 
 - [ ] **PyPI package** (PyO3 / maturin) — `tetration = "x.y.z"` from crates.io (`default-features = false` for lean wheels); NumPy buffer views where dtypes align.
-- [ ] **Read / query** — open `.tet`, catalog summary, validate + plan + execute query JSON (parity with key `tet query --execute` paths).
+- [ ] **Read / query** — open `.tet`, catalog summary, validate + plan + execute query documents (parity with key `tet query --execute` paths).
 - [ ] **Write path** — stable Rust writer API for tile/chunk append; Python fills buffers from NumPy.
 - [ ] **Convert via Python stack** — optional extras (`h5py`, `netCDF4`, `xarray`, `zarr`, …) read foreign formats → numpy tiles → Rust writer; not the Rust `tetration-hdf5` / `tetration-netcdf` link chain.
 - [ ] **Tests** — shared or submodule `fixtures/small/`; byte roundtrips + query golden cases against pinned crate releases.
@@ -108,50 +179,6 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 - [x] **Documented layout** — [`docs/layout_v1.md`](docs/layout_v1.md) for standalone readers.
 - [x] **JSON + CLI** — `tet query`, `tet info`, `tet convert`; shell out or HTTP-post query documents from any runtime.
 - [x] **Rust convert** — `tet convert` for fast CLI import (parallel HDF5 / NetCDF / Zarr); Python convert is a separate, ecosystem-native path.
-
-## Phase 7 — Metadata & history
-
-**Goal:** rich, bounded **file- and dataset-level metadata** plus **write-time lineage** in the `.tet` footer — without slowing mmap hot paths. **Query replay history** lives in the CLI cache only ([`tet history`](#cli-query-history)), not in the file. See README “Recording lineage” and [`docs/layout_v1.md`](docs/layout_v1.md) history footer.
-
-### Baseline (done)
-
-- [x] **Optional history footer** — `THST` tail, JSON `{"history":[[op, source, unix_secs],…]}`, superblock **`flags` bit 1**; payload bounds exclude footer (`catalog/history.rs`).
-- [x] **Convert provenance** — `append_convert_history` on `tet convert` (`convert` / `h5` | `nc` | `zarr` / timestamp); **not** used for read/query events.
-- [x] **`tet info` / summary** — `read_tet_summary_v1` surfaces parsed `history` alongside superblock + catalog.
-- [x] **CLI query history** — `tet history` lists last **10** queries from platform cache (`query_history.jsonl`); `TET_NO_QUERY_HISTORY=1` disables; `TET_QUERY_HISTORY_FILE` overrides path.
-
-### Phase 7 focus (next)
-
-- [ ] **File header metadata** — structured file-level blob (tool + library versions, creation time, optional git commit / hostname); spec in `layout_v1.md`, surfaced in `tet info`.
-- [ ] **Dataset attributes** — per-dataset key/value metadata (units, `long_name`, CF-style attrs, arbitrary JSON-safe strings); read in catalog summary; writers set on create/convert.
-- [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
-- [ ] **Session / writer API** — accumulate events in memory during a write session; flush to footer (or metadata chunk) on `commit` / `close` (Rust + Python bindings).
-- [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
-- [ ] **Import preservation** — carry selected HDF5/NetCDF/Zarr attrs into dataset metadata on convert (Rust CLI and Python paths).
-
-## Phase 8 — Beyond core (later)
-
-Not scheduled; capture direction without blocking Phases 5–7.
-
-### Query ops (stats lane only)
-
-Extend tier A–C **`operation`** when the result is still a **reduction or QC stat** on a selection:
-
-- [ ] **Histogram** — caller-supplied `min` / `max` bin edges (already on slice list).
-- [ ] **Covariance / correlation** along an axis (tier C; materialize or multi-pass).
-- [ ] **Named axis labels** — resolve `"time"` → index via Phase 7 dataset metadata.
-
-### Out of scope for JSON `operation` (use bindings after materialize/spill)
-
-- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled or NumPy slabs (Phase 6 Python).
-- **Optional client cache** — memoize `(catalog hash, query hash) → plan or result` in CLI session or Python; never append query logs to `.tet`.
-
-### Other
-
-- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when `chunk_count > 1` ([`src/query/fold/parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
-- [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
-- [ ] **GPU-friendly materialize** — optional device copy after CPU decode (binding concern; format stays mmap-first).
-- [ ] **Layout / codec evolution** — v2 only when v1 guarantees are insufficient (new dtypes, filters, dedicated metadata regions).
 
 ## CLI query history
 
@@ -176,9 +203,11 @@ TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 **Suggested next PR-sized slices (pick one):**
 
 1. ~~**Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.~~ **Done** — wire tags `3`/`4`, writers, query preview/spill/ops.
-2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).
-3. **Metadata scaffold:** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
-4. **History events v2:** structured transform event + session flush API.
-5. **Python repo scaffold:** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
-6. **Histogram:** caller-supplied `min` / `max` for bin edges.
-7. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).
+2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).~~ **Done**
+3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).
+4. **CLI focused output (Phase 6):** stats-only / compact query response modes; `--quiet` vs full JSON.
+5. **Query doc v2 spike (Phase 6):** TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
+6. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
+7. **History events v2 (Phase 7):** structured transform event + session flush API.
+8. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.
+9. **Python repo scaffold (Phase 10):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

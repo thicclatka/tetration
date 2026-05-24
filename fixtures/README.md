@@ -9,8 +9,9 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 | **1–3**      | Tests build temp `.tet` in `tests/fixture.rs`; no tracked import fixtures yet.                                                      |
 | **4**        | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                          |
 | **5**        | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).        |
-| **6**        | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                     |
+| **6**        | Bench harness (`benchmark/`, `spec.json`); future query-format golden cases and CLI UX smoke.                                       |
 | **7**        | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.                     |
+| **10**       | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                     |
 
 ## Layout
 
