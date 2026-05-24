@@ -55,7 +55,7 @@ flowchart TD
     end
 ```
 
-**CLI mapping:** `tet query [QUERY]` calls `validate_query` then `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an `operation` skips preview arrays but still aggregates.
+**CLI mapping:** `tet query [QUERY]` calls `validate_query` then `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export.
 
 Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
 
@@ -64,6 +64,7 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `full` (default) | —     | Pretty JSON, full `QueryResponse`                                                                                 |
 | `json`           | —     | Compact one-line JSON, full envelope                                                                              |
 | `stats`          | —     | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays |
+| `plan`           | —     | Slim JSON: catalog + `read_plan` summary only (no `chunks[]`, no `execution`; **`-x`** still runs decode — use without **`-x`** for plan-only) |
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                    |
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
@@ -78,7 +79,7 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 | **`fold/`**        | `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel_fold.rs`, `partial_fold.rs`, … | `FoldPlanOutcome`, `ReductionKind`, streaming scalar + partial-axis reductions; bulk **`var` / `std`** via SIMD slab merge. |
 | **`dispatch.rs`**  | —                                                                                         | Dtype routing for materialize, spill, scalar/partial fold.                                                                  |
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                 | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                         |
-| **`cli/`**         | `history.rs`, `output/` (`mod.rs`, `quiet.rs`, `stats.rs`, `format_num.rs`)               | Platform query history JSONL; `QueryOutputFormat`, `format_query_response`.                                                 |
+| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)       | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                          |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …).
 
@@ -135,7 +136,7 @@ Spill targets come from query JSON (`"spill": "…"`). **Relative paths** resolv
 
 Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/engine/spill_policy.rs), applied automatically with `--tet` + `--execute`):
 
-1. **`.tet` parent directory**
+1. **Canonical `.tet` parent directory** — any resolved spill path **under that directory tree** is allowed (e.g. `data.tet` in `/tmp` → `/tmp/other/out.bin` is valid; use a subdirectory like `/tmp/tet_home/data.tet` if you need a narrower root).
 2. **Platform cache/scratch** (best-effort, each as `…/tetration/`):
    - `$XDG_CACHE_HOME/tetration` or `~/.cache/tetration` (Linux and other Unix)
    - `~/.local/cache/tetration` (macOS default when `XDG_CACHE_HOME` unset; also on Linux)
@@ -144,7 +145,7 @@ Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/
 
 **`--spill-allow DIR`** (repeatable) **adds** extra roots to that default set.
 
-Example relative spill beside the dataset: `"handle": "slice.bin"` → next to `data.tet`. Example cache spill: `"handle": "/home/you/.cache/tetration/job-42.bin"` (or rely on a path under an allowed root).
+Example relative spill beside the dataset: `"spill": "slice.bin"` → next to `data.tet`. Example cache spill: `"spill": "/home/you/.cache/tetration/job-42.bin"` (or any path under an allowed root).
 
 ### Streaming fold performance
 
@@ -222,7 +223,7 @@ flowchart TD
 | `catalog.dataset_f32_bytes`                    | Matched **`f32`** dataset; `4 × product(shape)`.                                                       |
 | `catalog.dataset_f64_bytes`                    | Matched **`f64`** dataset; `8 × product(shape)`.                                                       |
 | `read_plan`                                    | Dataset matched; lists touched chunks and selection geometry.                                          |
-| `execution`                                    | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when `operation` is set).                        |
+| `execution`                                    | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when an **`operation`** or **`spill`** is set).   |
 | `execution.f32_preview`                        | First `n` logical row-major floats (`n = 0` → empty vec); **`f32`** datasets only.                     |
 | `execution.f64_preview`                        | First `n` logical row-major doubles (`n = 0` → empty vec); **`f64`** datasets only.                    |
 | `execution.operation_*`                        | Scalar aggregates over full logical selection; preview cap does not truncate them.                     |
@@ -473,6 +474,6 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 - Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution and fold both pick parallel decode when **`chunk_count > 1`** (see [Streaming fold performance](#streaming-fold-performance)).
 - **`operation.axes`** uses **decimal dimension indices**, not dataset name labels.
-- Spill path must lie under default roots (`.tet` dir + platform `…/tetration` cache dirs) or `--spill-allow`; relative handles are relative to the `.tet` directory.
+- Spill path must lie under default roots (canonical **`.tet` parent** and descendants + platform `…/tetration` cache dirs) or `--spill-allow`; relative **`"spill"`** paths resolve against the **`.tet` directory** (not shell cwd).
 - Integer dtypes (`i32` / `i64`) are supported in writers and query execution (aggregates promote to `f64` for fold paths).
 - JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy is enforced via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).

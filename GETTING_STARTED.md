@@ -61,7 +61,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Reductions (flat JSON):** top-level keys `sum`, `mean`, … — scalar **`"mean": []`**, partial **`"mean": 0`** or **`"sum": [0,1]`** → **`operation_*`** / **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`.
 - [x] **Streaming reductions** — scalar and partial-axis folds without full logical tensor allocation; **`memory_strategy: streaming_fold`**.
 - [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); per-file settings via **`RawArrayWrite::file_execution`**.
-- [x] **Mmap spill** — top-level `"spill": "path"` → dtype-native spill paths (`memory_strategy: mmap_spill`).
+- [x] **Mmap spill** — top-level `"spill": "path"` → dtype-native spill paths (`memory_strategy: mmap_spill`); preview cap **`0`** (default for **`stats`/`quiet`**) still exports when **`spill`** is set.
 - [x] **Capped preview** without full logical-buffer allocation when `max_elements < logical`.
 - [x] **Spill path allowlist** — `SpillPathAllowlist` + `plan_query_with_tet_mmap_ex`; CLI `--spill-allow DIR`.
 - [x] **Tier-2 index ops** — `arg_min` / `arg_max` (scalar + partial axes).
@@ -211,6 +211,7 @@ tet qhist list --dataset temperature --mode x
 tet qhist list --grep tensor_3d                 # dataset / tet path / op label
 tet qhist list --json                           # full JSON (scripts)
 tet qhist run 1 -q                              # re-run newest; today's stdout flags
+tet qhist run 1 --plan -q                       # plan-only replay (no -x); fails if row has an op — use query without op or `run` without --plan
 tet qhist list --clear                          # remove history file
 # `tet hist` is an alias for `qhist`
 TET_QUERY_HISTORY_MAX=50 tet query …            # keep up to 50 rows on disk
