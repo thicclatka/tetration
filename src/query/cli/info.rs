@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::catalog::{
-    CHUNK_PAYLOAD_CODEC_V1, DATASET_DTYPE_TAG_V1, ChunkIndexEntryV1, DatasetRecordV1,
+    CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, DatasetRecordV1,
     FileExecutionSettingsV1, HistoryEventV1, TetFileSummaryV1,
 };
 use crate::layout::SuperblockV1;
@@ -16,6 +16,7 @@ pub const DEFAULT_INFO_CHUNK_TABLE_LIMIT: usize = 32;
 
 /// Which sections to print in text mode (`tet info` without `--json`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct InfoViewSections {
     pub layout: bool,
     pub execution: bool,
@@ -99,6 +100,7 @@ impl InfoListFilter {
 
 /// Resolve text sections from CLI flags (`--all`, `--layout`, …).
 #[must_use]
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn info_view_sections_from_flags(
     all: bool,
     layout: bool,
@@ -196,7 +198,7 @@ pub fn format_info_text(
     }
     if sections.execution {
         out.push('\n');
-        out.push_str(&format_execution_section(&summary.file_execution));
+        out.push_str(&format_execution_section(summary.file_execution));
     }
     if sections.datasets {
         out.push('\n');
@@ -224,7 +226,10 @@ pub fn format_info_text(
     out
 }
 
-fn filtered_summary(summary: &TetFileSummaryV1, filter: Option<&InfoListFilter>) -> TetFileSummaryV1 {
+fn filtered_summary(
+    summary: &TetFileSummaryV1,
+    filter: Option<&InfoListFilter>,
+) -> TetFileSummaryV1 {
     let Some(f) = filter.filter(|x| !x.is_empty()) else {
         return summary.clone();
     };
@@ -271,7 +276,7 @@ fn format_layout_section(sb: &SuperblockV1) -> String {
     out
 }
 
-fn format_execution_section(ex: &FileExecutionSettingsV1) -> String {
+fn format_execution_section(ex: FileExecutionSettingsV1) -> String {
     let mut out = String::new();
     out.push_str("execution (file defaults):\n");
     if ex.memory_budget_bytes == 0 && ex.memory_budget_percent_bps == 0 {
@@ -309,10 +314,7 @@ fn format_datasets_table(
         "id", "name", "dtype", "shape", "chunk_shape"
     );
     for (id, ds) in datasets.iter().enumerate() {
-        let n_chunks = chunks
-            .iter()
-            .filter(|c| c.dataset_id == id as u64)
-            .count();
+        let n_chunks = chunks.iter().filter(|c| c.dataset_id == id as u64).count();
         let _ = writeln!(
             out,
             "  {:>3}  {:<20}  {:<5}  {:<16}  {:<12}  {}",
@@ -358,8 +360,7 @@ fn format_chunks_table(
     for (i, ch) in chunks.iter().take(show).enumerate() {
         let ds_name = datasets
             .get(ch.dataset_id as usize)
-            .map(|d| d.name.as_str())
-            .unwrap_or("?");
+            .map_or("?", |d| d.name.as_str());
         let _ = writeln!(
             out,
             "  {:>4}  {:<12}  {:<8}  {:>10}  {:>10}  {:>5}  {}",
@@ -427,13 +428,13 @@ fn shape_label(shape: &[u64]) -> String {
 }
 
 fn chunk_coords_label(ch: &ChunkIndexEntryV1, ds: Option<&DatasetRecordV1>) -> String {
-    let rank = ds.map(|d| d.shape.len()).unwrap_or(0);
+    let rank = ds.map_or(0, |d| d.shape.len());
     if rank == 0 {
         return "-".to_owned();
     }
     ch.chunk_index[..rank]
         .iter()
-        .map(|c| c.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(",")
 }

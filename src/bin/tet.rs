@@ -7,10 +7,10 @@
 mod args;
 #[path = "tet/convert.rs"]
 mod convert;
-#[path = "tet/qhist.rs"]
-mod qhist;
 #[path = "tet/info.rs"]
 mod info;
+#[path = "tet/qhist.rs"]
+mod qhist;
 #[path = "tet/query.rs"]
 mod query;
 #[path = "tet/util.rs"]
@@ -23,8 +23,8 @@ use tetration::parse_query_json;
 
 use args::{Cli, Commands};
 use convert::run_convert;
-use qhist::run_qhist;
 use info::{InfoRunOpts, run_info};
+use qhist::run_qhist;
 use query::{QueryRunOpts, run_query};
 use util::{cli_error, read_query_payload, resolve_stdout};
 

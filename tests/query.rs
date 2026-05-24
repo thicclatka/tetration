@@ -838,6 +838,16 @@ fn spill_path_allowlist_rejects_outside_root() {
     let json = r#"{"dataset":"a","spill":"out.bin"}"#;
     let doc = parse_query_json(json).unwrap();
     let resp = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap();
+    let resp_zero_preview =
+        plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(0), Some(&policy)).unwrap();
+    assert!(
+        resp_zero_preview
+            .execution
+            .as_ref()
+            .unwrap()
+            .spill_f32_path
+            .is_some()
+    );
     assert!(
         resp.execution
             .as_ref()

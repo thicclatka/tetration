@@ -8,7 +8,7 @@ use tetration::{
 };
 
 use crate::util::cli_error;
-
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct InfoRunOpts {
     pub path: PathBuf,
     pub json: bool,
@@ -29,7 +29,7 @@ pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
     let file_len = u64::try_from(mmap.len())
         .map_err(|_| format!("file size {} exceeds u64::MAX", mmap.len()))?;
     let summary = read_tet_summary_v1(&mmap).map_err(cli_error)?;
-    let filter = build_info_filter(opts.dataset, opts.grep)?;
+    let filter = build_info_filter(opts.dataset, opts.grep);
     let path_ref = Some(opts.path.as_path());
 
     let out = if opts.json {
@@ -62,11 +62,11 @@ pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
 fn build_info_filter(
     dataset: Option<String>,
     grep: Option<String>,
-) -> Result<Option<InfoListFilter>, String> {
+) -> Option<tetration::InfoListFilter> {
     let filter = InfoListFilter { dataset, grep };
     if filter.is_empty() {
-        Ok(None)
+        None
     } else {
-        Ok(Some(filter))
+        Some(filter)
     }
 }

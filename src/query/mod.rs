@@ -13,14 +13,13 @@ mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;
 pub use cli::{
-    CliQueryHistoryEntry, DEFAULT_INFO_CHUNK_TABLE_LIMIT, HistoryExecuteFilter,
-    HistoryListFilter, HistorySettings, InfoListFilter, InfoViewSections, QueryOutputFormat,
-    append_cli_query_history, clear_cli_query_history, cli_query_history_enabled,
-    cli_query_history_max, cli_query_history_path, format_history_list_json,
-    format_history_list_text, format_info_json, format_info_quiet, format_info_text,
-    format_query_response, format_query_stderr_hints, get_cli_query_history_entry,
-    history_entry_mode, info_view_sections_from_flags, list_cli_query_history,
-    parse_history_execute_filter,
+    CliQueryHistoryEntry, DEFAULT_INFO_CHUNK_TABLE_LIMIT, HistoryExecuteFilter, HistoryListFilter,
+    HistorySettings, InfoListFilter, InfoViewSections, QueryOutputFormat, append_cli_query_history,
+    clear_cli_query_history, cli_query_history_enabled, cli_query_history_max,
+    cli_query_history_path, format_history_list_json, format_history_list_text, format_info_json,
+    format_info_quiet, format_info_text, format_query_response, format_query_stderr_hints,
+    get_cli_query_history_entry, history_entry_mode, info_view_sections_from_flags,
+    list_cli_query_history, parse_history_execute_filter,
 };
 pub use document::{QueryLimits, parse_query_json, validate_query};
 #[doc(hidden)]

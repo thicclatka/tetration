@@ -78,7 +78,11 @@ fn tet_info_binary_runs_on_fixture() {
         .args(["info", path.to_str().unwrap()])
         .output()
         .unwrap();
-    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("datasets:"));
     assert!(stdout.contains("a"));

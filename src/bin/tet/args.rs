@@ -106,7 +106,11 @@ pub enum Commands {
 
 /// `tet qhist` — platform query history (not `tet info --history` footer).
 #[derive(Args)]
-#[command(name = "qhist", visible_alias = "hist", about = "Recent tet query log (platform cache; not in .tet footer). Default: list")]
+#[command(
+    name = "qhist",
+    visible_alias = "hist",
+    about = "Recent tet query log (platform cache; not in .tet footer). Default: list"
+)]
 pub struct QhistArgs {
     #[command(subcommand)]
     pub cmd: Option<QhistCmd>,
