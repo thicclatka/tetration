@@ -12,7 +12,10 @@ use crate::query::decode::indexing::coords_from_linear_row_major;
 use crate::query::dispatch::accumulate_chunk_read_bytes;
 use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{FoldPlanOutcome, build_fold_plan_outcome, validate_fold_preview};
+use crate::query::fold::shared::{
+    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
+    validate_fold_preview, validate_fold_preview_f64,
+};
 
 pub(crate) fn partial_arg_fields(
     kind: ReductionKind,
@@ -183,26 +186,17 @@ fn fold_read_plan_partial_operation_promoted(
             "operation requires at least one decoded value from the read plan".into(),
         ));
     }
-    Ok(FoldPlanOutcome {
-        f32_preview: Vec::new(),
-        f64_preview: Vec::new(),
-        i32_preview: if is_i32 && max_preview > 0 {
-            i32_preview
+    Ok(build_fold_plan_outcome_typed(
+        if is_i32 {
+            FoldPreviewBuffer::I32(i32_preview)
         } else {
-            Vec::new()
+            FoldPreviewBuffer::I64(i64_preview)
         },
-        i64_preview: if !is_i32 && max_preview > 0 {
-            i64_preview
-        } else {
-            Vec::new()
-        },
-        f32_preview_truncated: false,
-        f64_preview_truncated: false,
-        i32_preview_truncated: is_i32 && n > max_preview,
-        i64_preview_truncated: !is_i32 && n > max_preview,
+        max_preview,
+        n,
         total_bytes_read_from_disk,
         operation,
-    })
+    ))
 }
 
 /// Stream a **partial-axis** reduction without allocating the full logical tensor (f64).
@@ -272,22 +266,13 @@ fn fold_read_plan_partial_operation_impl(
 
     if f64_path {
         validate_fold_preview_f64(saw_any, &f64_preview, preview_cap)?;
-        Ok(FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: if max_preview == 0 {
-                Vec::new()
-            } else {
-                f64_preview
-            },
-            i32_preview: Vec::new(),
-            i64_preview: Vec::new(),
-            f32_preview_truncated: false,
-            f64_preview_truncated: n > max_preview,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
+        Ok(build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::F64(f64_preview),
+            max_preview,
+            n,
             total_bytes_read_from_disk,
             operation,
-        })
+        ))
     } else {
         validate_fold_preview(saw_any, &f32_preview, preview_cap)?;
         Ok(build_fold_plan_outcome(
@@ -522,23 +507,4 @@ fn run_partial_promoted_i64(
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
         }
     }
-}
-
-pub(crate) fn validate_fold_preview_f64(
-    saw_any: bool,
-    preview: &[f64],
-    preview_cap: usize,
-) -> Result<(), TetError> {
-    if !saw_any {
-        return Err(TetError::Validation(
-            "operation requires at least one decoded value from the read plan".into(),
-        ));
-    }
-    if preview_cap > 0 && preview.iter().any(|v| v.is_nan()) {
-        return Err(TetError::Validation(
-            "materialized selection has unset preview elements (chunk payloads vs selection mismatch)"
-                .into(),
-        ));
-    }
-    Ok(())
 }

@@ -9,7 +9,6 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 | **1–3**      | Tests build temp `.tet` in `tests/fixture.rs`; no tracked import fixtures yet.                                                      |
 | **4**        | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                          |
 | **5**        | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).        |
-| **5 (next)** | **`groups_*`** and **`cf_*`** drive richer import (nested paths, CF decode); **`tet convert`** today uses root-level datasets only. |
 | **6**        | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                     |
 | **7**        | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.                     |
 
@@ -67,10 +66,8 @@ mise run fixtures:clean-extra-large
 
 | Consumer           | What it checks                                                                                                    |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `tests/convert.rs` | `tet convert` on **`tensor_*`** and **`cf_3d`** (root dtypes); byte equality vs source; parallel `--jobs 4` smoke |
+| `tests/convert.rs` | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
 | Manual / bench     | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks)                                      |
-
-**`groups_3d`** and **Zarr** stores are generated for upcoming Phase 5 import work; convert tests will expand when importers land.
 
 Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --test convert`.
 
@@ -86,12 +83,13 @@ Sequential per **tier**, then wipe the whole **format** tree before the next for
 6. **Delete `.tet`**
 7. After both tiers (large + extra): **delete `large/{format}/` and `extra_large/{format}/`**
 
-**Primary comparison:** full-tensor **mean** on the native file vs **`.tet`** query mean.  
+**Primary comparison:** full-tensor ops on the native file vs **`.tet`** query (mean, std, var, min, max, sum, count — see `fixtures/benchmark/spec.json`).  
 **Secondary:** **convert** time (one-time import).
 
 ```bash
 mise run bench              # h5, netcdf, zarr (large ~6.67 GiB + extra_large 20 GiB each)
 mise run bench:h5           # one format only
+uv run --directory fixtures bench-large --run-id my-run   # archived under bench_results/runs/
 uv run --directory fixtures bench-large --skip-mean   # convert timing only
 # or: uv run --directory fixtures tet-fixtures bench --skip-ops
 ```

@@ -6,14 +6,16 @@ use crate::query::decode::chunk_decode::{
     fold_planned_chunk_f32, fold_planned_chunk_f64, visit_planned_chunk, visit_planned_chunk_f64,
 };
 use crate::query::decode::indexing::coords_from_linear_row_major;
-use crate::query::fold::partial_fold::{
-    partial_arg_fields, partial_fields, validate_fold_preview_f64,
-};
+use crate::query::dispatch::sum_chunk_read_bytes;
+use crate::query::fold::partial_fold::{partial_arg_fields, partial_fields};
 use crate::query::fold::partial_geometry::{
     PartialAxisLayout, fiber_linear_index, partial_axis_layout, reduced_index,
 };
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{FoldPlanOutcome, build_fold_plan_outcome, validate_fold_preview};
+use crate::query::fold::shared::{
+    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
+    validate_fold_preview, validate_fold_preview_f64,
+};
 use crate::query::materialize::int::IntVisit;
 use crate::query::types::{OperationPreviewFields, ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
@@ -43,10 +45,7 @@ struct PartialChunkArg {
 }
 
 fn sum_chunk_bytes(bytes: impl IntoIterator<Item = u64>) -> Result<u64, TetError> {
-    bytes.into_iter().try_fold(0u64, |a, b| {
-        a.checked_add(b)
-            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))
-    })
+    sum_chunk_read_bytes(bytes)
 }
 
 fn merge_scalar_chunks(
@@ -105,37 +104,29 @@ fn reduced_cell_index(
     Ok((oi, fi))
 }
 
-fn write_disjoint_preview_f32(preview_addr: usize, preview_len: usize, li: usize, v: f32) {
+fn write_disjoint_preview<T: Copy>(preview_addr: usize, preview_len: usize, li: usize, v: T) {
     if li < preview_len {
         // SAFETY: planned chunks write disjoint logical indices.
         let preview =
-            unsafe { std::slice::from_raw_parts_mut(preview_addr as *mut f32, preview_len) };
+            unsafe { std::slice::from_raw_parts_mut(preview_addr as *mut T, preview_len) };
         preview[li] = v;
     }
+}
+
+fn write_disjoint_preview_f32(preview_addr: usize, preview_len: usize, li: usize, v: f32) {
+    write_disjoint_preview(preview_addr, preview_len, li, v);
 }
 
 fn write_disjoint_preview_f64(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
-    if li < preview_len {
-        let preview =
-            unsafe { std::slice::from_raw_parts_mut(preview_addr as *mut f64, preview_len) };
-        preview[li] = v;
-    }
+    write_disjoint_preview(preview_addr, preview_len, li, v);
 }
 
 fn write_disjoint_preview_i32(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
-    if li < preview_len {
-        let preview =
-            unsafe { std::slice::from_raw_parts_mut(preview_addr as *mut i32, preview_len) };
-        preview[li] = v as i32;
-    }
+    write_disjoint_preview(preview_addr, preview_len, li, v as i32);
 }
 
 fn write_disjoint_preview_i64(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
-    if li < preview_len {
-        let preview =
-            unsafe { std::slice::from_raw_parts_mut(preview_addr as *mut i64, preview_len) };
-        preview[li] = v as i64;
-    }
+    write_disjoint_preview(preview_addr, preview_len, li, v as i64);
 }
 
 #[derive(Copy, Clone)]
@@ -304,55 +295,28 @@ fn fold_read_plan_scalar_parallel(
         }
         ScalarFoldVisit::F64 => {
             validate_fold_preview_f64(true, &f64_preview, preview_cap)?;
-            Ok(FoldPlanOutcome {
-                f32_preview: Vec::new(),
-                f64_preview: if max_preview == 0 {
-                    Vec::new()
-                } else {
-                    f64_preview
-                },
-                i32_preview: Vec::new(),
-                i64_preview: Vec::new(),
-                f32_preview_truncated: false,
-                f64_preview_truncated: n > max_preview,
-                i32_preview_truncated: false,
-                i64_preview_truncated: false,
+            Ok(build_fold_plan_outcome_typed(
+                FoldPreviewBuffer::F64(f64_preview),
+                max_preview,
+                n,
                 total_bytes_read_from_disk,
                 operation,
-            })
+            ))
         }
-        ScalarFoldVisit::Int(IntVisit::I32) => Ok(FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: if max_preview == 0 {
-                Vec::new()
-            } else {
-                i32_preview
-            },
-            i64_preview: Vec::new(),
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: n > max_preview,
-            i64_preview_truncated: false,
+        ScalarFoldVisit::Int(IntVisit::I32) => Ok(build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I32(i32_preview),
+            max_preview,
+            n,
             total_bytes_read_from_disk,
             operation,
-        }),
-        ScalarFoldVisit::Int(IntVisit::I64) => Ok(FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: Vec::new(),
-            i64_preview: if max_preview == 0 {
-                Vec::new()
-            } else {
-                i64_preview
-            },
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: n > max_preview,
+        )),
+        ScalarFoldVisit::Int(IntVisit::I64) => Ok(build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I64(i64_preview),
+            max_preview,
+            n,
             total_bytes_read_from_disk,
             operation,
-        }),
+        )),
     }
 }
 
@@ -602,22 +566,13 @@ fn parallel_partial_axis_fold(
             work.total_bytes,
             work.operation,
         )),
-        PartialFoldVisit::F64 => Ok(FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: if max_preview == 0 {
-                Vec::new()
-            } else {
-                f64_preview
-            },
-            i32_preview: Vec::new(),
-            i64_preview: Vec::new(),
-            f32_preview_truncated: false,
-            f64_preview_truncated: n > max_preview,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            total_bytes_read_from_disk: work.total_bytes,
-            operation: work.operation,
-        }),
+        PartialFoldVisit::F64 => Ok(build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::F64(f64_preview),
+            max_preview,
+            n,
+            work.total_bytes,
+            work.operation,
+        )),
     }
 }
 

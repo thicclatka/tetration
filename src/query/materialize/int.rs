@@ -17,8 +17,10 @@ use crate::query::decode::chunk_decode::{
 };
 use crate::query::dispatch::accumulate_chunk_read_bytes;
 use crate::query::engine::spill_policy::TempSpillFile;
-use crate::query::fold::FoldPlanOutcome;
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
+use crate::query::fold::shared::{
+    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome_typed,
+};
 
 use super::{MaterializedLogical, validate_full_read_plan_buffer, validate_read_plan_geometry};
 
@@ -397,22 +399,13 @@ macro_rules! int_scalar_fold_outcome {
         total: $total:expr,
         operation: $operation:expr,
     ) => {
-        FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: if $max_preview == 0 {
-                Vec::new()
-            } else {
-                $preview
-            },
-            i64_preview: Vec::new(),
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: $n > $max_preview,
-            i64_preview_truncated: false,
-            total_bytes_read_from_disk: $total,
-            operation: $operation,
-        }
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I32($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
     };
     (
         i64: $preview:expr,
@@ -421,22 +414,13 @@ macro_rules! int_scalar_fold_outcome {
         total: $total:expr,
         operation: $operation:expr,
     ) => {
-        FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: Vec::new(),
-            i64_preview: if $max_preview == 0 {
-                Vec::new()
-            } else {
-                $preview
-            },
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: $n > $max_preview,
-            total_bytes_read_from_disk: $total,
-            operation: $operation,
-        }
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I64($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
     };
 }
 

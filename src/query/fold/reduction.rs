@@ -95,20 +95,27 @@ impl WelfordAccum {
         self.count_f = n;
     }
 
+    /// Merge population variance stats from sum and sum-of-squares over `count` values.
+    fn merge_sum_sumsq(&mut self, count: f64, sum: f64, sumsq: f64) {
+        if count == 0.0 {
+            return;
+        }
+        let mean = sum / count;
+        let m2 = sumsq - count * mean * mean;
+        self.merge_from(&Self {
+            count_f: count,
+            mean,
+            m2,
+        });
+    }
+
     /// Merge population variance stats for a contiguous `f32` slice (slab / chunk bulk path).
     pub fn merge_f32_slice(&mut self, vals: &[f32]) {
         if vals.is_empty() {
             return;
         }
         let (slab_sum, slab_sumsq) = variance_simd::f32_sum_sumsq(vals);
-        let n_f = vals.len() as f64;
-        let slab_mean = slab_sum / n_f;
-        let slab_m2 = slab_sumsq - n_f * slab_mean * slab_mean;
-        self.merge_from(&Self {
-            count_f: n_f,
-            mean: slab_mean,
-            m2: slab_m2,
-        });
+        self.merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
     }
 
     /// Like [`Self::merge_f32_slice`] for an `f64` slice.
@@ -116,20 +123,8 @@ impl WelfordAccum {
         if vals.is_empty() {
             return;
         }
-        let mut slab_sum = 0.0f64;
-        let mut slab_sumsq = 0.0f64;
-        for &v in vals {
-            slab_sum += v;
-            slab_sumsq += v * v;
-        }
-        let n_f = vals.len() as f64;
-        let slab_mean = slab_sum / n_f;
-        let slab_m2 = slab_sumsq - n_f * slab_mean * slab_mean;
-        self.merge_from(&Self {
-            count_f: n_f,
-            mean: slab_mean,
-            m2: slab_m2,
-        });
+        let (slab_sum, slab_sumsq) = variance_simd::f64_sum_sumsq(vals);
+        self.merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
     }
 }
 

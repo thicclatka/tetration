@@ -16,7 +16,10 @@ use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
 use crate::query::engine::spill_policy::{SpillPathAllowlist, TempSpillFile};
 pub(crate) use crate::query::fold::FoldPlanOutcome;
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{build_fold_plan_outcome, validate_fold_preview};
+use crate::query::fold::shared::{
+    FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
+    validate_fold_preview,
+};
 use crate::query::types::{ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
 use crate::utils::f64_le;
@@ -828,20 +831,11 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
         }
     };
 
-    Ok(FoldPlanOutcome {
-        f32_preview: Vec::new(),
-        f64_preview: if max_preview == 0 {
-            Vec::new()
-        } else {
-            f64_preview
-        },
-        i32_preview: Vec::new(),
-        i64_preview: Vec::new(),
-        f32_preview_truncated: false,
-        f64_preview_truncated: n > max_preview,
-        i32_preview_truncated: false,
-        i64_preview_truncated: false,
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::F64(f64_preview),
+        max_preview,
+        n,
         total_bytes_read_from_disk,
         operation,
-    })
+    ))
 }

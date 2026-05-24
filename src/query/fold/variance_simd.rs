@@ -1,4 +1,4 @@
-//! Single-pass sum / sum-of-squares over `f32` slabs (SIMD when available).
+//! Single-pass sum / sum-of-squares over numeric slabs (SIMD for `f32` when available).
 
 #[inline]
 fn scalar_f32_sum_sumsq(vals: &[f32]) -> (f64, f64) {
@@ -103,6 +103,18 @@ pub(crate) fn f32_sum_sumsq(vals: &[f32]) -> (f64, f64) {
         }
     }
     scalar_f32_sum_sumsq(vals)
+}
+
+/// Sum and sum-of-squares for population variance over an `f64` slice.
+#[must_use]
+pub(crate) fn f64_sum_sumsq(vals: &[f64]) -> (f64, f64) {
+    let mut sum = 0.0f64;
+    let mut sumsq = 0.0f64;
+    for &v in vals {
+        sum += v;
+        sumsq += v * v;
+    }
+    (sum, sumsq)
 }
 
 #[cfg(test)]
