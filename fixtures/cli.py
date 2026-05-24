@@ -83,7 +83,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         default=int(os.environ.get("BENCH_JOBS", "0")),
-        help="tet convert --jobs (default: 0 = auto)",
+        help="tet convert --jobs (0 = auto: host parallelism, max 64)",
+    )
+    bench.add_argument(
+        "--run-id",
+        metavar="ID",
+        help="archive under bench_results/runs/ID/ (default: <git>_<UTC timestamp>)",
+    )
+    bench.add_argument(
+        "--no-clobber",
+        action="store_true",
+        help="fail if --run-id directory already exists",
     )
 
     return parser
@@ -102,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             ops=args.ops,
             skip_ops=skip_ops,
             jobs=args.jobs,
+            run_id=args.run_id,
+            no_clobber=args.no_clobber,
         )
     return 1
 

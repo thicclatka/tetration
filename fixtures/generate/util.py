@@ -58,6 +58,10 @@ def chunk_shape_for_small(shape: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(min(32, dim) for dim in shape)
 
 
+# Large stress zarr: raw little-endian f32 chunks (matches uncompressed h5/nc bench fixtures).
+ZARR_RAW_ARRAY_KWARGS: dict[str, object] = {"compressors": None}
+
+
 def small_array(ndim: int, dtype: DtypeName) -> np.ndarray:
     shape = SMALL_SHAPES[ndim]
     n = int(np.prod(shape))

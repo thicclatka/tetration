@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from generate.constants import FIXTURES_ROOT
 
 REPO_ROOT = FIXTURES_ROOT.parent
 RESULTS_DIR = FIXTURES_ROOT / "bench_results"
+RUNS_DIR = RESULTS_DIR / "runs"
 RESULTS_FILE = RESULTS_DIR / "latest.md"
 
 FormatName = Literal["h5", "netcdf", "zarr"]
@@ -52,8 +52,10 @@ def op_compat(format: FormatName, op: OpName) -> OpCompat:
     if format == "zarr":
         return OpCompat(
             bench_source=True,
-            note="zarr: Python dir-store slab read (slow vs h5/netcdf C libs)",
+            note="zarr: Python dir-store raw f32 chunks (still slower than h5/netcdf C libs)",
         )
     if format == "netcdf" and op in ("std", "var"):
-        return OpCompat(bench_source=True, note="netcdf: population var/std ddof=0 via numpy slabs")
+        return OpCompat(
+            bench_source=True, note="netcdf: population var/std ddof=0 via numpy slabs"
+        )
     return OpCompat(bench_source=True)

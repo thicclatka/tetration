@@ -132,6 +132,7 @@ fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, Conv
         chunk_shape,
         cf,
         zarr_array_rel: None,
+        zarr_zstd: false,
     })
 }
 

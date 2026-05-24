@@ -11,6 +11,7 @@ from benchmark.case import BenchCase
 from benchmark.constants import FormatName, OpName, TOLERANCE, op_compat
 from benchmark.log import format_elapsed, log
 from benchmark.source import reduce_source_op
+from benchmark.spec import verify_case
 from benchmark.tet import run_convert, run_tet_op
 from generate.constants import FIXTURES_ROOT
 from generate.dispatch import run_target
@@ -89,6 +90,11 @@ def bench_case(
 ) -> BenchRow:
     log(f"=== {case.format} / {case.tier} (~{case.logical_gib} GiB) ops={','.join(ops)} ===")
     generate_for_bench(case.gen_target, case)
+    try:
+        verify_case(case)
+        log(f"{case.format}/{case.tier}: workload verified against benchmark/spec.json")
+    except Exception as exc:  # noqa: BLE001
+        log(f"warning: {case.format}/{case.tier} spec verify failed — {exc}")
 
     op_results: dict[OpName, OpResult] = {}
 

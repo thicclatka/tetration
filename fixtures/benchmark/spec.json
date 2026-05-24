@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic large/extra_large bench workload (RNG seeds + geometry; no blob committed).",
+  "generator": {
+    "chunk_elems": 16777216,
+    "float32_bytes": 4,
+    "large_per_format_bytes": 7158278826,
+    "extra_large_logical_bytes": 21474836480,
+    "zarr_compressors": null,
+    "seeds": {
+      "large-h5": 1,
+      "large-netcdf": 2,
+      "large-zarr": 3,
+      "extra-large-h5": 11,
+      "extra-large-netcdf": 12,
+      "extra-large-zarr": 13
+    }
+  },
+  "cases": {
+    "h5/large": { "element_count": 1789569706, "mean": 0.5, "mean_tolerance": 0.001 },
+    "h5/extra": { "element_count": 5368709120, "mean": 0.5, "mean_tolerance": 0.001 },
+    "netcdf/large": { "element_count": 1789569706, "mean": 0.5, "mean_tolerance": 0.001 },
+    "netcdf/extra": { "element_count": 5368709120, "mean": 0.5, "mean_tolerance": 0.001 },
+    "zarr/large": { "element_count": 1789569706, "mean": 0.5, "mean_tolerance": 0.001 },
+    "zarr/extra": { "element_count": 5368709120, "mean": 0.5, "mean_tolerance": 0.001 }
+  }
+}

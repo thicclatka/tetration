@@ -1,5 +1,6 @@
 //! Shared reduction kinds and single-pass accumulators.
 
+use crate::query::fold::variance_simd;
 use crate::query::types::{Operation, OperationPreviewFields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,43 @@ impl WelfordAccum {
         self.m2 += other.m2 + delta * delta * n_a * n_b / n;
         self.count_f = n;
     }
+
+    /// Merge population variance stats for a contiguous `f32` slice (slab / chunk bulk path).
+    pub fn merge_f32_slice(&mut self, vals: &[f32]) {
+        if vals.is_empty() {
+            return;
+        }
+        let (slab_sum, slab_sumsq) = variance_simd::f32_sum_sumsq(vals);
+        let n_f = vals.len() as f64;
+        let slab_mean = slab_sum / n_f;
+        let slab_m2 = slab_sumsq - n_f * slab_mean * slab_mean;
+        self.merge_from(&Self {
+            count_f: n_f,
+            mean: slab_mean,
+            m2: slab_m2,
+        });
+    }
+
+    /// Like [`Self::merge_f32_slice`] for an `f64` slice.
+    pub fn merge_f64_slice(&mut self, vals: &[f64]) {
+        if vals.is_empty() {
+            return;
+        }
+        let mut slab_sum = 0.0f64;
+        let mut slab_sumsq = 0.0f64;
+        for &v in vals {
+            slab_sum += v;
+            slab_sumsq += v * v;
+        }
+        let n_f = vals.len() as f64;
+        let slab_mean = slab_sum / n_f;
+        let slab_m2 = slab_sumsq - n_f * slab_mean * slab_mean;
+        self.merge_from(&Self {
+            count_f: n_f,
+            mean: slab_mean,
+            m2: slab_m2,
+        });
+    }
 }
 
 /// Single-pass accumulator for one scalar or partial-reduction cell.
@@ -175,12 +213,13 @@ impl ValueAccum {
                 }
             }
             ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let mut slab_sum = 0.0f64;
                 for &v in vals {
-                    let vd = f64::from(v);
-                    self.count += 1;
-                    self.sum += vd;
-                    self.welford.push(vd);
+                    slab_sum += f64::from(v);
                 }
+                self.sum += slab_sum;
+                self.welford.merge_f32_slice(vals);
             }
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
@@ -249,29 +288,29 @@ impl ValueAccum {
     /// Like [`Self::push_f32_le_bytes`] but promotes each value to `f64` first.
     pub fn push_f64_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
         debug_assert_eq!(raw.len() % 8, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[f64] = bytemuck::cast_slice(raw);
         match kind {
             ReductionKind::Count => {
-                self.count += raw.len() / 8;
+                self.count += vals.len();
             }
-            ReductionKind::Sum => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                for &v in vals {
                     self.sum += v;
                 }
             }
-            ReductionKind::Mean | ReductionKind::Var | ReductionKind::Std => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
-                    self.sum += v;
-                    self.welford.push(v);
-                }
+            ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let slab_sum: f64 = vals.iter().sum();
+                self.sum += slab_sum;
+                self.welford.merge_f64_slice(vals);
             }
             ReductionKind::Min | ReductionKind::Max => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
+                self.count += vals.len();
+                for &v in vals {
                     if self.have_min_max {
                         self.min = self.min.min(v);
                         self.max = self.max.max(v);
@@ -283,38 +322,46 @@ impl ValueAccum {
                 }
             }
             ReductionKind::Product => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
+                self.count += vals.len();
+                for &v in vals {
                     self.product *= v;
                 }
             }
             ReductionKind::NormL1 => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
+                self.count += vals.len();
+                for &v in vals {
                     self.norm_l1 += v.abs();
                 }
             }
             ReductionKind::NormL2 => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
+                self.count += vals.len();
+                for &v in vals {
                     self.norm_l2_sq += v * v;
                 }
             }
             ReductionKind::AllFinite => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
-                    self.count += 1;
-                    self.all_finite &= v.is_finite();
+                self.count += vals.len();
+                if !self.all_finite {
+                    return;
+                }
+                for &v in vals {
+                    if !v.is_finite() {
+                        self.all_finite = false;
+                        return;
+                    }
                 }
             }
             ReductionKind::AnyNan => {
-                for chunk in raw.chunks_exact(8) {
-                    let v = f64::from_le_bytes(chunk.try_into().expect("8 bytes"));
+                if self.any_nan {
+                    self.count += vals.len();
+                    return;
+                }
+                for &v in vals {
                     self.count += 1;
-                    self.any_nan |= v.is_nan();
+                    if v.is_nan() {
+                        self.any_nan = true;
+                        return;
+                    }
                 }
             }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
@@ -552,6 +599,48 @@ impl ScalarReductionResult {
             argmin_index: None,
             argmax_index: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReductionKind, ValueAccum, WelfordAccum};
+
+    fn var_from(vals: &[f32]) -> f64 {
+        let mut acc = ValueAccum::default();
+        acc.push_f32_le_bytes(bytemuck::cast_slice(vals), ReductionKind::Var);
+        acc.finish_f64(ReductionKind::Var)
+    }
+
+    fn var_elementwise(vals: &[f32]) -> f64 {
+        let mut w = WelfordAccum::default();
+        for &v in vals {
+            w.push(f64::from(v));
+        }
+        w.population_variance()
+    }
+
+    #[test]
+    fn bulk_f32_var_matches_elementwise_welford() {
+        let vals: Vec<f32> = (0..10_000).map(|i| (i as f32) * 0.001).collect();
+        let bulk = var_from(&vals);
+        let elem = var_elementwise(&vals);
+        assert!((bulk - elem).abs() < 1e-6, "bulk={bulk} elem={elem}");
+    }
+
+    #[test]
+    fn bulk_f64_var_matches_elementwise_welford() {
+        let vals: Vec<f64> = (0..10_000).map(|i| i as f64 * 0.001).collect();
+        let mut bulk = ValueAccum::default();
+        bulk.push_f64_le_bytes(bytemuck::cast_slice(&vals), ReductionKind::Var);
+        let bulk_v = bulk.finish_f64(ReductionKind::Var);
+
+        let mut w = WelfordAccum::default();
+        for &v in &vals {
+            w.push(v);
+        }
+        let elem = w.population_variance();
+        assert!((bulk_v - elem).abs() < 1e-9, "bulk={bulk_v} elem={elem}");
     }
 }
 

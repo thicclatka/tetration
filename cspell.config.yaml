@@ -8,15 +8,21 @@ words:
   - bytemuck
   - cdylib
   - CUDA
+  - cvtps
+  - ddof
   - DTYPE
   - elems
   - embedders
   - hyperslab
   - hyperslabs
   - indicatif
+  - inmem
+  - loadu
   - maturin
+  - mdformat
   - memcpy
   - metno
+  - movehl
   - multichunk
   - ndim
   - nelem
@@ -24,11 +30,17 @@ words:
   - reprojection
   - rkyv
   - rustdoc
+  - storeu
+  - sumsq
   - TETR
   - Tetration
   - thiserror
   - TIDX
   - trunc
+  - vaddvq
+  - vcvt
+  - vget
+  - vmulq
   - zstd
 ignoreWords: []
 import: []

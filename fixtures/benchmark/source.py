@@ -122,15 +122,18 @@ def reduce_source_op(case: BenchCase, op: OpName) -> tuple[float, float]:
         root = zarr.open_group(str(case.src), mode="r")
         arr = root["data"]
         length = int(arr.shape[0])
+        chunk_elems = int(arr.chunks[0])
+        chunk_mib = chunk_elems * 4 // (1024 * 1024)
 
         def compute() -> float:
             stats = RunningStats()
-            for start, end in iter_slabs(length):
+            for start in range(0, length, chunk_elems):
+                end = min(start + chunk_elems, length)
                 stats.push_slab(arr[start:end])
             return stats.finish(op)
 
         return time_warm_logged(
-            f"source {op} ({slab_mib} MiB slabs, zarr)",
+            f"source {op} ({chunk_mib} MiB zarr chunks, raw)",
             compute,
         )
 

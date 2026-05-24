@@ -18,6 +18,8 @@ def run_benchmark(
     ops: list[str] | None = None,
     skip_ops: bool = False,
     jobs: int | None = None,
+    run_id: str | None = None,
+    no_clobber: bool = False,
 ) -> int:
     fmt_list: list[FormatName] = list(formats or DEFAULT_FORMATS)
     op_list = parse_ops(ops)
@@ -32,5 +34,12 @@ def run_benchmark(
             rows.append(bench_case(tet, case, jobs=job_count, ops=op_list, skip_ops=skip_ops))
         cleanup_format_tree(fmt)
 
-    write_report(tet=tet, jobs=job_count, ops=op_list, skip_ops=skip_ops, rows=rows)
+    write_report(
+        jobs=job_count,
+        ops=op_list,
+        skip_ops=skip_ops,
+        rows=rows,
+        run_id=run_id,
+        no_clobber=no_clobber,
+    )
     return 0

@@ -25,7 +25,7 @@ from generate.constants import (
     LARGE_ZARR,
     SEED_LARGE,
 )
-from generate.util import iter_slabs, progress, slab_count
+from generate.util import ZARR_RAW_ARRAY_KWARGS, iter_slabs, progress, slab_count
 
 
 def write_h5_f32_slabs(
@@ -143,6 +143,7 @@ def write_zarr_f32_slabs(
         shape=shape,
         chunks=(CHUNK_ELEMS,),
         dtype="f4",
+        **ZARR_RAW_ARRAY_KWARGS,
     )
     for start, end in progress(
         iter_slabs(total),
