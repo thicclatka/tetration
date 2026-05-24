@@ -9,9 +9,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tetration::{
     ConvertProgress, ConvertReport, HistorySettings, QueryDocument, QueryOutputFormat,
     SpillPathAllowlist, append_cli_query_history, clear_cli_query_history,
-    convert_to_tet_with_progress, detect_convert_format, format_query_response,
-    get_cli_query_history_entry, mmap_file_read, parse_query_json, plan_query_empty,
-    plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
+    convert_to_tet_with_progress, detect_convert_format, format_history_list_json,
+    format_history_list_text, format_query_response, get_cli_query_history_entry, mmap_file_read,
+    parse_query_json, plan_query_empty, plan_query_with_tet_mmap_ex, read_tet_summary_v1,
+    validate_query,
 };
 
 #[derive(Parser)]
@@ -89,14 +90,17 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum HistoryCmd {
-    /// List recent queries (default). Use `--list` for every retained row.
+    /// List recent queries (default). Use `--all` for every retained row.
     List {
-        /// Max rows to print (ignored when `--list` is set).
+        /// Max rows to print (ignored when `--all` is set).
         #[arg(short = 'n', long, default_value_t = HistorySettings::default().cli_query_max)]
         limit: usize,
         /// Print all retained rows (up to `TET_QUERY_HISTORY_MAX` on disk).
         #[arg(long)]
-        list: bool,
+        all: bool,
+        /// Pretty JSON (full entries); default is a compact table.
+        #[arg(long)]
+        json: bool,
     },
     /// Re-run a saved query (`N`: 1 = newest, same order as `list`).
     Run {
@@ -305,18 +309,17 @@ fn run_convert(input: &Path, output: &Path, jobs: usize) -> Result<(), String> {
     finish_convert_report(&pb, label, &report)
 }
 
-fn run_history_list(limit: usize, all: bool) -> Result<(), String> {
+fn run_history_list(limit: usize, all: bool, json: bool) -> Result<(), String> {
     let settings = HistorySettings::from_env();
     let path = settings.path();
     let entries = settings.list(limit, all).map_err(|e| e.to_string())?;
-    let out = serde_json::json!({
-        "path": path.as_ref().map(|p| p.display().to_string()),
-        "settings": settings,
-        "shown": entries.len(),
-        "entries": entries,
-    });
-    let pretty = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-    println!("{pretty}");
+    let path_ref = path.as_deref();
+    let out = if json {
+        format_history_list_json(&entries, path_ref, &settings)?
+    } else {
+        format_history_list_text(&entries, path_ref, &settings)
+    };
+    print!("{out}");
     Ok(())
 }
 
@@ -329,9 +332,9 @@ fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), String> {
     match cmd {
         None => {
             let limit = HistorySettings::from_env().cli_query_max;
-            run_history_list(limit, false)
+            run_history_list(limit, false, false)
         }
-        Some(HistoryCmd::List { limit, list }) => run_history_list(limit, list),
+        Some(HistoryCmd::List { limit, all, json }) => run_history_list(limit, all, json),
         Some(HistoryCmd::Run {
             index,
             tet,

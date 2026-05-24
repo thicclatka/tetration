@@ -56,8 +56,8 @@ Compact handoff for humans and agents: what exists today, how to verify it, and 
 | `tet query … --format full\|json\|stats\|quiet` | stdout presentation via **`format_query_response`**; default **`full`**. **`-q`** = **`quiet`** (one line). Library **`QueryResponse`** unchanged.           |
 | `tet query … --preview N`                       | Preview cap when **`-x`** (alias **`--preview-f32`**).                                                                                                       |
 | `tet query … --spill-allow DIR`                 | Extra spill roots (repeatable; needs **`-x`** + **`-t`**).                                                                                                   |
-| `tet history` / `history list`                  | List recent queries (`-n`, `--list` = all retained); **`TET_QUERY_HISTORY_MAX`** (default 10) rotates on append.                                             |
-| `tet history run N`                             | Re-run saved row (**1** = newest); **`-t`** / **`-x`** / **`--plan`** override; stdout from current **`--format`** / **`-q`**.                             |
+| `tet history` / `history list`                  | Compact table (`-n`, `--all`); **`--json`** for full dump; **`TET_QUERY_HISTORY_MAX`** rotates on append.                                                  |
+| `tet history run N`                             | Re-run saved row (**1** = newest); **`-t`** / **`-x`** / **`--plan`** override; stdout from current **`--format`** / **`-q`**.                               |
 | `tet history --clear`                           | Remove `query_history.jsonl` (also `history list --clear`).                                                                                                  |
 | `tet convert <input> <output.tet> [--jobs N]`   | HDF5 / NetCDF / Zarr v3 directory → `.tet` (extension or sniff; **`--jobs 0`** = auto).                                                                      |
 

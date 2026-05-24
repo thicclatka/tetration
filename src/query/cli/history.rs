@@ -1,5 +1,6 @@
 //! CLI-only recent query log (platform cache file, not stored in `.tet`).
 
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -7,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::query::engine::spill_policy::platform_tetration_cache_dir;
-use crate::query::types::QueryDocument;
+use crate::query::types::{AxisSlice, Operation, QueryDocument};
 
 /// CLI query history limits and file naming.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +24,7 @@ pub struct HistorySettings {
 impl Default for HistorySettings {
     fn default() -> Self {
         Self {
-            cli_query_max: 10,
+            cli_query_max: 50,
             history_max_cap: 10_000,
             history_file_name: "query_history.jsonl".to_owned(),
         }
@@ -85,6 +86,12 @@ impl HistorySettings {
         };
 
         let mut entries = read_entries(&path)?;
+        if let Some(last) = entries.last_mut()
+            && entries_equivalent(last, &entry)
+        {
+            last.at = entry.at;
+            return write_entries(&path, &entries);
+        }
         entries.push(entry);
         if entries.len() > self.cli_query_max {
             let drop = entries.len() - self.cli_query_max;
@@ -217,6 +224,132 @@ pub fn get_cli_query_history_entry(index: usize) -> io::Result<CliQueryHistoryEn
 /// Clear using [`HistorySettings::from_env`].
 pub fn clear_cli_query_history() -> io::Result<()> {
     HistorySettings::from_env().clear()
+}
+
+/// Compact table for `tet history list` (human default).
+#[must_use]
+pub fn format_history_list_text(
+    entries: &[CliQueryHistoryEntry],
+    path: Option<&Path>,
+    settings: &HistorySettings,
+) -> String {
+    let mut out = String::new();
+    if let Some(path) = path {
+        let _ = writeln!(out, "file: {}", path.display());
+    }
+    let _ = writeln!(
+        out,
+        "shown: {}  keep: {} on disk",
+        entries.len(),
+        settings.cli_query_max
+    );
+    if entries.is_empty() {
+        out.push_str("(empty — run `tet query … -t file.tet -x` to record)\n");
+        return out;
+    }
+    out.push('\n');
+    let _ = writeln!(
+        out,
+        "{:>3}  {:^1}  {:<18}  {:<10}  {:<8}  tet",
+        "#", "x", "dataset", "op", "select"
+    );
+    for (i, e) in entries.iter().enumerate() {
+        let mode = if e.execute { "x" } else { "p" };
+        let op = operation_label(e.query.operation.as_ref());
+        let sel = selection_label(e.query.selection.as_ref());
+        let tet = e
+            .tet
+            .as_deref()
+            .map(|p| {
+                Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(p)
+            })
+            .unwrap_or("-");
+        let _ = writeln!(
+            out,
+            "{:>3}  {:^1}  {:<18}  {:<10}  {:<8}  {}",
+            i + 1,
+            mode,
+            truncate_field(&e.query.dataset, 18),
+            op,
+            sel,
+            tet
+        );
+    }
+    out.push_str("\nreplay: tet history run <#>  (1 = newest)\n");
+    out
+}
+
+/// Full JSON envelope for `tet history list --json`.
+pub fn format_history_list_json(
+    entries: &[CliQueryHistoryEntry],
+    path: Option<&Path>,
+    settings: &HistorySettings,
+) -> Result<String, String> {
+    let out = serde_json::json!({
+        "path": path.map(|p| p.display().to_string()),
+        "settings": settings,
+        "shown": entries.len(),
+        "entries": entries,
+    });
+    serde_json::to_string_pretty(&out).map_err(|e| e.to_string())
+}
+
+/// Same `.tet`, execute flag, and query document as an existing row (consecutive dedup).
+fn entries_equivalent(a: &CliQueryHistoryEntry, b: &CliQueryHistoryEntry) -> bool {
+    a.tet == b.tet && a.execute == b.execute && history_queries_equal(&a.query, &b.query)
+}
+
+fn history_queries_equal(a: &QueryDocument, b: &QueryDocument) -> bool {
+    match (serde_json::to_string(a), serde_json::to_string(b)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn operation_label(op: Option<&Operation>) -> &'static str {
+    match op {
+        None => "-",
+        Some(Operation::Sum { .. }) => "sum",
+        Some(Operation::Mean { .. }) => "mean",
+        Some(Operation::Min { .. }) => "min",
+        Some(Operation::Max { .. }) => "max",
+        Some(Operation::Count { .. }) => "count",
+        Some(Operation::Var { .. }) => "var",
+        Some(Operation::Std { .. }) => "std",
+        Some(Operation::Product { .. }) => "product",
+        Some(Operation::NormL1 { .. }) => "norm_l1",
+        Some(Operation::NormL2 { .. }) => "norm_l2",
+        Some(Operation::AllFinite { .. }) => "all_finite",
+        Some(Operation::AnyNan { .. }) => "any_nan",
+        Some(Operation::ArgMin { .. }) => "arg_min",
+        Some(Operation::ArgMax { .. }) => "arg_max",
+        Some(Operation::Median { .. }) => "median",
+        Some(Operation::Quantile { .. }) => "quantile",
+        Some(Operation::Histogram { .. }) => "histogram",
+    }
+}
+
+fn selection_label(sel: Option<&Vec<AxisSlice>>) -> &'static str {
+    match sel {
+        None => "full",
+        Some(v) if v.is_empty() => "full",
+        Some(v) if v.iter().any(|s| s.step.is_some_and(|st| st > 1)) => "strided",
+        Some(_) => "subset",
+    }
+}
+
+fn truncate_field(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_owned();
+    }
+    let mut end = max.saturating_sub(1);
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 fn read_entries(path: &Path) -> io::Result<Vec<CliQueryHistoryEntry>> {

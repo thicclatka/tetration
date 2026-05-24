@@ -5,7 +5,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use tetration::{
     HistorySettings, append_cli_query_history, clear_cli_query_history, cli_query_history_max,
-    get_cli_query_history_entry, list_cli_query_history, parse_query_json, validate_query,
+    format_history_list_text, get_cli_query_history_entry, list_cli_query_history,
+    parse_query_json, validate_query,
 };
 
 static HISTORY_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -42,7 +43,7 @@ fn sample_query_json() -> &'static str {
 fn history_settings_default_and_env() {
     with_history_file(|| {
         let d = HistorySettings::default();
-        assert_eq!(d.cli_query_max, 10);
+        assert_eq!(d.cli_query_max, 50);
         assert_eq!(d.history_max_cap, 10_000);
         assert_eq!(d.history_file_name, "query_history.jsonl");
         unsafe {
@@ -57,16 +58,34 @@ fn history_settings_default_and_env() {
 #[test]
 fn cli_query_history_append_trim_and_list() {
     with_history_file(|| {
+        unsafe {
+            env::set_var("TET_QUERY_HISTORY_MAX", "10");
+        }
+        let max = cli_query_history_max();
+        assert_eq!(max, 10);
         let doc = parse_query_json(sample_query_json()).unwrap();
         validate_query(&doc).unwrap();
         for i in 0..12 {
             append_cli_query_history(&doc, Some(&format!("/data/{i}.tet")), i % 2 == 0).unwrap();
         }
-        let max = HistorySettings::default().cli_query_max;
         let listed = list_cli_query_history(max, false).unwrap();
         assert_eq!(listed.len(), max);
         assert_eq!(listed[0].tet.as_deref(), Some("/data/11.tet"));
         assert_eq!(listed[9].tet.as_deref(), Some("/data/2.tet"));
+    });
+}
+
+#[test]
+fn cli_query_history_dedupes_consecutive_duplicate() {
+    with_history_file(|| {
+        let doc = parse_query_json(sample_query_json()).unwrap();
+        append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
+        append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
+        append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
+        let listed = list_cli_query_history(10, true).unwrap();
+        assert_eq!(listed.len(), 1);
+        append_cli_query_history(&doc, Some("b.tet"), true).unwrap();
+        assert_eq!(list_cli_query_history(10, true).unwrap().len(), 2);
     });
 }
 
@@ -89,11 +108,25 @@ fn cli_query_history_max_env_trims() {
 }
 
 #[test]
+fn format_history_list_text_shows_index_and_dataset() {
+    with_history_file(|| {
+        let doc = parse_query_json(sample_query_json()).unwrap();
+        append_cli_query_history(&doc, Some("target/demo/x.tet"), true).unwrap();
+        let entries = list_cli_query_history(10, false).unwrap();
+        let text = format_history_list_text(&entries, None, &HistorySettings::default());
+        assert!(text.contains("  1 "));
+        assert!(text.contains("temperature"));
+        assert!(text.contains("replay:"));
+        assert!(!text.contains("\"entries\""));
+    });
+}
+
+#[test]
 fn cli_query_history_list_all_flag() {
     with_history_file(|| {
         let doc = parse_query_json(sample_query_json()).unwrap();
-        for _ in 0..5 {
-            append_cli_query_history(&doc, None, false).unwrap();
+        for i in 0..5 {
+            append_cli_query_history(&doc, Some(&format!("/data/{i}.tet")), false).unwrap();
         }
         assert_eq!(list_cli_query_history(2, false).unwrap().len(), 2);
         assert_eq!(list_cli_query_history(2, true).unwrap().len(), 5);

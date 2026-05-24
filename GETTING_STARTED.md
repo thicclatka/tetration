@@ -99,7 +99,7 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 ### Phase 6 focus (next)
 
-- [x] **History list / run** — `tet history list` (default), `--list` for all retained rows; `tet history run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
+- [x] **History list / run** — `tet history list` (default), `--all` for all retained rows; `tet history run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
 - [ ] **History extras** — search/filter, named bookmarks; keep history out of `.tet` files.
 - [ ] **Query document v2** — evaluate **TOML** or a lighter **JSON profile** (fewer nested brackets, line-oriented selection/operation blocks) alongside v1 JSON; shared validation → same `QueryDocument` internally.
 - [ ] **CLI polish** — consistent error messages, dataset discovery hints on catalog miss, optional interactive plan preview before **`-x`**.
@@ -198,7 +198,9 @@ Recent **`tet query`** documents are stored under the platform cache (`…/tetra
 ```bash
 tet query q.json -t data.tet -x                # appends on success (best-effort)
 tet history                                     # same as `history list`
-tet history list --list                         # every retained row
+tet history list                              # compact table (default)
+tet history list --all                        # every retained row in table
+tet history list --json                       # full JSON (scripts)
 tet history run 1 -q                            # re-run newest; today's stdout flags
 tet history list --clear                        # remove file
 TET_QUERY_HISTORY_MAX=50 tet query …            # keep up to 50 rows on disk
