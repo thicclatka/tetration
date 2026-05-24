@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::query::types::TetError;
 
-/// Allowed directory roots for `output.preferred.spill_array` targets.
+/// Allowed directory roots for query JSON `spill` paths.
 ///
 /// Default policy (see [`Self::default_for_tet`]): `.tet` parent directory plus OS cache/scratch
 /// locations. Relative spill handles resolve against the `.tet` parent directory.

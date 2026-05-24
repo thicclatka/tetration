@@ -7,9 +7,16 @@ use crate::catalog::{
     chunk_coords_intersecting_strided, read_tet_summary_v1, tensor_bytes_from_shape,
 };
 use crate::query::types::{
-    CHUNK_TOUCH_POLICY, DatasetResolution, QueryDocument, QueryExecutionPreview, QueryResponse,
-    ReadPlan, TetError,
+    CHUNK_TOUCH_POLICY, DatasetResolution, OutputHint, QueryDocument, QueryExecutionPreview,
+    QueryResponse, ReadPlan, TetError,
 };
+
+fn query_requests_spill(doc: &QueryDocument) -> bool {
+    matches!(
+        doc.output.as_ref().and_then(|o| o.preferred.as_ref()),
+        Some(OutputHint::SpillArray { .. })
+    )
+}
 
 use crate::query::engine::budget::ExecutionBudget;
 use crate::query::engine::operations::build_execution_preview;
@@ -207,9 +214,9 @@ fn matched_dataset_execution(
     let Some(limit) = ctx.raw_f32_preview_max else {
         return Ok(None);
     };
-    if limit == 0 && ctx.doc.operation.is_none() {
+    if limit == 0 && ctx.doc.operation.is_none() && !query_requests_spill(ctx.doc) {
         return Err(TetError::Validation(
-            "preview limit 0 without `operation` would attach an empty execution block; omit `--execute` or use a positive `--preview-f32`".into(),
+            "preview limit 0 without `operation` or `spill` would attach an empty execution block; omit `--execute`, set `spill`, or use a positive `--preview`".into(),
         ));
     }
     let default_spill;

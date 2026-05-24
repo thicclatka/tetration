@@ -1,4 +1,8 @@
 //! Shared `.tet` test fixtures (integration tests only).
+//!
+//! Each integration test crate (`tests/query.rs`, `tests/catalog.rs`, …) compiles this file
+//! separately, so helpers used only in one crate trigger `dead_code` warnings in the others.
+#![allow(dead_code)]
 
 use std::path::Path;
 
@@ -9,7 +13,6 @@ use tetration::{
 };
 
 /// Patch helpers for corrupting chunk index entries in on-disk fixtures.
-#[allow(dead_code)]
 pub mod index_patch {
     use super::*;
 
@@ -166,7 +169,6 @@ fn write_multichunk_2x3_f64(path: &Path, dataset_name: &str, chunk_codec: u32, d
 }
 
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i32` file (values 1..6).
-#[allow(dead_code)]
 pub fn write_multichunk_2x3_i32_tiles(path: &Path, dataset_name: &str) {
     write_multichunk_2x3(
         path,
@@ -178,7 +180,6 @@ pub fn write_multichunk_2x3_i32_tiles(path: &Path, dataset_name: &str) {
 }
 
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i64` file (values 1..6).
-#[allow(dead_code)]
 pub fn write_multichunk_2x3_i64_tiles(path: &Path, dataset_name: &str) {
     write_multichunk_2x3(
         path,
@@ -195,7 +196,6 @@ pub fn write_multichunk_2x3_zstd(path: &Path, dataset_name: &str, data: &[u8]) {
 }
 
 /// Same geometry as [`write_multichunk_2x3_tiles`], with per-file execution settings in the index header.
-#[allow(dead_code)]
 pub fn write_multichunk_2x3_with_execution(
     path: &Path,
     dataset_name: &str,
@@ -218,7 +218,6 @@ pub fn write_multichunk_2x3_with_execution(
 
 /// Same geometry as [`write_multichunk_2x3_tiles`], but chunk payloads are **zstd**-compressed
 /// (all-zero `f32` tensor so frames shrink on disk).
-#[allow(dead_code)]
 pub fn write_multichunk_2x3_zero_zstd(path: &Path, dataset_name: &str) {
     write_multichunk_2x3_zstd(path, dataset_name, &vec![0u8; 24]);
 }

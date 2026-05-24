@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+// `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, `spill: "…"`, …).
+
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -19,8 +21,8 @@ pub struct AxisSlice {
 /// Each variant carries `axes`: decimal dimension indices (`"0"`, `"1"`, …) to reduce along.
 /// An empty `axes` list reduces all elements to a scalar. Tier-A/B ops stream over chunks;
 /// tier-C ops (`median`, `quantile`, `histogram`) may materialize the full logical tensor.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Operation {
     Sum { axes: Vec<String> },
     Mean { axes: Vec<String> },
@@ -86,25 +88,19 @@ pub struct OutputHints {
 }
 
 /// Top-level JSON query document accepted by the engine and `tet query`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct QueryDocument {
     /// Optional layout version hint (currently informational).
-    #[serde(default)]
     pub layout_version: Option<u32>,
     /// Dataset name as stored in the `.tet` catalog.
     pub dataset: String,
     /// Per-axis half-open slices; omitted means the full dataset extent on each axis.
-    #[serde(default)]
     pub selection: Option<Vec<AxisSlice>>,
     /// Optional reduction over the logical selection.
-    #[serde(default)]
     pub operation: Option<Operation>,
     /// Optional output routing hints.
-    #[serde(default)]
     pub output: Option<OutputHints>,
     /// Host-side memory budget overrides for execution.
-    #[serde(default)]
     pub execution: Option<ExecutionHints>,
 }
 

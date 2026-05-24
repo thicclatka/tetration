@@ -4,6 +4,8 @@ dictionaryDefinitions: []
 dictionaries: []
 words:
   - Accum
+  - argmax
+  - argmin
   - badzstd
   - bytemuck
   - cdylib
@@ -27,6 +29,7 @@ words:
   - ndim
   - nelem
   - proptest
+  - qhist
   - reprojection
   - rkyv
   - rustdoc
