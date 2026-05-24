@@ -37,18 +37,18 @@ pub use layout::{
 #[doc(hidden)]
 pub use query::TempSpillFile;
 pub use query::{
-    AxisSlice, CHUNK_TOUCH_POLICY, CLI_QUERY_HISTORY_MAX, ChunkTouchPolicy, CliQueryHistoryEntry,
+    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, CliQueryHistoryEntry,
     DEFAULT_MEMORY_BUDGET_BYTES, DatasetResolution, ExecutionBudget, ExecutionHints,
-    MaterializeReadPlanF32IntoOutcome, MemoryStrategy, Operation, OutputHint, OutputHints,
-    PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryLimits, QueryOutputFormat,
-    QueryResponse, ReadPlan, SpillPathAllowlist, append_cli_query_history, clear_cli_query_history,
-    cli_query_history_path, format_query_response, list_cli_query_history,
-    materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
-    materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
-    materialize_read_plan_f64_le, materialize_read_plan_i32_le, materialize_read_plan_i64_le,
-    parse_query_json, plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex,
-    planned_chunk_mmap_slices, spill_read_plan_f32_le, spill_read_plan_i32_le,
-    spill_read_plan_i64_le, validate_query,
+    HistorySettings, MaterializeReadPlanF32IntoOutcome, MemoryStrategy, Operation, OutputHint,
+    OutputHints, PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryLimits,
+    QueryOutputFormat, QueryResponse, ReadPlan, SpillPathAllowlist, append_cli_query_history,
+    clear_cli_query_history, cli_query_history_max, cli_query_history_path, format_query_response,
+    get_cli_query_history_entry, list_cli_query_history, materialize_read_plan_f32_le,
+    materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
+    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le,
+    materialize_read_plan_i32_le, materialize_read_plan_i64_le, parse_query_json, plan_query_empty,
+    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, planned_chunk_mmap_slices,
+    spill_read_plan_f32_le, spill_read_plan_i32_le, spill_read_plan_i64_le, validate_query,
 };
 #[doc(hidden)]
 pub use utils::f32_le::{f32_count, read_f32_le_at, try_cast_f32_le};

@@ -363,7 +363,7 @@ These match the product vision but belong **beside** the reduction enum:
 | **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                   |
 | **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.      |
 | **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                      |
-| **CLI query history**                     | **Done** — platform cache JSONL (`tet history`); `.tet` footer history is **write provenance only**. |
+| **CLI query history**                     | **Done** — platform cache JSONL (`tet history list` / `run`); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer is write provenance only. |
 
 ### Non-goals for the JSON `operation` field
 

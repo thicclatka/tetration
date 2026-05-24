@@ -7,11 +7,11 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tetration::{
-    CLI_QUERY_HISTORY_MAX, ConvertProgress, ConvertReport, QueryOutputFormat, SpillPathAllowlist,
-    append_cli_query_history, clear_cli_query_history, convert_to_tet_with_progress,
-    detect_convert_format, format_query_response, list_cli_query_history, mmap_file_read,
-    parse_query_json, plan_query_empty, plan_query_with_tet_mmap_ex, read_tet_summary_v1,
-    validate_query,
+    ConvertProgress, ConvertReport, HistorySettings, QueryDocument, QueryOutputFormat,
+    SpillPathAllowlist, append_cli_query_history, clear_cli_query_history,
+    convert_to_tet_with_progress, detect_convert_format, format_query_response,
+    get_cli_query_history_entry, mmap_file_read, parse_query_json, plan_query_empty,
+    plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
 };
 
 #[derive(Parser)]
@@ -76,14 +76,50 @@ enum Commands {
         #[arg(long = "jobs", default_value_t = 0)]
         jobs: usize,
     },
-    /// List or clear recent `tet query` documents (platform cache; not stored in `.tet`).
+    /// Recent `tet query` log (platform cache; not in `.tet`). Default: `list`.
+    #[command(alias = "hist")]
     History {
-        /// Max rows to print (default 10; file retains [`CLI_QUERY_HISTORY_MAX`]).
-        #[arg(short = 'n', long, default_value_t = CLI_QUERY_HISTORY_MAX)]
-        limit: usize,
-        /// Remove the history file.
-        #[arg(long)]
+        #[command(subcommand)]
+        cmd: Option<HistoryCmd>,
+        /// Remove the history file (`list --clear` or bare `tet history --clear`).
+        #[arg(long, global = true)]
         clear: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum HistoryCmd {
+    /// List recent queries (default). Use `--list` for every retained row.
+    List {
+        /// Max rows to print (ignored when `--list` is set).
+        #[arg(short = 'n', long, default_value_t = HistorySettings::default().cli_query_max)]
+        limit: usize,
+        /// Print all retained rows (up to `TET_QUERY_HISTORY_MAX` on disk).
+        #[arg(long)]
+        list: bool,
+    },
+    /// Re-run a saved query (`N`: 1 = newest, same order as `list`).
+    Run {
+        /// History index (1 = newest).
+        #[arg(value_name = "N")]
+        index: usize,
+        /// Override `.tet` from the saved row.
+        #[arg(short = 't', long, value_name = "PATH")]
+        tet: Option<PathBuf>,
+        /// Force execute (needs `-t` on the row or this flag).
+        #[arg(short = 'x', long, conflicts_with = "plan")]
+        execute: bool,
+        /// Plan only (ignore saved execute).
+        #[arg(long, conflicts_with = "execute")]
+        plan: bool,
+        #[arg(long, value_enum, default_value_t = QueryStdoutFormat::Full, conflicts_with = "quiet")]
+        format: QueryStdoutFormat,
+        #[arg(short = 'q', long, conflicts_with = "format")]
+        quiet: bool,
+        #[arg(long, visible_alias = "preview-f32", value_name = "N")]
+        preview: Option<usize>,
+        #[arg(long)]
+        spill_allow: Vec<PathBuf>,
     },
 }
 
@@ -114,6 +150,24 @@ impl From<QueryStdoutFormat> for QueryOutputFormat {
 
 /// Default preview cap when `--preview` is omitted.
 const QUERY_PREVIEW_DEFAULT: usize = 64;
+
+struct QueryRunOpts {
+    doc: QueryDocument,
+    tet: Option<PathBuf>,
+    execute: bool,
+    stdout: QueryOutputFormat,
+    preview: Option<usize>,
+    spill_allow: Vec<PathBuf>,
+    record_history: bool,
+}
+
+fn resolve_stdout(quiet: bool, format: QueryStdoutFormat) -> QueryOutputFormat {
+    if quiet {
+        QueryOutputFormat::Quiet
+    } else {
+        format.into()
+    }
+}
 
 fn resolve_execute_preview_limit(
     execute: bool,
@@ -152,6 +206,55 @@ fn read_query_payload(query: Option<&str>) -> io::Result<String> {
     } else {
         Ok(arg.to_owned())
     }
+}
+
+fn run_query(opts: QueryRunOpts) -> Result<(), String> {
+    let QueryRunOpts {
+        doc,
+        tet,
+        execute,
+        stdout,
+        preview,
+        spill_allow,
+        record_history,
+    } = opts;
+    validate_query(&doc).map_err(|e| e.to_string())?;
+    let preview = resolve_execute_preview_limit(execute, stdout, preview)?;
+    let mut spill_owned = None;
+    if execute {
+        let path = tet
+            .as_ref()
+            .ok_or("execute requires -t / --tet (or a saved history row with a .tet path)")?;
+        spill_owned = Some(
+            SpillPathAllowlist::default_for_tet(path, spill_allow).map_err(|e| e.to_string())?,
+        );
+    }
+    let response = if let Some(path) = tet.as_ref() {
+        let path_display = path.display().to_string();
+        let mmap = mmap_file_read(path).map_err(|e| e.to_string())?;
+        plan_query_with_tet_mmap_ex(
+            &doc,
+            Some(path_display.as_str()),
+            &mmap,
+            preview,
+            spill_owned.as_ref(),
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        if execute {
+            return Err("execute requires -t / --tet".into());
+        }
+        plan_query_empty(&doc)
+    };
+    let out = format_query_response(&response, stdout)?;
+    println!("{out}");
+    if record_history {
+        let tet_display = tet.as_ref().map(|p| p.display().to_string());
+        if let Err(e) = append_cli_query_history(&doc, tet_display.as_deref(), execute) {
+            eprintln!("warning: query history not saved: {e}");
+        }
+    }
+    Ok(())
 }
 
 fn finish_convert_report(
@@ -202,6 +305,66 @@ fn run_convert(input: &Path, output: &Path, jobs: usize) -> Result<(), String> {
     finish_convert_report(&pb, label, &report)
 }
 
+fn run_history_list(limit: usize, all: bool) -> Result<(), String> {
+    let settings = HistorySettings::from_env();
+    let path = settings.path();
+    let entries = settings.list(limit, all).map_err(|e| e.to_string())?;
+    let out = serde_json::json!({
+        "path": path.as_ref().map(|p| p.display().to_string()),
+        "settings": settings,
+        "shown": entries.len(),
+        "entries": entries,
+    });
+    let pretty = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
+    println!("{pretty}");
+    Ok(())
+}
+
+fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), String> {
+    if clear {
+        clear_cli_query_history().map_err(|e| e.to_string())?;
+        eprintln!("query history cleared");
+        return Ok(());
+    }
+    match cmd {
+        None => {
+            let limit = HistorySettings::from_env().cli_query_max;
+            run_history_list(limit, false)
+        }
+        Some(HistoryCmd::List { limit, list }) => run_history_list(limit, list),
+        Some(HistoryCmd::Run {
+            index,
+            tet,
+            execute,
+            plan,
+            format,
+            quiet,
+            preview,
+            spill_allow,
+        }) => {
+            let entry = get_cli_query_history_entry(index).map_err(|e| e.to_string())?;
+            let stdout = resolve_stdout(quiet, format);
+            let execute = if plan {
+                false
+            } else if execute {
+                true
+            } else {
+                entry.execute
+            };
+            let tet = tet.or_else(|| entry.tet.map(PathBuf::from));
+            run_query(QueryRunOpts {
+                doc: entry.query,
+                tet,
+                execute,
+                stdout,
+                preview,
+                spill_allow,
+                record_history: true,
+            })
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -235,62 +398,20 @@ fn run(cli: Cli) -> Result<(), String> {
             preview,
             spill_allow,
         } => {
-            let stdout = if quiet {
-                QueryOutputFormat::Quiet
-            } else {
-                format.into()
-            };
-            let preview = resolve_execute_preview_limit(execute, stdout, preview)?;
+            let stdout = resolve_stdout(quiet, format);
             let raw = read_query_payload(query.as_deref()).map_err(|e| e.to_string())?;
             let doc = parse_query_json(raw.trim()).map_err(|e| e.to_string())?;
-            validate_query(&doc).map_err(|e| e.to_string())?;
-            let mut spill_owned = None;
-            if execute {
-                let path = tet.as_ref().expect("clap requires --tet when -x is set");
-                spill_owned = Some(
-                    SpillPathAllowlist::default_for_tet(path, spill_allow)
-                        .map_err(|e| e.to_string())?,
-                );
-            }
-            let response = if let Some(path) = tet.as_ref() {
-                let path_display = path.display().to_string();
-                let mmap = mmap_file_read(path).map_err(|e| e.to_string())?;
-                plan_query_with_tet_mmap_ex(
-                    &doc,
-                    Some(path_display.as_str()),
-                    &mmap,
-                    preview,
-                    spill_owned.as_ref(),
-                )
-                .map_err(|e| e.to_string())?
-            } else {
-                plan_query_empty(&doc)
-            };
-            let out = format_query_response(&response, stdout)?;
-            println!("{out}");
-            let tet_display = tet.as_ref().map(|p| p.display().to_string());
-            if let Err(e) = append_cli_query_history(&doc, tet_display.as_deref(), execute) {
-                eprintln!("warning: query history not saved: {e}");
-            }
-            Ok(())
+            run_query(QueryRunOpts {
+                doc,
+                tet,
+                execute,
+                stdout,
+                preview,
+                spill_allow,
+                record_history: true,
+            })
         }
-        Commands::History { limit, clear } => {
-            if clear {
-                clear_cli_query_history().map_err(|e| e.to_string())?;
-                eprintln!("query history cleared");
-                return Ok(());
-            }
-            let path = tetration::cli_query_history_path();
-            let entries = list_cli_query_history(limit).map_err(|e| e.to_string())?;
-            let out = serde_json::json!({
-                "path": path.as_ref().map(|p| p.display().to_string()),
-                "max_retained": CLI_QUERY_HISTORY_MAX,
-                "entries": entries,
-            });
-            let pretty = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-            println!("{pretty}");
-            Ok(())
-        }
+        Commands::History { cmd, clear } => run_history(cmd, clear),
         Commands::Convert {
             input,
             output,
