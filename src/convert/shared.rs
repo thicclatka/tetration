@@ -20,6 +20,8 @@ pub(crate) struct ImportPlan {
     pub cf: Option<CfTransform>,
     /// Zarr array path relative to store root (`primary/f32`); `None` for HDF5/NetCDF.
     pub zarr_array_rel: Option<String>,
+    /// When importing Zarr: chunk files on disk are zstd-compressed (`bytes` + `zstd` codecs).
+    pub zarr_zstd: bool,
 }
 
 pub(crate) fn join_catalog_path(prefix: &str, name: &str) -> String {

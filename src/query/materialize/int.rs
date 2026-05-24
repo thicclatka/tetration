@@ -17,8 +17,10 @@ use crate::query::decode::chunk_decode::{
 };
 use crate::query::dispatch::accumulate_chunk_read_bytes;
 use crate::query::engine::spill_policy::TempSpillFile;
-use crate::query::fold::FoldPlanOutcome;
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
+use crate::query::fold::shared::{
+    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome_typed,
+};
 
 use super::{MaterializedLogical, validate_full_read_plan_buffer, validate_read_plan_geometry};
 
@@ -366,13 +368,13 @@ pub(crate) fn materialized_logical_as_f64(
 }
 
 #[derive(Copy, Clone)]
-enum IntVisit {
+pub(crate) enum IntVisit {
     I32,
     I64,
 }
 
 impl IntVisit {
-    fn visit_chunk_as_f64<F>(
+    pub(crate) fn visit_chunk_as_f64<F>(
         self,
         mmap: &[u8],
         plan: &ReadPlan,
@@ -397,22 +399,13 @@ macro_rules! int_scalar_fold_outcome {
         total: $total:expr,
         operation: $operation:expr,
     ) => {
-        FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: if $max_preview == 0 {
-                Vec::new()
-            } else {
-                $preview
-            },
-            i64_preview: Vec::new(),
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: $n > $max_preview,
-            i64_preview_truncated: false,
-            total_bytes_read_from_disk: $total,
-            operation: $operation,
-        }
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I32($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
     };
     (
         i64: $preview:expr,
@@ -421,22 +414,13 @@ macro_rules! int_scalar_fold_outcome {
         total: $total:expr,
         operation: $operation:expr,
     ) => {
-        FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: Vec::new(),
-            i64_preview: if $max_preview == 0 {
-                Vec::new()
-            } else {
-                $preview
-            },
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: $n > $max_preview,
-            total_bytes_read_from_disk: $total,
-            operation: $operation,
-        }
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I64($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
     };
 }
 
@@ -541,6 +525,108 @@ macro_rules! int_scalar_fold_run {
     }};
 }
 
+fn int_scalar_fold_arg(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    visit: IntVisit,
+    n: usize,
+    preview_cap: usize,
+) -> Result<FoldPlanOutcome, TetError> {
+    match visit {
+        IntVisit::I32 => {
+            let mut acc = ArgIndexAccum::default();
+            int_scalar_fold_run!(
+                elem i32;
+                cast |v| v as i32;
+                outcome i32;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
+                    acc.push_f64(li as u64, v, kind);
+                },
+                finish => acc.finish_scalar(kind, n)
+            )
+        }
+        IntVisit::I64 => {
+            let mut acc = ArgIndexAccum::default();
+            int_scalar_fold_run!(
+                elem i64;
+                cast |v| v as i64;
+                outcome i64;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
+                    acc.push_f64(li as u64, v, kind);
+                },
+                finish => acc.finish_scalar(kind, n)
+            )
+        }
+    }
+}
+
+fn int_scalar_fold_value(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    max_preview: usize,
+    kind: ReductionKind,
+    visit: IntVisit,
+    n: usize,
+    preview_cap: usize,
+) -> Result<FoldPlanOutcome, TetError> {
+    match visit {
+        IntVisit::I32 => {
+            let mut acc = ValueAccum::default();
+            int_scalar_fold_run!(
+                elem i32;
+                cast |v| v as i32;
+                outcome i32;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+                finish => acc.finish_scalar(kind)
+            )
+        }
+        IntVisit::I64 => {
+            let mut acc = ValueAccum::default();
+            int_scalar_fold_run!(
+                elem i64;
+                cast |v| v as i64;
+                outcome i64;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+                finish => acc.finish_scalar(kind)
+            )
+        }
+    }
+}
+
 pub(crate) fn fold_read_plan_scalar_operation_int(
     mmap: &[u8],
     plan: &ReadPlan,
@@ -548,6 +634,15 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
     kind: ReductionKind,
     dtype: ElementDtype,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_int_parallel(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            dtype,
+        );
+    }
     let visit = match dtype {
         ElementDtype::I32 => IntVisit::I32,
         ElementDtype::I64 => IntVisit::I64,
@@ -559,87 +654,10 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
     };
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
-
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => match visit {
-            IntVisit::I32 => {
-                let mut acc = ArgIndexAccum::default();
-                int_scalar_fold_run!(
-                    elem i32;
-                    cast |v| v as i32;
-                    outcome i32;
-                    mmap;
-                    plan;
-                    visit;
-                    preview_cap;
-                    max_preview;
-                    n;
-                    kind;
-                    acc;
-                    on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
-                        acc.push_f64(li as u64, v, kind);
-                    },
-                    finish => acc.finish_scalar(kind, n)
-                )
-            }
-            IntVisit::I64 => {
-                let mut acc = ArgIndexAccum::default();
-                int_scalar_fold_run!(
-                    elem i64;
-                    cast |v| v as i64;
-                    outcome i64;
-                    mmap;
-                    plan;
-                    visit;
-                    preview_cap;
-                    max_preview;
-                    n;
-                    kind;
-                    acc;
-                    on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
-                        acc.push_f64(li as u64, v, kind);
-                    },
-                    finish => acc.finish_scalar(kind, n)
-                )
-            }
-        },
-        _ => match visit {
-            IntVisit::I32 => {
-                let mut acc = ValueAccum::default();
-                int_scalar_fold_run!(
-                    elem i32;
-                    cast |v| v as i32;
-                    outcome i32;
-                    mmap;
-                    plan;
-                    visit;
-                    preview_cap;
-                    max_preview;
-                    n;
-                    kind;
-                    acc;
-                    on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
-                    finish => acc.finish_scalar(kind)
-                )
-            }
-            IntVisit::I64 => {
-                let mut acc = ValueAccum::default();
-                int_scalar_fold_run!(
-                    elem i64;
-                    cast |v| v as i64;
-                    outcome i64;
-                    mmap;
-                    plan;
-                    visit;
-                    preview_cap;
-                    max_preview;
-                    n;
-                    kind;
-                    acc;
-                    on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
-                    finish => acc.finish_scalar(kind)
-                )
-            }
-        },
+        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+            int_scalar_fold_arg(mmap, plan, max_preview, kind, visit, n, preview_cap)
+        }
+        _ => int_scalar_fold_value(mmap, plan, max_preview, kind, visit, n, preview_cap),
     }
 }

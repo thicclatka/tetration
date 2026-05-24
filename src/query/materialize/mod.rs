@@ -9,14 +9,17 @@ use std::path::Path;
 use memmap2::Mmap;
 
 use crate::query::decode::chunk_decode::{
-    scatter_chunk_into_plan, scatter_chunk_into_plan_f64, visit_planned_chunk,
+    fold_planned_chunk_f32, scatter_chunk_into_plan, scatter_chunk_into_plan_f64,
     visit_planned_chunk_f64,
 };
 use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
 use crate::query::engine::spill_policy::{SpillPathAllowlist, TempSpillFile};
 pub(crate) use crate::query::fold::FoldPlanOutcome;
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{build_fold_plan_outcome, validate_fold_preview};
+use crate::query::fold::shared::{
+    FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
+    validate_fold_preview,
+};
 use crate::query::types::{ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
 use crate::utils::f64_le;
@@ -195,6 +198,11 @@ pub(crate) fn fold_read_plan_scalar_operation(
     max_f32: usize,
     kind: ReductionKind,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_parallel(
+            mmap, plan, max_f32, kind,
+        );
+    }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_f32.min(n);
     let mut preview = vec![f32::NAN; preview_cap];
@@ -204,13 +212,15 @@ pub(crate) fn fold_read_plan_scalar_operation(
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut acc = ArgIndexAccum::default();
             for c in &plan.chunks {
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
-                    acc.push(li as u64, v, kind);
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    Ok(())
-                })?;
+                let chunk_bytes = fold_planned_chunk_f32(
+                    mmap,
+                    plan,
+                    c,
+                    kind,
+                    &mut ValueAccum::default(),
+                    &mut acc,
+                    &mut preview,
+                )?;
                 total_bytes_read_from_disk = total_bytes_read_from_disk
                     .checked_add(chunk_bytes)
                     .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
@@ -220,14 +230,10 @@ pub(crate) fn fold_read_plan_scalar_operation(
         }
         _ => {
             let mut acc = ValueAccum::default();
+            let mut arg = ArgIndexAccum::default();
             for c in &plan.chunks {
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
-                    acc.push(v);
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    Ok(())
-                })?;
+                let chunk_bytes =
+                    fold_planned_chunk_f32(mmap, plan, c, kind, &mut acc, &mut arg, &mut preview)?;
                 total_bytes_read_from_disk = total_bytes_read_from_disk
                     .checked_add(chunk_bytes)
                     .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
@@ -757,6 +763,14 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
     max_preview: usize,
     kind: ReductionKind,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_f64_parallel(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+        );
+    }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
     let mut f64_preview = vec![f64::NAN; preview_cap];
@@ -817,20 +831,11 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
         }
     };
 
-    Ok(FoldPlanOutcome {
-        f32_preview: Vec::new(),
-        f64_preview: if max_preview == 0 {
-            Vec::new()
-        } else {
-            f64_preview
-        },
-        i32_preview: Vec::new(),
-        i64_preview: Vec::new(),
-        f32_preview_truncated: false,
-        f64_preview_truncated: n > max_preview,
-        i32_preview_truncated: false,
-        i64_preview_truncated: false,
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::F64(f64_preview),
+        max_preview,
+        n,
         total_bytes_read_from_disk,
         operation,
-    })
+    ))
 }

@@ -20,7 +20,7 @@ use crate::catalog::append_convert_history;
 /// Import supported numeric arrays from a Zarr v3 directory store into one `.tet`.
 ///
 /// Supported element types: `float32`, `float64`, `int32`, `int64`. Nested groups map to
-/// slash-separated catalog names (`primary/f32`). Fixtures use `bytes` + `zstd` codecs.
+/// slash-separated catalog names (`primary/f32`). Chunk payloads may be raw `bytes` or `bytes` + `zstd`.
 ///
 /// # Errors
 ///
@@ -85,6 +85,7 @@ pub fn convert_zarr_to_tet_with_progress(
 pub(crate) fn read_zarr_tile_le_into(
     store: &Path,
     array_rel: &str,
+    zstd: bool,
     spec: ImportTileRead<'_>,
     buf: &mut [u8],
 ) -> Result<(), ConvertError> {
@@ -97,6 +98,7 @@ pub(crate) fn read_zarr_tile_le_into(
     let chunk_bytes = read_zarr_chunk_le(
         store,
         array_rel,
+        zstd,
         spec.chunk_coord,
         spec.ndim,
         spec.chunk_shape,
@@ -185,6 +187,7 @@ fn plan_zarr_array(
         chunk_shape,
         cf: None,
         zarr_array_rel: Some(array_rel.to_owned()),
+        zarr_zstd: zarr_chunk_payload_zstd(meta),
     })
 }
 
@@ -212,9 +215,21 @@ fn map_zarr_dtype(
     }
 }
 
+fn zarr_chunk_payload_zstd(meta: &ZarrNodeMeta) -> bool {
+    meta.codecs.as_ref().is_some_and(|codecs| {
+        codecs.iter().any(|codec| {
+            codec
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(|name| name == "zstd")
+        })
+    })
+}
+
 fn read_zarr_chunk_le(
     store: &Path,
     array_rel: &str,
+    zstd: bool,
     chunk_coord: &[u64],
     ndim: usize,
     chunk_shape: &[u64],
@@ -224,9 +239,12 @@ fn read_zarr_chunk_le(
     for &coord in chunk_coord.iter().take(ndim) {
         path.push(coord.to_string());
     }
-    let compressed = fs::read(&path).map_err(|e| ConvertError::Zarr(e.to_string()))?;
-    let decoded =
-        zstd::decode_all(compressed.as_slice()).map_err(|e| ConvertError::Zarr(e.to_string()))?;
+    let on_disk = fs::read(&path).map_err(|e| ConvertError::Zarr(e.to_string()))?;
+    let decoded = if zstd {
+        zstd::decode_all(on_disk.as_slice()).map_err(|e| ConvertError::Zarr(e.to_string()))?
+    } else {
+        on_disk
+    };
     let expected = chunk_shape.iter().take(ndim).fold(elem_size, |acc, &d| {
         acc.saturating_mul(usize::try_from(d).unwrap_or(0))
     });
@@ -394,6 +412,8 @@ struct ZarrNodeMeta {
     data_type: Option<serde_json::Value>,
     #[serde(default)]
     chunk_grid: Option<ZarrChunkGrid>,
+    #[serde(default)]
+    codecs: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -154,6 +154,7 @@ fn plan_variable_at(name: &str, var: &Variable<'_>) -> Result<ImportPlan, Conver
         chunk_shape,
         cf,
         zarr_array_rel: None,
+        zarr_zstd: false,
     })
 }
 

@@ -12,3 +12,4 @@ wheels/
 # Gitignored stress tensors (regenerate with mise run fixtures:large / fixtures:extra-large-*)
 large/
 extra_large/
+bench_results/

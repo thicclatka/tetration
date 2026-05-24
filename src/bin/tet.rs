@@ -49,9 +49,9 @@ enum Commands {
         #[arg(long = "spill-allow", value_name = "DIR")]
         spill_allow: Vec<PathBuf>,
     },
-    /// Convert HDF5 / `NetCDF` into `.tet` (format from input extension).
+    /// Convert HDF5 / `NetCDF` / Zarr v3 directory store into `.tet` (format from input extension or sniff).
     Convert {
-        /// Source array file (`.h5`/`.hdf5`/`.hdf`/`.he2`/`.he5`, `.nc`/`.netcdf`/`.nc4`/`.nc3`/`.cdf`, or recognizable signature).
+        /// Source array file (`.h5`/`.hdf5`/`.hdf`/`.he2`/`.he5`, `.nc`/`.netcdf`/`.nc4`/`.nc3`/`.cdf`, Zarr v3 directory with root `zarr.json`, or recognizable signature).
         input: PathBuf,
         /// Destination `.tet` file.
         output: PathBuf,

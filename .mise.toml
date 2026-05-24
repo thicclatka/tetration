@@ -37,6 +37,24 @@ depends = ["fixtures:sync"]
 dir = "{{config_root}}/fixtures"
 run = "uv run generate-fixtures extra-large-zarr"
 
+[tasks."fixtures:large-h5"]
+description = "Generate gitignored ~6.67 GiB HDF5 under fixtures/large/h5/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures large-h5"
+
+[tasks."fixtures:large-netcdf"]
+description = "Generate gitignored ~6.67 GiB NetCDF under fixtures/large/netcdf/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures large-netcdf"
+
+[tasks."fixtures:large-zarr"]
+description = "Generate gitignored ~6.67 GiB Zarr under fixtures/large/zarr/"
+depends = ["fixtures:sync"]
+dir = "{{config_root}}/fixtures"
+run = "uv run generate-fixtures large-zarr"
+
 [tasks."fixtures:all"]
 description = "Generate small and large suite fixtures"
 depends = ["fixtures:sync"]
@@ -57,3 +75,23 @@ run = "rm -rf fixtures/large"
 description = "Remove generated files under fixtures/extra_large/"
 confirm = "Delete all files in fixtures/extra_large/?"
 run = "rm -rf fixtures/extra_large"
+
+[tasks.bench]
+description = "Sequential large/extra_large convert+query bench (generates, times, deletes per format)"
+depends = ["fixtures:sync"]
+run = "cargo build --release && uv run --directory fixtures bench-large"
+
+[tasks."bench:h5"]
+description = "Benchmark large + extra_large HDF5 only"
+depends = ["fixtures:sync"]
+run = "cargo build --release && uv run --directory fixtures bench-large h5"
+
+[tasks."bench:netcdf"]
+description = "Benchmark large + extra_large NetCDF only"
+depends = ["fixtures:sync"]
+run = "cargo build --release && uv run --directory fixtures bench-large netcdf"
+
+[tasks."bench:zarr"]
+description = "Benchmark large + extra_large Zarr only"
+depends = ["fixtures:sync"]
+run = "cargo build --release && uv run --directory fixtures bench-large zarr"

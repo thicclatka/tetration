@@ -1,5 +1,6 @@
 //! Shared reduction kinds and single-pass accumulators.
 
+use crate::query::fold::variance_simd;
 use crate::query::types::{Operation, OperationPreviewFields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,56 @@ impl WelfordAccum {
     pub fn population_std(&self) -> f64 {
         self.population_variance().sqrt()
     }
+
+    /// Merge another online accumulator (Chan parallel algorithm).
+    pub fn merge_from(&mut self, other: &Self) {
+        if other.count_f == 0.0 {
+            return;
+        }
+        if self.count_f == 0.0 {
+            *self = *other;
+            return;
+        }
+        let n_a = self.count_f;
+        let n_b = other.count_f;
+        let n = n_a + n_b;
+        let delta = other.mean - self.mean;
+        self.mean += delta * (n_b / n);
+        self.m2 += other.m2 + delta * delta * n_a * n_b / n;
+        self.count_f = n;
+    }
+
+    /// Merge population variance stats from sum and sum-of-squares over `count` values.
+    fn merge_sum_sumsq(&mut self, count: f64, sum: f64, sumsq: f64) {
+        if count == 0.0 {
+            return;
+        }
+        let mean = sum / count;
+        let m2 = sumsq - count * mean * mean;
+        self.merge_from(&Self {
+            count_f: count,
+            mean,
+            m2,
+        });
+    }
+
+    /// Merge population variance stats for a contiguous `f32` slice (slab / chunk bulk path).
+    pub fn merge_f32_slice(&mut self, vals: &[f32]) {
+        if vals.is_empty() {
+            return;
+        }
+        let (slab_sum, slab_sumsq) = variance_simd::f32_sum_sumsq(vals);
+        self.merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
+    }
+
+    /// Like [`Self::merge_f32_slice`] for an `f64` slice.
+    pub fn merge_f64_slice(&mut self, vals: &[f64]) {
+        if vals.is_empty() {
+            return;
+        }
+        let (slab_sum, slab_sumsq) = variance_simd::f64_sum_sumsq(vals);
+        self.merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
+    }
 }
 
 /// Single-pass accumulator for one scalar or partial-reduction cell.
@@ -139,12 +190,193 @@ impl ValueAccum {
         }
     }
 
+    /// Accumulate every little-endian `f32` in `raw` for a scalar fold (no per-element callbacks).
+    pub fn push_f32_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
+        debug_assert_eq!(raw.len() % 4, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[f32] = bytemuck::cast_slice(raw);
+        match kind {
+            ReductionKind::Count => {
+                self.count += vals.len();
+            }
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.sum += f64::from(v);
+                }
+            }
+            ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let mut slab_sum = 0.0f64;
+                for &v in vals {
+                    slab_sum += f64::from(v);
+                }
+                self.sum += slab_sum;
+                self.welford.merge_f32_slice(vals);
+            }
+            ReductionKind::Min | ReductionKind::Max => {
+                self.count += vals.len();
+                for &v in vals {
+                    let vd = f64::from(v);
+                    if self.have_min_max {
+                        self.min = self.min.min(vd);
+                        self.max = self.max.max(vd);
+                    } else {
+                        self.min = vd;
+                        self.max = vd;
+                        self.have_min_max = true;
+                    }
+                }
+            }
+            ReductionKind::Product => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.product *= f64::from(v);
+                }
+            }
+            ReductionKind::NormL1 => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.norm_l1 += f64::from(v).abs();
+                }
+            }
+            ReductionKind::NormL2 => {
+                self.count += vals.len();
+                for &v in vals {
+                    let vd = f64::from(v);
+                    self.norm_l2_sq += vd * vd;
+                }
+            }
+            ReductionKind::AllFinite => {
+                self.count += vals.len();
+                if !self.all_finite {
+                    return;
+                }
+                for &v in vals {
+                    if !v.is_finite() {
+                        self.all_finite = false;
+                        return;
+                    }
+                }
+            }
+            ReductionKind::AnyNan => {
+                if self.any_nan {
+                    self.count += vals.len();
+                    return;
+                }
+                for &v in vals {
+                    self.count += 1;
+                    if v.is_nan() {
+                        self.any_nan = true;
+                        return;
+                    }
+                }
+            }
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
+        }
+    }
+
+    /// Like [`Self::push_f32_le_bytes`] but promotes each value to `f64` first.
+    pub fn push_f64_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
+        debug_assert_eq!(raw.len() % 8, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[f64] = bytemuck::cast_slice(raw);
+        match kind {
+            ReductionKind::Count => {
+                self.count += vals.len();
+            }
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.sum += v;
+                }
+            }
+            ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let slab_sum: f64 = vals.iter().sum();
+                self.sum += slab_sum;
+                self.welford.merge_f64_slice(vals);
+            }
+            ReductionKind::Min | ReductionKind::Max => {
+                self.count += vals.len();
+                for &v in vals {
+                    if self.have_min_max {
+                        self.min = self.min.min(v);
+                        self.max = self.max.max(v);
+                    } else {
+                        self.min = v;
+                        self.max = v;
+                        self.have_min_max = true;
+                    }
+                }
+            }
+            ReductionKind::Product => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.product *= v;
+                }
+            }
+            ReductionKind::NormL1 => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.norm_l1 += v.abs();
+                }
+            }
+            ReductionKind::NormL2 => {
+                self.count += vals.len();
+                for &v in vals {
+                    self.norm_l2_sq += v * v;
+                }
+            }
+            ReductionKind::AllFinite => {
+                self.count += vals.len();
+                if !self.all_finite {
+                    return;
+                }
+                for &v in vals {
+                    if !v.is_finite() {
+                        self.all_finite = false;
+                        return;
+                    }
+                }
+            }
+            ReductionKind::AnyNan => {
+                if self.any_nan {
+                    self.count += vals.len();
+                    return;
+                }
+                for &v in vals {
+                    self.count += 1;
+                    if v.is_nan() {
+                        self.any_nan = true;
+                        return;
+                    }
+                }
+            }
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
+        }
+    }
+
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn finish_f64(&self, kind: ReductionKind) -> f64 {
         match kind {
             ReductionKind::Sum => self.sum,
-            ReductionKind::Mean => self.welford.mean,
+            ReductionKind::Mean => {
+                if self.count == 0 {
+                    0.0
+                } else {
+                    self.sum / self.count as f64
+                }
+            }
             ReductionKind::Min => self.min,
             ReductionKind::Max => self.max,
             ReductionKind::Count => self.count as f64,
@@ -170,6 +402,35 @@ impl ValueAccum {
         }
     }
 
+    /// Combine partial accumulators from disjoint chunk visits.
+    pub fn merge_from(&mut self, other: &Self) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            *self = other.clone();
+            return;
+        }
+        self.count += other.count;
+        self.sum += other.sum;
+        self.welford.merge_from(&other.welford);
+        self.product *= other.product;
+        self.norm_l1 += other.norm_l1;
+        self.norm_l2_sq += other.norm_l2_sq;
+        self.all_finite &= other.all_finite;
+        self.any_nan |= other.any_nan;
+        if other.have_min_max {
+            if self.have_min_max {
+                self.min = self.min.min(other.min);
+                self.max = self.max.max(other.max);
+            } else {
+                self.min = other.min;
+                self.max = other.max;
+                self.have_min_max = true;
+            }
+        }
+    }
+
     pub fn finish_scalar(self, kind: ReductionKind) -> ScalarReductionResult {
         let mut sum_scalar = None;
         let mut mean_scalar = None;
@@ -184,7 +445,13 @@ impl ValueAccum {
         let mut any_nan_scalar = None;
         match kind {
             ReductionKind::Sum => sum_scalar = Some(self.sum),
-            ReductionKind::Mean => mean_scalar = Some(self.welford.mean),
+            ReductionKind::Mean => {
+                mean_scalar = Some(if self.count == 0 {
+                    0.0
+                } else {
+                    self.sum / self.count as f64
+                });
+            }
             ReductionKind::Min => min_scalar = Some(self.min),
             ReductionKind::Max => max_scalar = Some(self.max),
             ReductionKind::Var => var_scalar = Some(self.welford.population_variance()),
@@ -256,6 +523,22 @@ impl ArgIndexAccum {
         self.best_idx
     }
 
+    /// Combine partial argmin/argmax state from disjoint chunk visits.
+    pub fn merge_from(&mut self, other: &Self, kind: ReductionKind) {
+        if !other.have {
+            return;
+        }
+        if !self.have {
+            *self = *other;
+            return;
+        }
+        match kind {
+            ReductionKind::ArgMin if other.best_val < self.best_val => *self = *other,
+            ReductionKind::ArgMax if other.best_val > self.best_val => *self = *other,
+            _ => {}
+        }
+    }
+
     pub fn finish_scalar(self, kind: ReductionKind, element_count: usize) -> ScalarReductionResult {
         let idx = self.best_idx;
         let mut argmin_index = None;
@@ -311,6 +594,48 @@ impl ScalarReductionResult {
             argmin_index: None,
             argmax_index: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReductionKind, ValueAccum, WelfordAccum};
+
+    fn var_from(vals: &[f32]) -> f64 {
+        let mut acc = ValueAccum::default();
+        acc.push_f32_le_bytes(bytemuck::cast_slice(vals), ReductionKind::Var);
+        acc.finish_f64(ReductionKind::Var)
+    }
+
+    fn var_elementwise(vals: &[f32]) -> f64 {
+        let mut w = WelfordAccum::default();
+        for &v in vals {
+            w.push(f64::from(v));
+        }
+        w.population_variance()
+    }
+
+    #[test]
+    fn bulk_f32_var_matches_elementwise_welford() {
+        let vals: Vec<f32> = (0..10_000).map(|i| (i as f32) * 0.001).collect();
+        let bulk = var_from(&vals);
+        let elem = var_elementwise(&vals);
+        assert!((bulk - elem).abs() < 1e-6, "bulk={bulk} elem={elem}");
+    }
+
+    #[test]
+    fn bulk_f64_var_matches_elementwise_welford() {
+        let vals: Vec<f64> = (0..10_000).map(|i| i as f64 * 0.001).collect();
+        let mut bulk = ValueAccum::default();
+        bulk.push_f64_le_bytes(bytemuck::cast_slice(&vals), ReductionKind::Var);
+        let bulk_v = bulk.finish_f64(ReductionKind::Var);
+
+        let mut w = WelfordAccum::default();
+        for &v in &vals {
+            w.push(v);
+        }
+        let elem = w.population_variance();
+        assert!((bulk_v - elem).abs() < 1e-9, "bulk={bulk_v} elem={elem}");
     }
 }
 

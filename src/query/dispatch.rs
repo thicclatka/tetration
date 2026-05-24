@@ -34,6 +34,13 @@ pub(crate) fn accumulate_chunk_read_bytes(
     Ok(())
 }
 
+pub(crate) fn sum_chunk_read_bytes(bytes: impl IntoIterator<Item = u64>) -> Result<u64, TetError> {
+    bytes.into_iter().try_fold(0u64, |acc, b| {
+        acc.checked_add(b)
+            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))
+    })
+}
+
 pub(crate) fn materialize_for_execution(
     mmap: &[u8],
     plan: &ReadPlan,

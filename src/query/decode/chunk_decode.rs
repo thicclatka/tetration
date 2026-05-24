@@ -3,10 +3,85 @@
 use std::borrow::Cow;
 
 use crate::catalog::{CHUNK_PAYLOAD_CODEC_V1, MAX_NDIM, tile};
+use crate::query::decode::dense_visit::{dense_tile_logical_base, logical_index_unit_step};
+use crate::query::decode::indexing::linear_rm_index;
+use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 use crate::utils::{f32_le, f64_le, i32_le, i64_le, wire};
 
-use crate::query::decode::indexing::linear_rm_index;
+struct PreparedChunk<'a> {
+    bytes_read: u64,
+    raw_bytes: Cow<'a, [u8]>,
+    nelem: usize,
+    tile: Vec<u64>,
+    chunk_coord: [u64; MAX_NDIM],
+    ndim: usize,
+}
+
+/// Wire element type for chunk decode / visit / scatter.
+trait ChunkElem: Copy {
+    const ELEM_SIZE: usize;
+    fn read_at(raw: &[u8], index: usize) -> Self;
+}
+
+impl ChunkElem for f32 {
+    const ELEM_SIZE: usize = 4;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        f32_le::read_f32_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for f64 {
+    const ELEM_SIZE: usize = 8;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        f64_le::read_f64_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for i32 {
+    const ELEM_SIZE: usize = 4;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        i32_le::read_i32_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for i64 {
+    const ELEM_SIZE: usize = 8;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        i64_le::read_i64_le_at(raw, index)
+    }
+}
+
+/// Scalar fold hooks for floating chunk payloads (`f32` / `f64`).
+trait FoldChunkElem: ChunkElem {
+    fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind);
+    fn push_value(value: &mut ValueAccum, v: Self);
+    fn push_arg(arg: &mut ArgIndexAccum, li: u64, v: Self, kind: ReductionKind);
+}
+
+impl FoldChunkElem for f32 {
+    fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind) {
+        value.push_f32_le_bytes(raw, kind);
+    }
+    fn push_value(value: &mut ValueAccum, v: Self) {
+        value.push(v);
+    }
+    fn push_arg(arg: &mut ArgIndexAccum, li: u64, v: Self, kind: ReductionKind) {
+        arg.push(li, v, kind);
+    }
+}
+
+impl FoldChunkElem for f64 {
+    fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind) {
+        value.push_f64_le_bytes(raw, kind);
+    }
+    fn push_value(value: &mut ValueAccum, v: Self) {
+        value.push_f64(v);
+    }
+    fn push_arg(arg: &mut ArgIndexAccum, li: u64, v: Self, kind: ReductionKind) {
+        arg.push_f64(li, v, kind);
+    }
+}
 
 fn u64_to_usize(field: &'static str, v: u64) -> Result<usize, TetError> {
     usize::try_from(v)
@@ -50,11 +125,8 @@ pub(crate) fn decode_planned_chunk_bytes<'a>(
 ///
 /// # Errors
 ///
-/// Returns [`TetError::Validation`] when a chunk is not mmap-readable as raw bytes (`codec` must be
-/// [`CHUNK_PAYLOAD_CODEC_V1.raw`](crate::catalog::ChunkPayloadCodecV1::raw)), lengths disagree, ranges overflow, or payload bytes fall outside `mmap`.
-///
-/// For [`CHUNK_PAYLOAD_CODEC_V1.zstd`](crate::catalog::ChunkPayloadCodecV1::zstd) payloads use [`crate::query::materialize::materialize_read_plan_f32_le`] (or another decode path);
-/// compressed bytes are not returned as a single mmap slice here.
+/// Returns [`TetError::Validation`] if any planned chunk uses a non-raw codec, if payload
+/// offsets or lengths are invalid or extend past `mmap`, or if stored payload decode fails.
 pub fn planned_chunk_mmap_slices<'a>(
     mmap: &'a [u8],
     plan: &ReadPlan,
@@ -84,153 +156,266 @@ fn global_matches_strided_selection(g: &[u64], plan: &ReadPlan) -> bool {
     })
 }
 
+fn prepare_chunk<'a, E: ChunkElem>(
+    mmap: &'a [u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+) -> Result<PreparedChunk<'a>, TetError> {
+    let ndim = plan.dataset_shape.len();
+    if c.chunk_index.len() != ndim {
+        return Err(TetError::Validation(format!(
+            "chunk_index={:?} rank {} != dataset rank {}",
+            c.chunk_index,
+            c.chunk_index.len(),
+            ndim
+        )));
+    }
+    let stored = planned_chunk_stored_slice(mmap, c)?;
+    let bytes_read = stored.len() as u64;
+    let raw_bytes = decode_planned_chunk_bytes(stored, c)?;
+    if !raw_bytes.len().is_multiple_of(E::ELEM_SIZE) {
+        return Err(TetError::Validation(format!(
+            "chunk raw length {} is not a multiple of {} (chunk_index={:?})",
+            raw_bytes.len(),
+            E::ELEM_SIZE,
+            c.chunk_index
+        )));
+    }
+    let nelem = raw_bytes.len() / E::ELEM_SIZE;
+    let mut chunk_coord = [0u64; MAX_NDIM];
+    chunk_coord[..ndim].copy_from_slice(&c.chunk_index[..ndim]);
+    let tile = tile::tile_extent(&plan.dataset_shape, &plan.chunk_shape, &chunk_coord, ndim);
+    let tile_elems: u64 = tile
+        .iter()
+        .try_fold(1u64, |a, &b| a.checked_mul(b))
+        .ok_or_else(|| TetError::Validation("tile element count overflow".into()))?;
+    let tile_elems_us = usize::try_from(tile_elems)
+        .map_err(|_| TetError::Validation("tile element count too large for this host".into()))?;
+    if tile_elems_us != nelem {
+        return Err(TetError::Validation(format!(
+            "chunk_index={:?}: tile has {tile_elems_us} values but raw_byte_len implies {nelem}",
+            c.chunk_index
+        )));
+    }
+    Ok(PreparedChunk {
+        bytes_read,
+        raw_bytes,
+        nelem,
+        tile,
+        chunk_coord,
+        ndim,
+    })
+}
+
+fn logical_index_for_global(
+    plan: &ReadPlan,
+    global: &[u64],
+    ndim: usize,
+) -> Result<usize, TetError> {
+    if plan.selection_step.iter().all(|&s| s == 1) {
+        return logical_index_unit_step(plan, global, ndim);
+    }
+    let mut lc = [0usize; MAX_NDIM];
+    for (d, &x) in global.iter().enumerate().take(ndim) {
+        let st = plan.selection_box_start[d];
+        let q = (x - st) / plan.selection_step[d];
+        lc[d] = usize::try_from(q).map_err(|_| {
+            TetError::Validation(format!(
+                "logical coordinate on axis {d} does not fit usize on this host"
+            ))
+        })?;
+    }
+    linear_rm_index(&lc[..ndim], &plan.logical_selection_shape)
+}
+
+fn visit_prepared_chunk_strided<E, F>(
+    prep: &PreparedChunk<'_>,
+    plan: &ReadPlan,
+    mut visit: F,
+) -> Result<(), TetError>
+where
+    E: ChunkElem,
+    F: FnMut(usize, E) -> Result<(), TetError>,
+{
+    let ndim = prep.ndim;
+    let mut global = [0u64; MAX_NDIM];
+    for k in 0..prep.nelem {
+        let local = tile::local_coords_from_linear(k as u64, &prep.tile, ndim);
+        for (d, gv) in global.iter_mut().enumerate().take(ndim) {
+            *gv = prep.chunk_coord[d]
+                .saturating_mul(plan.chunk_shape[d])
+                .saturating_add(local[d]);
+        }
+        if !global_matches_strided_selection(&global[..ndim], plan) {
+            continue;
+        }
+        let li = logical_index_for_global(plan, &global[..ndim], ndim)?;
+        visit(li, E::read_at(&prep.raw_bytes, k))?;
+    }
+    Ok(())
+}
+
+fn visit_prepared_chunk<E, F>(
+    prep: &PreparedChunk<'_>,
+    plan: &ReadPlan,
+    mut visit: F,
+) -> Result<(), TetError>
+where
+    E: ChunkElem,
+    F: FnMut(usize, E) -> Result<(), TetError>,
+{
+    if prep.ndim == 1
+        && let Some(li_base) =
+            dense_tile_logical_base(plan, &prep.chunk_coord[..prep.ndim], &prep.tile)?
+    {
+        for k in 0..prep.nelem {
+            visit(li_base + k, E::read_at(&prep.raw_bytes, k))?;
+        }
+        return Ok(());
+    }
+    visit_prepared_chunk_strided::<E, _>(prep, plan, visit)
+}
+
+fn visit_planned_chunk_elem<E, F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    E: ChunkElem,
+    F: FnMut(usize, E) -> Result<(), TetError>,
+{
+    let prep = prepare_chunk::<E>(mmap, plan, c)?;
+    visit_prepared_chunk::<E, _>(&prep, plan, visit)?;
+    Ok(prep.bytes_read)
+}
+
+fn fold_planned_chunk_elem<E>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    kind: ReductionKind,
+    value: &mut ValueAccum,
+    arg: &mut ArgIndexAccum,
+    preview: &mut [E],
+) -> Result<u64, TetError>
+where
+    E: FoldChunkElem,
+{
+    let prep = prepare_chunk::<E>(mmap, plan, c)?;
+    let preview_len = preview.len();
+    if prep.ndim == 1
+        && let Some(li_base) =
+            dense_tile_logical_base(plan, &prep.chunk_coord[..prep.ndim], &prep.tile)?
+    {
+        match kind {
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                for k in 0..prep.nelem {
+                    let v = E::read_at(&prep.raw_bytes, k);
+                    let li = li_base + k;
+                    E::push_arg(arg, li as u64, v, kind);
+                    if li < preview_len {
+                        preview[li] = v;
+                    }
+                }
+            }
+            _ => {
+                E::push_le_bytes(value, &prep.raw_bytes, kind);
+                if preview_len > 0 {
+                    let cap = preview_len.saturating_sub(li_base).min(prep.nelem);
+                    for k in 0..cap {
+                        preview[li_base + k] = E::read_at(&prep.raw_bytes, k);
+                    }
+                }
+            }
+        }
+        return Ok(prep.bytes_read);
+    }
+    visit_prepared_chunk::<E, _>(&prep, plan, |li, v| {
+        match kind {
+            ReductionKind::ArgMin | ReductionKind::ArgMax => E::push_arg(arg, li as u64, v, kind),
+            _ => E::push_value(value, v),
+        }
+        if li < preview_len {
+            preview[li] = v;
+        }
+        Ok(())
+    })?;
+    Ok(prep.bytes_read)
+}
+
+fn scatter_chunk_into<E>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [E],
+) -> Result<u64, TetError>
+where
+    E: ChunkElem,
+{
+    visit_planned_chunk_elem::<E, _>(mmap, plan, c, |li, v| {
+        if li < out.len() {
+            out[li] = v;
+        }
+        Ok(())
+    })
+}
+
+fn scatter_chunk_into_option<E>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<E>],
+) -> Result<u64, TetError>
+where
+    E: ChunkElem,
+{
+    visit_planned_chunk_elem::<E, _>(mmap, plan, c, |li, v| {
+        if li < out.len() {
+            out[li] = Some(v);
+        }
+        Ok(())
+    })
+}
+
+/// Scalar fold over one planned `f32` chunk without per-element visitor callbacks.
+pub(crate) fn fold_planned_chunk_f32(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    kind: ReductionKind,
+    value: &mut ValueAccum,
+    arg: &mut ArgIndexAccum,
+    preview: &mut [f32],
+) -> Result<u64, TetError> {
+    fold_planned_chunk_elem::<f32>(mmap, plan, c, kind, value, arg, preview)
+}
+
+/// Scalar fold over one planned `f64` chunk without per-element visitor callbacks.
+pub(crate) fn fold_planned_chunk_f64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    kind: ReductionKind,
+    value: &mut ValueAccum,
+    arg: &mut ArgIndexAccum,
+    preview: &mut [f64],
+) -> Result<u64, TetError> {
+    fold_planned_chunk_elem::<f64>(mmap, plan, c, kind, value, arg, preview)
+}
+
 /// Visit each selected `f32` in a planned chunk.
-///
-/// Returns stored payload bytes read from `mmap` for this chunk.
 pub(crate) fn visit_planned_chunk<F>(
     mmap: &[u8],
     plan: &ReadPlan,
     c: &PlannedChunkIo,
-    mut visit: F,
+    visit: F,
 ) -> Result<u64, TetError>
 where
     F: FnMut(usize, f32) -> Result<(), TetError>,
 {
-    let ndim = plan.dataset_shape.len();
-    if c.chunk_index.len() != ndim {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?} rank {} != dataset rank {}",
-            c.chunk_index,
-            c.chunk_index.len(),
-            ndim
-        )));
-    }
-    let stored = planned_chunk_stored_slice(mmap, c)?;
-    let bytes_read = stored.len() as u64;
-    let raw_bytes = decode_planned_chunk_bytes(stored, c)?;
-    if !raw_bytes.len().is_multiple_of(4) {
-        return Err(TetError::Validation(format!(
-            "chunk raw length {} is not a multiple of 4 for f32 (chunk_index={:?})",
-            raw_bytes.len(),
-            c.chunk_index
-        )));
-    }
-    let nelem_tile = raw_bytes.len() / 4;
-    let mut coord = [0u64; MAX_NDIM];
-    coord[..ndim].copy_from_slice(&c.chunk_index[..ndim]);
-    let tile = tile::tile_extent(&plan.dataset_shape, &plan.chunk_shape, &coord, ndim);
-    let tile_elems: u64 = tile
-        .iter()
-        .try_fold(1u64, |a, &b| a.checked_mul(b))
-        .ok_or_else(|| TetError::Validation("tile element count overflow".into()))?;
-    let tile_elems_us = usize::try_from(tile_elems)
-        .map_err(|_| TetError::Validation("tile element count too large for this host".into()))?;
-    if tile_elems_us != nelem_tile {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?}: tile has {tile_elems_us} f32 values but raw_byte_len implies {nelem_tile}",
-            c.chunk_index
-        )));
-    }
-    for k in 0..tile_elems_us {
-        let local = tile::local_coords_from_linear(k as u64, &tile, ndim);
-        let mut global = [0u64; MAX_NDIM];
-        for (d, gv) in global.iter_mut().enumerate().take(ndim) {
-            *gv = coord[d]
-                .saturating_mul(plan.chunk_shape[d])
-                .saturating_add(local[d]);
-        }
-        if !global_matches_strided_selection(&global[..ndim], plan) {
-            continue;
-        }
-        let mut lc = Vec::with_capacity(ndim);
-        for (d, &x) in global[..ndim].iter().enumerate() {
-            let st = plan.selection_box_start[d];
-            let q = (x - st) / plan.selection_step[d];
-            let qi = usize::try_from(q).map_err(|_| {
-                TetError::Validation(format!(
-                    "logical coordinate on axis {d} does not fit usize on this host"
-                ))
-            })?;
-            lc.push(qi);
-        }
-        let li = linear_rm_index(&lc, &plan.logical_selection_shape)?;
-        visit(li, f32_le::read_f32_le_at(&raw_bytes, k))?;
-    }
-    Ok(bytes_read)
-}
-
-fn visit_planned_chunk_typed<T, F>(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    c: &PlannedChunkIo,
-    elem_size: usize,
-    read_at: fn(&[u8], usize) -> T,
-    mut visit: F,
-) -> Result<u64, TetError>
-where
-    F: FnMut(usize, T) -> Result<(), TetError>,
-{
-    let ndim = plan.dataset_shape.len();
-    if c.chunk_index.len() != ndim {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?} rank {} != dataset rank {}",
-            c.chunk_index,
-            c.chunk_index.len(),
-            ndim
-        )));
-    }
-    let stored = planned_chunk_stored_slice(mmap, c)?;
-    let bytes_read = stored.len() as u64;
-    let raw_bytes = decode_planned_chunk_bytes(stored, c)?;
-    if !raw_bytes.len().is_multiple_of(elem_size) {
-        return Err(TetError::Validation(format!(
-            "chunk raw length {} is not a multiple of {elem_size} (chunk_index={:?})",
-            raw_bytes.len(),
-            c.chunk_index
-        )));
-    }
-    let nelem_tile = raw_bytes.len() / elem_size;
-    let mut coord = [0u64; MAX_NDIM];
-    coord[..ndim].copy_from_slice(&c.chunk_index[..ndim]);
-    let tile = tile::tile_extent(&plan.dataset_shape, &plan.chunk_shape, &coord, ndim);
-    let tile_elems: u64 = tile
-        .iter()
-        .try_fold(1u64, |a, &b| a.checked_mul(b))
-        .ok_or_else(|| TetError::Validation("tile element count overflow".into()))?;
-    let tile_elems_us = usize::try_from(tile_elems)
-        .map_err(|_| TetError::Validation("tile element count too large for this host".into()))?;
-    if tile_elems_us != nelem_tile {
-        return Err(TetError::Validation(format!(
-            "chunk_index={:?}: tile has {tile_elems_us} values but raw_byte_len implies {nelem_tile}",
-            c.chunk_index
-        )));
-    }
-    for k in 0..tile_elems_us {
-        let local = tile::local_coords_from_linear(k as u64, &tile, ndim);
-        let mut global = [0u64; MAX_NDIM];
-        for (d, gv) in global.iter_mut().enumerate().take(ndim) {
-            *gv = coord[d]
-                .saturating_mul(plan.chunk_shape[d])
-                .saturating_add(local[d]);
-        }
-        if !global_matches_strided_selection(&global[..ndim], plan) {
-            continue;
-        }
-        let mut lc = Vec::with_capacity(ndim);
-        for (d, &x) in global[..ndim].iter().enumerate() {
-            let st = plan.selection_box_start[d];
-            let q = (x - st) / plan.selection_step[d];
-            let qi = usize::try_from(q).map_err(|_| {
-                TetError::Validation(format!(
-                    "logical coordinate on axis {d} does not fit usize on this host"
-                ))
-            })?;
-            lc.push(qi);
-        }
-        let li = linear_rm_index(&lc, &plan.logical_selection_shape)?;
-        visit(li, read_at(&raw_bytes, k))?;
-    }
-    Ok(bytes_read)
+    visit_planned_chunk_elem::<f32, _>(mmap, plan, c, visit)
 }
 
 /// Visit each selected `f64` in a planned chunk.
@@ -243,7 +428,33 @@ pub(crate) fn visit_planned_chunk_f64<F>(
 where
     F: FnMut(usize, f64) -> Result<(), TetError>,
 {
-    visit_planned_chunk_typed(mmap, plan, c, 8, f64_le::read_f64_le_at, visit)
+    visit_planned_chunk_elem::<f64, _>(mmap, plan, c, visit)
+}
+
+/// Visit each selected `i32` in a planned chunk.
+pub(crate) fn visit_planned_chunk_i32<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, i32) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<i32, _>(mmap, plan, c, visit)
+}
+
+/// Visit each selected `i64` in a planned chunk.
+pub(crate) fn visit_planned_chunk_i64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, i64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<i64, _>(mmap, plan, c, visit)
 }
 
 /// Visit each selected `i32`, promoting values to `f64` for accumulators.
@@ -272,66 +483,22 @@ where
     visit_planned_chunk_i64(mmap, plan, c, |li, v| visit(li, v as f64))
 }
 
-/// Decode one planned chunk and scatter matching `f64` values into `out`.
-pub(crate) fn scatter_chunk_into_plan_f64(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    c: &PlannedChunkIo,
-    out: &mut [f64],
-) -> Result<u64, TetError> {
-    visit_planned_chunk_f64(mmap, plan, c, |li, v| {
-        if li < out.len() {
-            out[li] = v;
-        }
-        Ok(())
-    })
-}
-
-/// Decode one planned chunk and scatter matching `f32` values into `out`.
-///
-/// Returns stored payload bytes read from `mmap` for this chunk.
 pub(crate) fn scatter_chunk_into_plan(
     mmap: &[u8],
     plan: &ReadPlan,
     c: &PlannedChunkIo,
     out: &mut [f32],
 ) -> Result<u64, TetError> {
-    visit_planned_chunk(mmap, plan, c, |li, v| {
-        if li < out.len() {
-            out[li] = v;
-        }
-        Ok(())
-    })
+    scatter_chunk_into::<f32>(mmap, plan, c, out)
 }
 
-/// Visit each selected `i32` in a planned chunk.
-pub(crate) fn visit_planned_chunk_i32<F>(
+pub(crate) fn scatter_chunk_into_plan_f64(
     mmap: &[u8],
     plan: &ReadPlan,
     c: &PlannedChunkIo,
-    mut visit: F,
-) -> Result<u64, TetError>
-where
-    F: FnMut(usize, i32) -> Result<(), TetError>,
-{
-    visit_planned_chunk_typed(mmap, plan, c, 4, i32_le::read_i32_le_at, |li, v| {
-        visit(li, v)
-    })
-}
-
-/// Visit each selected `i64` in a planned chunk.
-pub(crate) fn visit_planned_chunk_i64<F>(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    c: &PlannedChunkIo,
-    mut visit: F,
-) -> Result<u64, TetError>
-where
-    F: FnMut(usize, i64) -> Result<(), TetError>,
-{
-    visit_planned_chunk_typed(mmap, plan, c, 8, i64_le::read_i64_le_at, |li, v| {
-        visit(li, v)
-    })
+    out: &mut [f64],
+) -> Result<u64, TetError> {
+    scatter_chunk_into::<f64>(mmap, plan, c, out)
 }
 
 pub(crate) fn scatter_chunk_into_plan_i32(
@@ -340,12 +507,7 @@ pub(crate) fn scatter_chunk_into_plan_i32(
     c: &PlannedChunkIo,
     out: &mut [Option<i32>],
 ) -> Result<u64, TetError> {
-    visit_planned_chunk_i32(mmap, plan, c, |li, v| {
-        if li < out.len() {
-            out[li] = Some(v);
-        }
-        Ok(())
-    })
+    scatter_chunk_into_option::<i32>(mmap, plan, c, out)
 }
 
 pub(crate) fn scatter_chunk_into_plan_i64(
@@ -354,10 +516,5 @@ pub(crate) fn scatter_chunk_into_plan_i64(
     c: &PlannedChunkIo,
     out: &mut [Option<i64>],
 ) -> Result<u64, TetError> {
-    visit_planned_chunk_i64(mmap, plan, c, |li, v| {
-        if li < out.len() {
-            out[li] = Some(v);
-        }
-        Ok(())
-    })
+    scatter_chunk_into_option::<i64>(mmap, plan, c, out)
 }

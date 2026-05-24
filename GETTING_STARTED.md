@@ -76,11 +76,11 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **`tet convert <input> <output.tet> [--jobs N]`** — HDF5 / NetCDF from extension or file signature; **Zarr v3** from directory store (root `zarr.json`); history footer (`convert` / `h5` | `nc` | `zarr`).
 - [x] **HDF5** (`tetration-hdf5`): **`f32` / `f64` / `i32` / `i64`**; nested groups → slash catalog names (`primary/f32`); **CF** decode (`scale_factor`, `add_offset`, `_FillValue`) at import; chunked hyperslab read → `.tet`.
 - [x] **NetCDF** (`tetration-netcdf`): same dtypes + groups + CF; **`get_raw_values_into`** tile path.
-- [x] **Zarr v3 directory store** — regular chunk grid, **`bytes` + `zstd`** codecs (fixture layout); nested groups; map Zarr chunks → `.tet` tiles.
+- [x] **Zarr v3 directory store** — regular chunk grid, chunk codecs **bytes** (raw) or **zstd**; nested groups; map Zarr chunks → `.tet` tiles. Fixture zarr uses uncompressed chunks for fair bench vs `.tet`.
 - [x] **Streaming write** — one chunk in RAM at a time (≈ **`jobs` × tile** under parallel import); sequential payload append when layout allows.
 - [x] **Fixtures + tests** — `fixtures/small/` (`tensor_*`, `groups_3d`, `cf_3d`, zarr) in `tests/convert.rs`; `fixtures/large/` / `fixtures/extra_large/` for local stress (gitignored, `mise run fixtures:large` / `fixtures:extra-large-*`).
 
-**Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks):** HDF5 ~**8 s**, Zarr ~**10 s** for **20 GiB** logical → `.tet` on a fast SSD.
+**Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks):** convert ~**0.5–0.7 s** per 20 GiB tier; `.tet` **mean** ~**0.5–0.6 s**; **std/var** ~**0.2 s** (large) / ~**0.6 s** (extra) on a warm SSD (Apple Silicon, May 2026). See [`fixtures/bench_results/latest.md`](fixtures/bench_results/latest.md).
 
 ### Could add later (not Phase 5)
 
@@ -148,7 +148,7 @@ Extend tier A–C **`operation`** when the result is still a **reduction or QC s
 
 ### Other
 
-- [ ] **Parallel streaming fold** — Rayon over chunks for tier-A/B ops (partial accumulators + merge); today fold is sequential (~2 min for 20 GiB full `mean` on SSD — see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
+- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when `chunk_count > 1` ([`src/query/fold/parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
 - [ ] **GPU-friendly materialize** — optional device copy after CPU decode (binding concern; format stays mmap-first).
 - [ ] **Layout / codec evolution** — v2 only when v1 guarantees are insufficient (new dtypes, filters, dedicated metadata regions).
@@ -181,4 +181,4 @@ TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 4. **History events v2:** structured transform event + session flush API.
 5. **Python repo scaffold:** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
 6. **Histogram:** caller-supplied `min` / `max` for bin edges.
-7. **Parallel streaming fold:** Phase 8 — Rayon over chunks for tier-A/B ops (see below).
+7. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).

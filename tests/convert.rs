@@ -233,11 +233,23 @@ fn assert_small_fixture_zarr(stem: &str) {
 
 fn zarr_array_le_bytes(array_dir: &Path) -> Vec<u8> {
     let chunk_path = array_dir.join("c/0/0/0");
-    let compressed = std::fs::read(&chunk_path).unwrap();
-    let raw = zstd::decode_all(compressed.as_slice()).unwrap();
+    let on_disk = std::fs::read(&chunk_path).unwrap();
     let meta: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(array_dir.join("zarr.json")).unwrap())
             .unwrap();
+    let zstd = meta["codecs"].as_array().is_some_and(|codecs| {
+        codecs.iter().any(|codec| {
+            codec
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(|name| name == "zstd")
+        })
+    });
+    let raw = if zstd {
+        zstd::decode_all(on_disk.as_slice()).unwrap()
+    } else {
+        on_disk
+    };
     let data_type = meta["data_type"].as_str().unwrap_or("");
     match data_type {
         "float32" => raw,
