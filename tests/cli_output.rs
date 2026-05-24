@@ -3,8 +3,8 @@
 mod fixture;
 
 use tetration::{
-    QueryOutputFormat, format_query_response, mmap_file_read, parse_query_json, plan_query_empty,
-    plan_query_with_tet_mmap, validate_query,
+    QueryOutputFormat, format_query_response, format_query_stderr_hints, mmap_file_read,
+    parse_query_json, plan_query_empty, plan_query_with_tet_mmap, validate_query,
 };
 
 #[test]
@@ -107,6 +107,46 @@ fn format_quiet_unmatched_dataset() {
     let line = format_query_response(&response, QueryOutputFormat::Quiet).unwrap();
     assert!(line.contains("status=not_found"));
     assert!(line.contains("available=[a]"));
+}
+
+#[test]
+fn format_plan_omits_chunks_and_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("plan_fmt.tet");
+    fixture::write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let plan_only = plan_query_with_tet_mmap(&doc, None, &mmap, None).unwrap();
+    let planned = format_query_response(&plan_only, QueryOutputFormat::Plan).unwrap();
+    assert!(planned.contains("\"chunk_count\": 2"));
+    assert!(!planned.contains("\"chunks\""));
+    assert!(!planned.contains("\"execution\""));
+
+    let doc_op = parse_query_json(r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#).unwrap();
+    validate_query(&doc_op).unwrap();
+    let executed = plan_query_with_tet_mmap(&doc_op, None, &mmap, Some(0)).unwrap();
+    let planned_exec = format_query_response(&executed, QueryOutputFormat::Plan).unwrap();
+    assert!(!planned_exec.contains("operation_mean"));
+    assert!(!planned_exec.contains("\"execution\""));
+}
+
+#[test]
+fn format_catalog_miss_hint_lists_datasets() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hint.tet");
+    fixture::write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"missing"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let response =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, None).unwrap();
+
+    let hint = format_query_stderr_hints(&response).expect("catalog miss hint");
+    assert!(hint.contains("hint: dataset"));
+    assert!(hint.contains("available datasets:"));
+    assert!(hint.contains("  a\n"));
+    assert!(hint.contains(&format!("tip: run `tet info {}`", path.display())));
 }
 
 #[test]

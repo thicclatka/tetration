@@ -12,10 +12,12 @@ mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;
 pub use cli::{
-    CliQueryHistoryEntry, HistorySettings, QueryOutputFormat, append_cli_query_history,
-    clear_cli_query_history, cli_query_history_enabled, cli_query_history_max,
-    cli_query_history_path, format_history_list_json, format_history_list_text,
-    format_query_response, get_cli_query_history_entry, list_cli_query_history,
+    CliQueryHistoryEntry, HistoryExecuteFilter, HistoryListFilter, HistorySettings,
+    QueryOutputFormat, append_cli_query_history, clear_cli_query_history,
+    cli_query_history_enabled, cli_query_history_max, cli_query_history_path,
+    format_history_list_json, format_history_list_text, format_query_response,
+    format_query_stderr_hints, get_cli_query_history_entry, history_entry_mode,
+    list_cli_query_history, parse_history_execute_filter,
 };
 pub use document::{QueryLimits, parse_query_json, validate_query};
 #[doc(hidden)]

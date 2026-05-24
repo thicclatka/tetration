@@ -1,6 +1,8 @@
 //! CLI presentation for [`QueryResponse`] (full JSON, compact JSON, stats, quiet).
 
 mod format_num;
+mod hints;
+mod plan;
 mod quiet;
 mod stats;
 
@@ -16,6 +18,8 @@ pub enum QueryOutputFormat {
     Json,
     /// Slim JSON: plan summary + aggregates, no chunk rows or preview arrays.
     Stats,
+    /// Slim JSON: catalog + `read_plan` only (no chunk rows, no execution block).
+    Plan,
     /// One human-readable line on stdout.
     Quiet,
 }
@@ -28,9 +32,10 @@ impl std::str::FromStr for QueryOutputFormat {
             "full" => Ok(Self::Full),
             "json" => Ok(Self::Json),
             "stats" => Ok(Self::Stats),
+            "plan" => Ok(Self::Plan),
             "quiet" => Ok(Self::Quiet),
             other => Err(format!(
-                "unknown output format {other:?}; expected full, json, stats, or quiet"
+                "unknown output format {other:?}; expected full, json, stats, plan, or quiet"
             )),
         }
     }
@@ -52,6 +57,13 @@ pub fn format_query_response(
         }
         QueryOutputFormat::Json => serde_json::to_string(response).map_err(|e| e.to_string()),
         QueryOutputFormat::Stats => stats::format_stats_json(response),
+        QueryOutputFormat::Plan => plan::format_plan_json(response),
         QueryOutputFormat::Quiet => quiet::format_quiet_line(response),
     }
+}
+
+/// Optional stderr text after a successful query (e.g. catalog miss).
+#[must_use]
+pub fn format_query_stderr_hints(response: &QueryResponse) -> Option<String> {
+    hints::format_catalog_miss_hint(response)
 }

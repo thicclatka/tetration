@@ -100,10 +100,11 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 ### Phase 6 focus (next)
 
 - [x] **History list / run** — `tet history list` (default), `--all` for all retained rows; `tet history run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
-- [ ] **History extras** — search/filter, named bookmarks; keep history out of `.tet` files.
+- [x] **History extras** — `list` filters (`--dataset`, `--tet`, `--mode`, `--grep`); indices match filtered view for `run N` (not in `.tet`).
 - [ ] **Query document v2** — evaluate **TOML** or a lighter **JSON profile** (fewer nested brackets, line-oriented selection/operation blocks) alongside v1 JSON; shared validation → same `QueryDocument` internally.
-- [ ] **CLI polish** — consistent error messages, dataset discovery hints on catalog miss, optional interactive plan preview before **`-x`**.
-- [ ] **Optional stdout modes** — slim **`plan`** summary (no per-chunk rows), human **`preview`** table (defer unless needed).
+- [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
+- [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
+- [ ] **Optional stdout modes** — human **`preview`** table (defer unless needed).
 
 **Verify:** spawn-`tet` integration tests; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
 
@@ -112,6 +113,7 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 ```bash
 tet query q.json -t data.tet              # plan (full JSON)
 tet query q.json -t data.tet -x -q        # execute, one-line stdout
+tet query q.json -t data.tet --format plan
 tet query q.json -t data.tet -x --format stats
 tet query q.json -t data.tet -x --format json | jq .
 ```
@@ -200,9 +202,11 @@ tet query q.json -t data.tet -x                # appends on success (best-effort
 tet history                                     # same as `history list`
 tet history list                              # compact table (default)
 tet history list --all                        # every retained row in table
+tet history list --dataset temperature --mode x
+tet history list --grep tensor_3d             # dataset / tet path / op label
 tet history list --json                       # full JSON (scripts)
 tet history run 1 -q                            # re-run newest; today's stdout flags
-tet history list --clear                        # remove file
+tet history list --clear                        # remove history file
 TET_QUERY_HISTORY_MAX=50 tet query …            # keep up to 50 rows on disk
 TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …

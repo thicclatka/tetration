@@ -102,40 +102,52 @@ impl HistorySettings {
 
     /// List recent queries (newest first). Missing file → empty vec.
     ///
-    /// When `all` is true, returns every retained row (up to [`Self::cli_query_max`] on disk).
+    /// When `all` is true, returns every retained row that matches `filter` (up to
+    /// [`Self::cli_query_max`] on disk). Otherwise returns at most `limit` matching rows.
     ///
     /// # Errors
     ///
     /// Returns I/O or JSON errors when the history file cannot be read.
-    pub fn list(&self, limit: usize, all: bool) -> io::Result<Vec<CliQueryHistoryEntry>> {
+    pub fn list(
+        &self,
+        limit: usize,
+        all: bool,
+        filter: Option<&HistoryListFilter>,
+    ) -> io::Result<Vec<CliQueryHistoryEntry>> {
         let mut entries = self.read_newest_first()?;
-        if all {
-            return Ok(entries);
+        if let Some(f) = filter {
+            entries.retain(|e| f.matches(e));
         }
-        entries.truncate(limit);
+        if !all {
+            entries.truncate(limit);
+        }
         Ok(entries)
     }
 
-    /// Fetch one row by display index (**1** = newest, same order as [`Self::list`]).
+    /// Fetch one row by display index (**1** = newest, same order as [`Self::list`] with the same `filter`).
     ///
     /// # Errors
     ///
     /// Returns I/O or JSON errors when the file cannot be read. Returns
     /// [`io::ErrorKind::NotFound`] when the index is out of range or history is empty.
-    pub fn get(&self, index: usize) -> io::Result<CliQueryHistoryEntry> {
+    pub fn get(
+        &self,
+        index: usize,
+        filter: Option<&HistoryListFilter>,
+    ) -> io::Result<CliQueryHistoryEntry> {
         if index == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "history index must be >= 1 (1 = newest)",
             ));
         }
-        let entries = self.read_newest_first()?;
+        let entries = self.list(usize::MAX, true, filter)?;
         let have = entries.len();
         let pos = index - 1;
         entries.into_iter().nth(pos).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("history entry {index} not found (have {have} entr(y/ies))"),
+                format!("history entry {index} not found (have {have} matching entr(y/ies))"),
             )
         })
     }
@@ -168,6 +180,106 @@ impl HistorySettings {
     }
 }
 
+/// Optional filters for [`HistorySettings::list`] / [`HistorySettings::get`] (AND semantics).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HistoryListFilter {
+    /// Case-insensitive substring on `query.dataset`.
+    pub dataset: Option<String>,
+    /// Case-insensitive substring on the saved `.tet` path.
+    pub tet: Option<String>,
+    /// Execute vs plan-only rows.
+    pub mode: Option<HistoryExecuteFilter>,
+    /// Case-insensitive substring across dataset, tet path, and operation label.
+    pub grep: Option<String>,
+}
+
+impl HistoryListFilter {
+    /// True when every set predicate matches `entry`.
+    #[must_use]
+    pub fn matches(&self, entry: &CliQueryHistoryEntry) -> bool {
+        if let Some(needle) = self.dataset.as_deref()
+            && !contains_ascii_case_insensitive(&entry.query.dataset, needle)
+        {
+            return false;
+        }
+        if let Some(needle) = self.tet.as_deref() {
+            let hay = entry.tet.as_deref().unwrap_or("");
+            if !contains_ascii_case_insensitive(hay, needle) {
+                return false;
+            }
+        }
+        if let Some(mode) = self.mode {
+            let is_execute = entry.execute;
+            match mode {
+                HistoryExecuteFilter::Execute if !is_execute => return false,
+                HistoryExecuteFilter::Plan if is_execute => return false,
+                _ => {}
+            }
+        }
+        if let Some(needle) = self.grep.as_deref() {
+            let op = operation_label(entry.query.operation.as_ref());
+            let hay = format!(
+                "{} {} {}",
+                entry.query.dataset,
+                entry.tet.as_deref().unwrap_or(""),
+                op
+            );
+            if !contains_ascii_case_insensitive(&hay, needle) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Human summary for list headers (empty when no predicates).
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(d) = &self.dataset {
+            parts.push(format!("dataset~{d}"));
+        }
+        if let Some(t) = &self.tet {
+            parts.push(format!("tet~{t}"));
+        }
+        if let Some(m) = self.mode {
+            let execute = matches!(m, HistoryExecuteFilter::Execute);
+            parts.push(format!("mode={}", history_entry_mode(execute)));
+        }
+        if let Some(g) = &self.grep {
+            parts.push(format!("grep~{g}"));
+        }
+        parts.join(" ")
+    }
+
+    /// True when no filter fields are set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.dataset.is_none() && self.tet.is_none() && self.mode.is_none() && self.grep.is_none()
+    }
+}
+
+/// `x` / execute vs `p` / plan-only filter for history list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryExecuteFilter {
+    Execute,
+    Plan,
+}
+
+/// Parse `x`, `execute`, `p`, or `plan` for `--mode`.
+///
+/// # Errors
+///
+/// Returns a message when `s` is not a known mode token.
+pub fn parse_history_execute_filter(s: &str) -> Result<HistoryExecuteFilter, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "x" | "execute" => Ok(HistoryExecuteFilter::Execute),
+        "p" | "plan" => Ok(HistoryExecuteFilter::Plan),
+        other => Err(format!(
+            "unknown history mode {other:?}; expected x, execute, p, or plan"
+        )),
+    }
+}
+
 /// One row in the CLI query history file (newest first when listed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CliQueryHistoryEntry {
@@ -179,6 +291,34 @@ pub struct CliQueryHistoryEntry {
     pub execute: bool,
     /// Validated query document.
     pub query: QueryDocument,
+}
+
+/// `x` = execute (`-x`), `p` = plan-only (matches `tet history list` mode column).
+#[must_use]
+pub fn history_entry_mode(execute: bool) -> &'static str {
+    if execute { "x" } else { "p" }
+}
+
+const HISTORY_MODE_LEGEND: &str = "mode: x = had -x (execute), p = plan only (no -x)";
+
+/// Row shape for `tet history list --json` (adds human `mode` alongside stored `execute`).
+#[derive(Serialize)]
+struct HistoryListRow<'a> {
+    at: u64,
+    mode: &'static str,
+    tet: Option<&'a str>,
+    query: &'a QueryDocument,
+}
+
+impl<'a> From<&'a CliQueryHistoryEntry> for HistoryListRow<'a> {
+    fn from(e: &'a CliQueryHistoryEntry) -> Self {
+        Self {
+            at: e.at,
+            mode: history_entry_mode(e.execute),
+            tet: e.tet.as_deref(),
+            query: &e.query,
+        }
+    }
 }
 
 /// Whether CLI query history recording is enabled (unset or any value other than `1` / `true`).
@@ -203,6 +343,10 @@ pub fn cli_query_history_path() -> Option<PathBuf> {
 }
 
 /// Append using [`HistorySettings::from_env`].
+///
+/// # Errors
+///
+/// Same as [`HistorySettings::append`].
 pub fn append_cli_query_history(
     query: &QueryDocument,
     tet: Option<&str>,
@@ -212,16 +356,35 @@ pub fn append_cli_query_history(
 }
 
 /// List using [`HistorySettings::from_env`].
-pub fn list_cli_query_history(limit: usize, all: bool) -> io::Result<Vec<CliQueryHistoryEntry>> {
-    HistorySettings::from_env().list(limit, all)
+///
+/// # Errors
+///
+/// Same as [`HistorySettings::list`].
+pub fn list_cli_query_history(
+    limit: usize,
+    all: bool,
+    filter: Option<&HistoryListFilter>,
+) -> io::Result<Vec<CliQueryHistoryEntry>> {
+    HistorySettings::from_env().list(limit, all, filter)
 }
 
 /// Get entry using [`HistorySettings::from_env`].
-pub fn get_cli_query_history_entry(index: usize) -> io::Result<CliQueryHistoryEntry> {
-    HistorySettings::from_env().get(index)
+///
+/// # Errors
+///
+/// Same as [`HistorySettings::get`].
+pub fn get_cli_query_history_entry(
+    index: usize,
+    filter: Option<&HistoryListFilter>,
+) -> io::Result<CliQueryHistoryEntry> {
+    HistorySettings::from_env().get(index, filter)
 }
 
 /// Clear using [`HistorySettings::from_env`].
+///
+/// # Errors
+///
+/// Same as [`HistorySettings::clear`].
 pub fn clear_cli_query_history() -> io::Result<()> {
     HistorySettings::from_env().clear()
 }
@@ -232,6 +395,7 @@ pub fn format_history_list_text(
     entries: &[CliQueryHistoryEntry],
     path: Option<&Path>,
     settings: &HistorySettings,
+    filter: Option<&HistoryListFilter>,
 ) -> String {
     let mut out = String::new();
     if let Some(path) = path {
@@ -243,33 +407,36 @@ pub fn format_history_list_text(
         entries.len(),
         settings.cli_query_max
     );
+    if let Some(f) = filter.filter(|f| !f.is_empty()) {
+        let _ = writeln!(out, "filter: {}", f.summary());
+    }
     if entries.is_empty() {
-        out.push_str("(empty — run `tet query … -t file.tet -x` to record)\n");
+        if filter.is_some_and(|f| !f.is_empty()) {
+            out.push_str("(no rows match filter)\n");
+        } else {
+            out.push_str("(empty — run `tet query … -t file.tet -x` to record)\n");
+        }
         return out;
     }
     out.push('\n');
     let _ = writeln!(
         out,
-        "{:>3}  {:^1}  {:<18}  {:<10}  {:<8}  tet",
-        "#", "x", "dataset", "op", "select"
+        "{:>3}  {:^4}  {:<18}  {:<10}  {:<8}  tet",
+        "#", "mode", "dataset", "op", "select"
     );
     for (i, e) in entries.iter().enumerate() {
-        let mode = if e.execute { "x" } else { "p" };
+        let mode = history_entry_mode(e.execute);
         let op = operation_label(e.query.operation.as_ref());
         let sel = selection_label(e.query.selection.as_ref());
-        let tet = e
-            .tet
-            .as_deref()
-            .map(|p| {
-                Path::new(p)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(p)
-            })
-            .unwrap_or("-");
+        let tet = e.tet.as_deref().map_or("-", |p| {
+            Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(p)
+        });
         let _ = writeln!(
             out,
-            "{:>3}  {:^1}  {:<18}  {:<10}  {:<8}  {}",
+            "{:>3}  {:^4}  {:<18}  {:<10}  {:<8}  {}",
             i + 1,
             mode,
             truncate_field(&e.query.dataset, 18),
@@ -278,21 +445,37 @@ pub fn format_history_list_text(
             tet
         );
     }
-    out.push_str("\nreplay: tet history run <#>  (1 = newest)\n");
+    out.push('\n');
+    let _ = writeln!(out, "{HISTORY_MODE_LEGEND}");
+    out.push_str("replay: tet history run <#>  (1 = newest)\n");
     out
 }
 
 /// Full JSON envelope for `tet history list --json`.
+///
+/// # Errors
+///
+/// Returns a serialization error string when JSON encoding fails.
 pub fn format_history_list_json(
     entries: &[CliQueryHistoryEntry],
     path: Option<&Path>,
     settings: &HistorySettings,
+    filter: Option<&HistoryListFilter>,
 ) -> Result<String, String> {
+    let rows: Vec<HistoryListRow<'_>> = entries.iter().map(HistoryListRow::from).collect();
+    let filter_summary = filter
+        .filter(|f| !f.is_empty())
+        .map(HistoryListFilter::summary);
     let out = serde_json::json!({
         "path": path.map(|p| p.display().to_string()),
         "settings": settings,
         "shown": entries.len(),
-        "entries": entries,
+        "filter": filter_summary,
+        "mode_key": {
+            "x": "execute (-x was set)",
+            "p": "plan only (no -x)",
+        },
+        "entries": rows,
     });
     serde_json::to_string_pretty(&out).map_err(|e| e.to_string())
 }
@@ -395,4 +578,13 @@ fn unix_timestamp_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
 }

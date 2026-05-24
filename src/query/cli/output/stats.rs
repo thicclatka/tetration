@@ -3,7 +3,9 @@
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::query::types::{Operation, QueryExecutionPreview, QueryResponse};
+use crate::query::types::{
+    DatasetResolution, Operation, QueryExecutionPreview, QueryResponse, ReadPlan,
+};
 
 #[derive(Serialize)]
 struct StatsResponse<'a> {
@@ -28,7 +30,7 @@ struct StatsResponse<'a> {
 }
 
 #[derive(Serialize)]
-struct StatsCatalog<'a> {
+pub(super) struct StatsCatalog<'a> {
     matched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     dataset_index: Option<usize>,
@@ -41,7 +43,7 @@ struct StatsCatalog<'a> {
 }
 
 #[derive(Serialize)]
-struct StatsReadPlan<'a> {
+pub(super) struct StatsReadPlan<'a> {
     chunk_touch_policy: &'a str,
     chunk_count: usize,
     total_stored_bytes: u64,
@@ -53,8 +55,8 @@ pub(super) fn format_stats_json(response: &QueryResponse) -> Result<String, Stri
     serde_json::to_string_pretty(&stats_view(response)).map_err(|e| e.to_string())
 }
 
-fn stats_view(response: &QueryResponse) -> StatsResponse<'_> {
-    let catalog = response.catalog.as_ref().map(|c| StatsCatalog {
+pub(super) fn stats_catalog(c: &DatasetResolution) -> StatsCatalog<'_> {
+    StatsCatalog {
         matched: c.matched,
         dataset_index: c.dataset_index,
         dtype: c.dtype,
@@ -64,14 +66,22 @@ fn stats_view(response: &QueryResponse) -> StatsResponse<'_> {
         } else {
             c.available_datasets.as_ref()
         },
-    });
-    let read_plan = response.read_plan.as_ref().map(|p| StatsReadPlan {
+    }
+}
+
+pub(super) fn stats_read_plan(p: &ReadPlan) -> StatsReadPlan<'_> {
+    StatsReadPlan {
         chunk_touch_policy: p.chunk_touch_policy,
         chunk_count: p.chunk_count,
         total_stored_bytes: p.total_stored_bytes,
         logical_selection_shape: &p.logical_selection_shape,
         logical_f32_element_count: p.logical_f32_element_count,
-    });
+    }
+}
+
+fn stats_view(response: &QueryResponse) -> StatsResponse<'_> {
+    let catalog = response.catalog.as_ref().map(stats_catalog);
+    let read_plan = response.read_plan.as_ref().map(stats_read_plan);
     let execution = response.execution.as_ref().map(execution_stats_value);
     StatsResponse {
         status: response.status,
