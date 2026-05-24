@@ -61,7 +61,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Reductions (flat JSON):** top-level keys `sum`, `mean`, … — scalar **`"mean": []`**, partial **`"mean": 0`** or **`"sum": [0,1]`** → **`operation_*`** / **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`.
 - [x] **Streaming reductions** — scalar and partial-axis folds without full logical tensor allocation; **`memory_strategy: streaming_fold`**.
 - [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); per-file settings via **`RawArrayWrite::file_execution`**.
-- [x] **Mmap spill** — `output.preferred.spill_array { handle }` → dtype-native spill paths (`memory_strategy: mmap_spill`).
+- [x] **Mmap spill** — top-level `"spill": "path"` → dtype-native spill paths (`memory_strategy: mmap_spill`).
 - [x] **Capped preview** without full logical-buffer allocation when `max_elements < logical`.
 - [x] **Spill path allowlist** — `SpillPathAllowlist` + `plan_query_with_tet_mmap_ex`; CLI `--spill-allow DIR`.
 - [x] **Tier-2 index ops** — `arg_min` / `arg_max` (scalar + partial axes).
@@ -94,18 +94,19 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 - [x] **`tet query`** — validate, plan, optional **`-x` / `--execute`**; default stdout is pretty full **`QueryResponse`** (`--format full`).
 - [x] **Focused query output** — **`--format full|json|stats|quiet`** (or **`-q`** for quiet); library **`format_query_response`** in **`src/query/cli/output/`**; **`tests/cli_output.rs`**.
-- [x] **`tet history`** — platform cache (`query_history.jsonl`); **`--clear`**, **`TET_NO_QUERY_HISTORY`**, **`TET_QUERY_HISTORY_FILE`** (see [CLI query history](#cli-query-history)).
-- [x] **`tet info` / `tet convert`** — catalog summary JSON; convert progress bar.
+- [x] **`tet qhist`** — platform query cache (`query_history.jsonl`); **`hist`** alias; **`--clear`**, **`TET_NO_QUERY_HISTORY`**, **`TET_QUERY_HISTORY_FILE`** (see [CLI query history](#cli-query-history-tet-qhist)).
+- [x] **`tet info` / `tet convert`** — default dataset table; `--json` full dump; `--grep` / `--dataset`; sections (`--layout`, `--chunks`, `--history`, `--all`); `-q` one-liner.
 
 ### Phase 6 focus (next)
 
-- [x] **History list / run** — `tet history list` (default), `--all` for all retained rows; `tet history run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
+- [x] **Query history list / run** — `tet qhist list` (default), `--all` for all retained rows; `tet qhist run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
 - [x] **History extras** — `list` filters (`--dataset`, `--tet`, `--mode`, `--grep`); indices match filtered view for `run N` (not in `.tet`).
 - [x] **Flat query JSON (v1 wire)** — top-level op keys (`mean: 0`, `quantile: { q, axis }`); nested `"operation"` rejected; see [`docs/query_engine.md`](docs/query_engine.md#query-document-json).
 - [ ] **Optional alternate front-ends** — TOML or line-oriented profile → same `QueryDocument` (later).
 - [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
 - [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
-- [ ] **Optional stdout modes** — human **`preview`** table (defer unless needed).
+- [x] **`tet info` UX** — table + filters; **`--history`** = on-disk footer (not `qhist`).
+- [ ] **Optional stdout modes** — human **`preview`** table for query execute (defer unless needed).
 
 **Verify:** spawn-`tet` integration tests; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
 
@@ -117,11 +118,14 @@ tet query q.json -t data.tet -x -q        # execute, one-line stdout
 tet query q.json -t data.tet --format plan
 tet query q.json -t data.tet -x --format stats
 tet query q.json -t data.tet -x --format json | jq .
+tet info data.tet
+tet info data.tet --grep temp --chunks -n 8
+tet info data.tet --json | jq '.summary.datasets'
 ```
 
 ## Phase 7 — Metadata & history
 
-**Goal:** rich, bounded **file- and dataset-level metadata** plus **write-time lineage** in the `.tet` footer — without slowing mmap hot paths. **Query replay history** is a Phase 6 CLI concern ([`tet history`](#cli-query-history)), not on-disk format. See README “Recording lineage” and [`docs/layout_v1.md`](docs/layout_v1.md) history footer.
+**Goal:** rich, bounded **file- and dataset-level metadata** plus **write-time lineage** in the `.tet` footer — without slowing mmap hot paths. **Query replay history** is a Phase 6 CLI concern ([`tet qhist`](#cli-query-history-tet-qhist)), not on-disk format. See README “Recording lineage” and [`docs/layout_v1.md`](docs/layout_v1.md) (footer events; `tet info --history`).
 
 ### Baseline (done)
 
@@ -194,20 +198,21 @@ tet query q.json -t data.tet -x --format json | jq .
 - [x] **JSON + CLI** — `tet query`, `tet info`, `tet convert`; shell out or HTTP-post query documents from any runtime.
 - [x] **Rust convert** — `tet convert` for fast CLI import (parallel HDF5 / NetCDF / Zarr); Python convert is a separate, ecosystem-native path.
 
-## CLI query history
+## CLI query history (`tet qhist`)
 
-Recent **`tet query`** documents are stored under the platform cache (`…/tetration/query_history.jsonl`), **not** in the `.tet` file:
+Recent **`tet query`** documents are stored under the platform cache (`…/tetration/query_history.jsonl`), **not** in the `.tet` file. Use **`tet info --history`** for convert/provenance events in the file footer.
 
 ```bash
 tet query q.json -t data.tet -x                # appends on success (best-effort)
-tet history                                     # same as `history list`
-tet history list                              # compact table (default)
-tet history list --all                        # every retained row in table
-tet history list --dataset temperature --mode x
-tet history list --grep tensor_3d             # dataset / tet path / op label
-tet history list --json                       # full JSON (scripts)
-tet history run 1 -q                            # re-run newest; today's stdout flags
-tet history list --clear                        # remove history file
+tet qhist                                       # same as `qhist list`
+tet qhist list                                  # compact table (default)
+tet qhist list --all                            # every retained row in table
+tet qhist list --dataset temperature --mode x
+tet qhist list --grep tensor_3d                 # dataset / tet path / op label
+tet qhist list --json                           # full JSON (scripts)
+tet qhist run 1 -q                              # re-run newest; today's stdout flags
+tet qhist list --clear                          # remove history file
+# `tet hist` is an alias for `qhist`
 TET_QUERY_HISTORY_MAX=50 tet query …            # keep up to 50 rows on disk
 TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
@@ -215,7 +220,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 
 ## Ongoing hygiene
 
-- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), convert (`tests/convert.rs`), layout (`tests/layout_roundtrip.rs`), CLI output/history (`tests/cli_output.rs`, `tests/cli_history.rs`); shared builders in `tests/fixture.rs`.
+- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), convert (`tests/convert.rs`), layout (`tests/layout_roundtrip.rs`), CLI output/history/info (`tests/cli_output.rs`, `tests/cli_history.rs`, `tests/cli_info.rs`); shared builders in `tests/fixture.rs`.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`fixtures/README.md`**, and this file aligned when layout, codecs, convert, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
 - [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.

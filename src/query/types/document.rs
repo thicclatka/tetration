@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-// `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, …).
+// `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, `spill: "…"`, …).
 
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
 #[derive(Debug, Clone, Deserialize, Serialize)]

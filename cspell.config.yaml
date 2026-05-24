@@ -29,6 +29,7 @@ words:
   - ndim
   - nelem
   - proptest
+  - qhist
   - reprojection
   - rkyv
   - rustdoc

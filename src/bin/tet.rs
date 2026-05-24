@@ -7,8 +7,10 @@
 mod args;
 #[path = "tet/convert.rs"]
 mod convert;
-#[path = "tet/history.rs"]
-mod history;
+#[path = "tet/qhist.rs"]
+mod qhist;
+#[path = "tet/info.rs"]
+mod info;
 #[path = "tet/query.rs"]
 mod query;
 #[path = "tet/util.rs"]
@@ -17,27 +19,44 @@ mod util;
 use std::process::ExitCode;
 
 use clap::Parser;
-use tetration::{mmap_file_read, parse_query_json, read_tet_summary_v1};
+use tetration::parse_query_json;
 
 use args::{Cli, Commands};
 use convert::run_convert;
-use history::run_history;
+use qhist::run_qhist;
+use info::{InfoRunOpts, run_info};
 use query::{QueryRunOpts, run_query};
 use util::{cli_error, read_query_payload, resolve_stdout};
 
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
-        Commands::Info { path } => {
-            let mmap = mmap_file_read(&path).map_err(cli_error)?;
-            let summary = read_tet_summary_v1(&mmap).map_err(cli_error)?;
-            let out = serde_json::json!({
-                "path": path.display().to_string(),
-                "summary": summary,
-            });
-            let pretty = serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?;
-            println!("{pretty}");
-            Ok(())
-        }
+        Commands::Info {
+            path,
+            json,
+            quiet,
+            all,
+            layout,
+            execution,
+            datasets,
+            chunks,
+            show_footer_history,
+            limit,
+            dataset,
+            grep,
+        } => run_info(InfoRunOpts {
+            path,
+            json,
+            quiet,
+            all,
+            layout,
+            execution,
+            datasets,
+            chunks,
+            show_footer_history,
+            limit,
+            dataset,
+            grep,
+        }),
         Commands::Query {
             query,
             tet,
@@ -60,7 +79,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 record_history: true,
             })
         }
-        Commands::History { cmd, clear } => run_history(cmd, clear),
+        Commands::Qhist(args) => run_qhist(args.cmd, args.clear),
         Commands::Convert {
             input,
             output,

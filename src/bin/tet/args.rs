@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use tetration::{HistorySettings, QueryOutputFormat};
 
 #[derive(Parser)]
@@ -18,10 +18,43 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Print superblock metadata for a `.tet` file (layout v1).
+    /// Summarize a `.tet` file (default: dataset table). Use `--json` for full dump.
     Info {
         /// Path to `.tet` file.
         path: PathBuf,
+        /// Full pretty JSON (superblock, catalog, chunks, history).
+        #[arg(long)]
+        json: bool,
+        /// One-line summary on stdout.
+        #[arg(short = 'q', long, conflicts_with = "json")]
+        quiet: bool,
+        /// All text sections (layout, execution, datasets, chunks, history).
+        #[arg(long)]
+        all: bool,
+        /// Superblock / layout fields.
+        #[arg(long)]
+        layout: bool,
+        /// Per-file execution defaults from the chunk index header.
+        #[arg(long)]
+        execution: bool,
+        /// Dataset catalog table (default when no section flags).
+        #[arg(long)]
+        datasets: bool,
+        /// Chunk index table (`-n` limits rows; `0` = all).
+        #[arg(long)]
+        chunks: bool,
+        /// Convert / provenance footer events (`tet info --history`; not `tet qhist`).
+        #[arg(long = "history")]
+        show_footer_history: bool,
+        /// Max chunk rows when `--chunks` or `--all` (default 32; `0` = all).
+        #[arg(short = 'n', long, value_name = "N")]
+        limit: Option<usize>,
+        /// Case-insensitive substring on dataset name.
+        #[arg(long)]
+        dataset: Option<String>,
+        /// Case-insensitive substring on dataset name or dtype.
+        #[arg(long)]
+        grep: Option<String>,
     },
     /// Run a JSON query (plan, execute, or both).
     ///
@@ -67,19 +100,23 @@ pub enum Commands {
         #[arg(long = "jobs", default_value_t = 0)]
         jobs: usize,
     },
-    /// Recent `tet query` log (platform cache; not in `.tet`). Default: `list`.
-    #[command(alias = "hist")]
-    History {
-        #[command(subcommand)]
-        cmd: Option<HistoryCmd>,
-        /// Remove the history file (`list --clear` or bare `tet history --clear`).
-        #[arg(long, global = true)]
-        clear: bool,
-    },
+    /// Recent `tet query` log (platform cache; not in `.tet` footer). Default: `list`.
+    Qhist(QhistArgs),
+}
+
+/// `tet qhist` — platform query history (not `tet info --history` footer).
+#[derive(Args)]
+#[command(name = "qhist", visible_alias = "hist", about = "Recent tet query log (platform cache; not in .tet footer). Default: list")]
+pub struct QhistArgs {
+    #[command(subcommand)]
+    pub cmd: Option<QhistCmd>,
+    /// Remove the query history file (`list --clear` or bare `tet qhist --clear`).
+    #[arg(long, global = true)]
+    pub clear: bool,
 }
 
 #[derive(Subcommand)]
-pub enum HistoryCmd {
+pub enum QhistCmd {
     /// List recent queries (default). Use `--all` for every retained row.
     List {
         /// Max rows to print (ignored when `--all` is set).
@@ -126,7 +163,7 @@ pub enum HistoryCmd {
         preview: Option<usize>,
         #[arg(long)]
         spill_allow: Vec<PathBuf>,
-        /// Same filters as `history list` (only with positional `N`).
+        /// Same filters as `qhist list` (with positional `N`).
         #[arg(long)]
         dataset: Option<String>,
         #[arg(long, value_name = "PATH")]

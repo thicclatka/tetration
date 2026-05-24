@@ -1,14 +1,17 @@
 //! Flat JSON query document wire format (v1).
 //!
-//! Top-level reduction keys (`mean`, `sum`, …) replace nested `operation`. Axis specs accept
-//! `0`, `[0, 1]`, or `[]` (scalar). Parametric ops use `{ "q": …, "axis": … }`.
+//! Top-level reduction keys (`mean`, `sum`, …) replace nested `operation`. Export spill uses
+//! top-level `"spill": "path"` (not nested `output`). Axis specs accept `0`, `[0, 1]`, or `[]`
+//! (scalar). Parametric ops use `{ "q": …, "axis": … }`.
 
 use serde::de::{self, Deserialize, Deserializer};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::{Map, Value};
 
 use super::document::QueryLimits;
-use super::types::{AxisSlice, ExecutionHints, Operation, OutputHints, QueryDocument, TetError};
+use super::types::{
+    AxisSlice, ExecutionHints, Operation, OutputHint, OutputHints, QueryDocument, TetError,
+};
 
 const OP_KEYS: &[&str] = &[
     "sum",
@@ -34,7 +37,7 @@ const RESERVED_KEYS: &[&str] = &[
     "layout_version",
     "dataset",
     "selection",
-    "output",
+    "spill",
     "execution",
 ];
 
@@ -52,6 +55,12 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         return Err(TetError::Validation(
             "nested `operation` is not supported; use a top-level op key (e.g. `\"mean\": 0`)"
                 .into(),
+        ));
+    }
+
+    if obj.contains_key("output") {
+        return Err(TetError::Validation(
+            "nested `output` is not supported; use top-level `\"spill\": \"path\"`".into(),
         ));
     }
 
@@ -77,12 +86,9 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         Some(v) => Some(parse_selection(v)?),
     };
 
-    let output = match obj.get("output") {
+    let output = match obj.get("spill") {
         None => None,
-        Some(v) => {
-            let hints: OutputHints = serde_json::from_value(v.clone())?;
-            Some(hints)
-        }
+        Some(v) => Some(parse_spill(v)?),
     };
 
     let execution = match obj.get("execution") {
@@ -114,6 +120,31 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
 
 fn is_allowed_key(key: &str) -> bool {
     RESERVED_KEYS.contains(&key) || OP_KEYS.contains(&key)
+}
+
+fn parse_spill(v: &Value) -> Result<OutputHints, TetError> {
+    let handle = v.as_str().ok_or_else(|| {
+        TetError::Validation(
+            "`spill` must be a string path (relative to the `.tet` parent or absolute)".into(),
+        )
+    })?;
+    if handle.is_empty() {
+        return Err(TetError::Validation(
+            "`spill` path must not be empty".into(),
+        ));
+    }
+    if handle.len() > QueryLimits::DEFAULT.max_dataset_name_len {
+        return Err(TetError::Validation(format!(
+            "`spill` path exceeds maximum length ({} > {})",
+            handle.len(),
+            QueryLimits::DEFAULT.max_dataset_name_len
+        )));
+    }
+    Ok(OutputHints {
+        preferred: Some(OutputHint::SpillArray {
+            handle: handle.to_owned(),
+        }),
+    })
 }
 
 fn parse_selection(v: &Value) -> Result<Vec<AxisSlice>, TetError> {
@@ -389,13 +420,26 @@ impl Serialize for QueryDocumentWire<'_> {
             serialize_operation(&mut map, op)?;
         }
         if let Some(out) = &doc.output {
-            map.serialize_entry("output", out)?;
+            serialize_output(&mut map, out)?;
         }
         if let Some(ex) = &doc.execution {
             serialize_execution(&mut map, ex)?;
         }
         map.end()
     }
+}
+
+fn serialize_output<S>(map: &mut S, out: &OutputHints) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    match &out.preferred {
+        None | Some(OutputHint::InlineJson) => {}
+        Some(OutputHint::SpillArray { handle }) => {
+            map.serialize_entry("spill", handle)?;
+        }
+    }
+    Ok(())
 }
 
 fn serialize_operation<S>(map: &mut S, op: &Operation) -> Result<(), S::Error>

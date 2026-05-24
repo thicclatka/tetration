@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::query::engine::spill_policy::platform_tetration_cache_dir;
 use crate::query::types::{AxisSlice, Operation, QueryDocument};
 
+use super::text::{contains_ascii_case_insensitive, truncate_field};
+
 /// CLI query history limits and file naming.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySettings {
@@ -293,7 +295,7 @@ pub struct CliQueryHistoryEntry {
     pub query: QueryDocument,
 }
 
-/// `x` = execute (`-x`), `p` = plan-only (matches `tet history list` mode column).
+/// `x` = execute (`-x`), `p` = plan-only (matches `tet qhist list` mode column).
 #[must_use]
 pub fn history_entry_mode(execute: bool) -> &'static str {
     if execute { "x" } else { "p" }
@@ -301,7 +303,7 @@ pub fn history_entry_mode(execute: bool) -> &'static str {
 
 const HISTORY_MODE_LEGEND: &str = "mode: x = had -x (execute), p = plan only (no -x)";
 
-/// Row shape for `tet history list --json` (adds human `mode` alongside stored `execute`).
+/// Row shape for `tet qhist list --json` (adds human `mode` alongside stored `execute`).
 #[derive(Serialize)]
 struct HistoryListRow<'a> {
     at: u64,
@@ -389,7 +391,7 @@ pub fn clear_cli_query_history() -> io::Result<()> {
     HistorySettings::from_env().clear()
 }
 
-/// Compact table for `tet history list` (human default).
+/// Compact table for `tet qhist list` (human default).
 #[must_use]
 pub fn format_history_list_text(
     entries: &[CliQueryHistoryEntry],
@@ -447,11 +449,11 @@ pub fn format_history_list_text(
     }
     out.push('\n');
     let _ = writeln!(out, "{HISTORY_MODE_LEGEND}");
-    out.push_str("replay: tet history run <#>  (1 = newest)\n");
+    out.push_str("replay: tet qhist run <#>  (1 = newest)\n");
     out
 }
 
-/// Full JSON envelope for `tet history list --json`.
+/// Full JSON envelope for `tet qhist list --json`.
 ///
 /// # Errors
 ///
@@ -524,17 +526,6 @@ fn selection_label(sel: Option<&Vec<AxisSlice>>) -> &'static str {
     }
 }
 
-fn truncate_field(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_owned();
-    }
-    let mut end = max.saturating_sub(1);
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
-
 fn read_entries(path: &Path) -> io::Result<Vec<CliQueryHistoryEntry>> {
     if !path.is_file() {
         return Ok(Vec::new());
@@ -580,11 +571,3 @@ fn unix_timestamp_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    haystack
-        .to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
-}

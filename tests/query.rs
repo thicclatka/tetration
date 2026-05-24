@@ -35,8 +35,7 @@ fn sample_query_parses_and_plans() {
             { "start": 0, "stop": 100, "step": 2 },
             { "start": null, "stop": null, "step": 1 }
         ],
-        "mean":[],
-        "output": { "preferred": { "inline_json": null } }
+        "mean":[]
     }"#;
     let doc = parse_query_json(json).unwrap();
     validate_query(&doc).unwrap();
@@ -51,6 +50,28 @@ fn rejects_nested_operation_object() {
     let json = r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#;
     let err = parse_query_json(json).unwrap_err();
     assert!(err.to_string().contains("operation"), "{err}");
+}
+
+#[test]
+fn rejects_nested_output_object() {
+    let json = r#"{"dataset":"a","output":{"preferred":{"spill_array":{"handle":"out.bin"}}}}"#;
+    let err = parse_query_json(json).unwrap_err();
+    assert!(err.to_string().contains("output"), "{err}");
+}
+
+#[test]
+fn parses_flat_spill_roundtrip() {
+    let json = r#"{"dataset":"a","spill":"slice.bin"}"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
+    let out = doc.output.as_ref().unwrap();
+    assert!(matches!(
+        out.preferred,
+        Some(tetration::OutputHint::SpillArray { ref handle }) if handle == "slice.bin"
+    ));
+    let roundtrip = serde_json::to_string(&doc).unwrap();
+    assert!(roundtrip.contains(r#""spill":"slice.bin""#));
+    assert!(!roundtrip.contains("output"));
 }
 
 #[test]
@@ -807,14 +828,14 @@ fn spill_path_allowlist_rejects_outside_root() {
     let policy = SpillPathAllowlist::default_for_tet(&path, std::iter::empty::<PathBuf>()).unwrap();
     let spill_out = outside_dir.path().join("out.bin");
     let json = format!(
-        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":{}}}}}}}}}"#,
+        r#"{{"dataset":"a","spill":{}}}"#,
         json_path_handle(&spill_out)
     );
     let doc = parse_query_json(&json).unwrap();
     let err = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap_err();
     assert!(err.to_string().contains("allowed root"), "{err}");
 
-    let json = r#"{"dataset":"a","output":{"preferred":{"spill_array":{"handle":"out.bin"}}}}"#;
+    let json = r#"{"dataset":"a","spill":"out.bin"}"#;
     let doc = parse_query_json(json).unwrap();
     let resp = plan_query_with_tet_mmap_ex(&doc, None, &mmap, Some(2), Some(&policy)).unwrap();
     assert!(
@@ -832,7 +853,7 @@ fn spill_path_allowlist_rejects_outside_root() {
     let policy = SpillPathAllowlist::default_for_tet(&path, [allow.clone()]).unwrap();
     let spill_ok = allow.join("out.bin");
     let json = format!(
-        r#"{{"dataset":"a","output":{{"preferred":{{"spill_array":{{"handle":{}}}}}}}}}"#,
+        r#"{{"dataset":"a","spill":{}}}"#,
         json_path_handle(&spill_ok)
     );
     let doc = parse_query_json(&json).unwrap();

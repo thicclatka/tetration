@@ -252,7 +252,7 @@ fn build_decode_preview(
     if budget.full_tensor_exceeds_budget(plan, dtype)? && max_preview == 0 {
         return Err(TetError::Validation(format!(
             "logical selection ({} elements, {} bytes) exceeds memory_budget_bytes ({}); \
-             use a positive preview cap, an `operation`, output spill, or raise execution.memory_budget_bytes / memory_budget_percent_bps",
+             use a positive preview cap, a reduction key, `spill`, or raise execution.memory_budget_bytes / memory_budget_percent_bps",
             plan.logical_f32_element_count,
             budget.logical_element_bytes(dtype, plan.logical_f32_element_count)?,
             budget.memory_budget_bytes

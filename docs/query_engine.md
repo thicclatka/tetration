@@ -122,7 +122,7 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 | **`streaming_fold`**         | Tier-A/B **`operation`** (sum, mean, min, …)                       | Single-pass fold (scalar or partial axes); no full logical `Vec`. Chunks are visited **sequentially** in v1 (see [Streaming fold performance](#streaming-fold-performance)). |
 | **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                  | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                                                                   |
 | **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                  | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                                                                    |
-| **`mmap_spill`**             | **`output.preferred.spill_array { handle }`** and no `operation`   | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                    |
+| **`mmap_spill`**             | Top-level **`"spill": "path"`** and no reduction key               | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                    |
 | **`capped_in_memory`**       | Preview-only (no `operation`, no spill) when logical size ≤ budget | Capped materialize into **`execution.f32_preview`** or **`execution.f64_preview`** only.                                                                                     |
 
 When logical selection exceeds the budget and neither **`operation`** nor spill is requested, execution fails with a validation error suggesting a higher budget, an **`operation`**, or spill output.
@@ -131,7 +131,7 @@ Capped preview allocates only `min(cap, logical)` elements in the dtype-appropri
 
 ### Spill path allowlist
 
-Spill targets come from query JSON (`output.preferred.spill_array.handle`). **Relative handles** resolve against the **`.tet` file’s directory** (not shell cwd).
+Spill targets come from query JSON (`"spill": "…"`). **Relative paths** resolve against the **`.tet` file’s directory** (not shell cwd).
 
 Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/engine/spill_policy.rs), applied automatically with `--tet` + `--execute`):
 
@@ -198,7 +198,7 @@ flowchart TD
     TempSpill --> TierCOp
     TierCOp --> Done
 
-    OpGate -->|no| SpillGate{"output.spill_array?"}
+    OpGate -->|no| SpillGate{"spill set?"}
     SpillGate -->|yes| Spill["spill_read_plan_*_le → mmap_spill"]
     Spill --> Done
 
@@ -250,16 +250,17 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 
 The wire format is **flat**: one top-level reduction key per document (`mean`, `sum`, …). Nested `"operation": { … }` is **rejected** at parse time.
 
-| Write                                          | Meaning (internal `operation.axes`)                                 |
-| ---------------------------------------------- | ------------------------------------------------------------------- |
-| `"mean": []`                                   | Scalar mean over all selected elements                              |
-| `"mean": 0`                                    | Mean over axis **0** (`["0"]`)                                      |
-| `"sum": [0, 1]`                                | Partial reduction over axes 0 and 1                                 |
-| `"quantile": { "q": 0.95, "axis": 0 }`         | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)             |
-| `"histogram": { "bins": 10, "axis": 0 }`       | Histogram on axis 0                                                 |
-| `"execution": { "memory_budget_percent": 40 }` | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally) |
+| Write                                          | Meaning (internal `operation.axes`)                                     |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| `"mean": []`                                   | Scalar mean over all selected elements                                  |
+| `"mean": 0`                                    | Mean over axis **0** (`["0"]`)                                          |
+| `"sum": [0, 1]`                                | Partial reduction over axes 0 and 1                                     |
+| `"quantile": { "q": 0.95, "axis": 0 }`         | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)                 |
+| `"histogram": { "bins": 10, "axis": 0 }`       | Histogram on axis 0                                                     |
+| `"execution": { "memory_budget_percent": 40 }` | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)     |
+| `"spill": "slice.bin"`                         | Full logical tensor export beside the `.tet` parent (allowlist applies) |
 
-`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Axis indices must be **non-negative decimals** (`0`, not `"time"` — named axes are Phase 8).
+`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis indices must be **non-negative decimals** (`0`, not `"time"` — named axes are Phase 8).
 
 At most **one** reduction key per document. Unknown top-level fields are rejected (`deny_unknown_fields` style in [`parse_query_value`](../src/query/document_wire.rs)).
 
@@ -325,9 +326,7 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 ```json
 {
   "dataset": "temperature",
-  "output": {
-    "preferred": { "spill_array": { "handle": "/tmp/temp_slice.bin" } }
-  }
+  "spill": "/tmp/temp_slice.bin"
 }
 ```
 
@@ -336,7 +335,7 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
 - **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (empty axis list) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in **`f32_preview`** or **`f64_preview`** when `raw_f32_preview_max > 0`.
 - **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
-- **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode; dtype-native bytes).
+- **Export spill** — **`mmap_spill`** when **`spill`** is set and no reduction key. Preview is read from the spilled file (single full decode; dtype-native bytes).
 
 Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) (`f32` = 1, `f64` = 2, `i32` = 3, `i64` = 4). The preview cap does **not** truncate `operation_*` aggregates.
 
@@ -371,16 +370,16 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 These match the product vision but belong **beside** the reduction enum:
 
-| Capability                                | Why separate                                                                                                                            |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                      |
-| **`cast` / integer dtypes**               | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                                                       |
-| **Named axis labels**                     | Resolve `"time"` → index via dataset metadata before reductions.                                                                        |
-| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                       |
-| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                      |
-| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                         |
-| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                         |
-| **CLI query history**                     | **Done** — platform cache JSONL (`tet history list` / `run`); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer is write provenance only. |
+| Capability                                | Why separate                                                                                                                                        |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                                  |
+| **`cast` / integer dtypes**               | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                                                                   |
+| **Named axis labels**                     | Resolve `"time"` → index via dataset metadata before reductions.                                                                                    |
+| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                   |
+| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                  |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                     |
+| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                                     |
+| **CLI query history**                     | **Done** — platform cache JSONL (`tet qhist list` / `run`; `hist` alias); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer via `tet info --history`. |
 
 ### Non-goals for the JSON `operation` field
 
@@ -388,7 +387,7 @@ These match the product vision but belong **beside** the reduction enum:
 - Plugin codecs or filters beyond the v1 catalog codec tags.
 - Guarantees about numerical order beyond logical row-major **preview** order (aggregates are commutative where noted).
 - **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 10 Python).
-- **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet history` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
+- **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet qhist` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
 When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial_fold.rs`, and (if tier **C**) `materialize_stats.rs`.
 
@@ -404,7 +403,7 @@ The JSON query plane is a **declarative control document**, not executable code.
 | **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))           |
 | **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                     |
 | **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                             |
-| **Spill path**      | `output.preferred.spill_array.handle` in query JSON      | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs) |
+| **Spill path**      | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs) |
 
 The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
 
@@ -442,7 +441,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Cap input size and parse time; reject documents above policy limits before calling the library.
 - Do not build shell commands, SQL, or file paths by string-concatenating raw JSON fields.
 - Keep the `.tet` path under caller control (allowlist directories, no user-supplied absolute paths in multi-tenant services unless intended).
-- For **`spill_array`**, validate or rewrite `handle` before execution (path traversal, writable location, quota).
+- For **`spill`**, validate or rewrite the path before execution (path traversal, writable location, quota).
 
 **Consuming `QueryResponse` JSON**
 

@@ -1,4 +1,4 @@
-//! `tet history` (list, run).
+//! `tet qhist` — platform query history (list, run).
 
 use std::path::PathBuf;
 
@@ -7,7 +7,7 @@ use tetration::{
     format_history_list_text, get_cli_query_history_entry, parse_history_execute_filter,
 };
 
-use crate::args::{HistoryCmd, QueryStdoutFormat};
+use crate::args::{QhistCmd, QueryStdoutFormat};
 use crate::query::{QueryRunOpts, run_query};
 use crate::util::{cli_error, resolve_stdout};
 
@@ -34,7 +34,7 @@ pub(crate) fn build_history_filter(
     }
 }
 
-fn run_history_list(
+fn run_qhist_list(
     limit: usize,
     all: bool,
     json: bool,
@@ -53,7 +53,7 @@ fn run_history_list(
     Ok(())
 }
 
-struct HistoryReplayOpts {
+struct QhistReplayOpts {
     entry: tetration::CliQueryHistoryEntry,
     tet: Option<PathBuf>,
     force_execute: bool,
@@ -64,7 +64,7 @@ struct HistoryReplayOpts {
     spill_allow: Vec<PathBuf>,
 }
 
-fn run_history_replay(opts: HistoryReplayOpts) -> Result<(), String> {
+fn run_qhist_replay(opts: QhistReplayOpts) -> Result<(), String> {
     let stdout = resolve_stdout(opts.quiet, opts.format);
     let execute = if opts.plan {
         false
@@ -85,7 +85,7 @@ fn run_history_replay(opts: HistoryReplayOpts) -> Result<(), String> {
     })
 }
 
-pub(crate) fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), String> {
+pub(crate) fn run_qhist(cmd: Option<QhistCmd>, clear: bool) -> Result<(), String> {
     if clear {
         clear_cli_query_history().map_err(cli_error)?;
         eprintln!("query history cleared");
@@ -94,9 +94,9 @@ pub(crate) fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), St
     match cmd {
         None => {
             let limit = HistorySettings::from_env().cli_query_max;
-            run_history_list(limit, false, false, None)
+            run_qhist_list(limit, false, false, None)
         }
-        Some(HistoryCmd::List {
+        Some(QhistCmd::List {
             limit,
             all,
             json,
@@ -106,9 +106,9 @@ pub(crate) fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), St
             grep,
         }) => {
             let filter = build_history_filter(dataset, tet, mode, grep)?;
-            run_history_list(limit, all, json, filter.as_ref())
+            run_qhist_list(limit, all, json, filter.as_ref())
         }
-        Some(HistoryCmd::Run {
+        Some(QhistCmd::Run {
             index,
             tet,
             execute,
@@ -124,7 +124,7 @@ pub(crate) fn run_history(cmd: Option<HistoryCmd>, clear: bool) -> Result<(), St
         }) => {
             let filter = build_history_filter(dataset, tet_filter, mode, grep)?;
             let entry = get_cli_query_history_entry(index, filter.as_ref()).map_err(cli_error)?;
-            run_history_replay(HistoryReplayOpts {
+            run_qhist_replay(QhistReplayOpts {
                 entry,
                 tet,
                 force_execute: execute,
