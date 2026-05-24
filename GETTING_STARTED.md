@@ -1,6 +1,6 @@
 # Getting started — Tetration
 
-Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **execution** (`tet query --tet … --execute`), and **`tet convert`** from **HDF5 / NetCDF / Zarr v3** (extension or directory sniff, streaming + parallel chunk import).
+Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **execution** (`tet query … -t … -x`), and **`tet convert`** from **HDF5 / NetCDF / Zarr v3** (extension or directory sniff, streaming + parallel chunk import).
 
 **Fixtures:** tracked import tensors and generators live in [`fixtures/README.md`](fixtures/README.md) (Phase 5 convert tests + local 20 GiB stress).
 
@@ -92,18 +92,28 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 ### Baseline (done)
 
-- [x] **`tet query`** — validate, plan, optional **`--execute`**; pretty-printed JSON **`QueryResponse`**.
+- [x] **`tet query`** — validate, plan, optional **`-x` / `--execute`**; default stdout is pretty full **`QueryResponse`** (`--format full`).
+- [x] **Focused query output** — **`--format full|json|stats|quiet`** (or **`-q`** for quiet); library **`format_query_response`** in **`src/query/cli/output/`**; **`tests/cli_output.rs`**.
 - [x] **`tet history`** — platform cache (`query_history.jsonl`); **`--clear`**, **`TET_NO_QUERY_HISTORY`**, **`TET_QUERY_HISTORY_FILE`** (see [CLI query history](#cli-query-history)).
 - [x] **`tet info` / `tet convert`** — catalog summary JSON; convert progress bar.
 
 ### Phase 6 focus (next)
 
-- [ ] **Focused query output** — human-scoped views (stats-only, table preview, `--quiet` / `--json` toggles) instead of always dumping the full response envelope.
 - [ ] **History ergonomics** — replay (`tet query --replay N`), search/filter, named bookmarks; keep history out of `.tet` files.
 - [ ] **Query document v2** — evaluate **TOML** or a lighter **JSON profile** (fewer nested brackets, line-oriented selection/operation blocks) alongside v1 JSON; shared validation → same `QueryDocument` internally.
-- [ ] **CLI polish** — consistent error messages, `--file` discovery hints, optional interactive plan preview before **`--execute`**.
+- [ ] **CLI polish** — consistent error messages, dataset discovery hints on catalog miss, optional interactive plan preview before **`-x`**.
+- [ ] **Optional stdout modes** — slim **`plan`** summary (no per-chunk rows), human **`preview`** table (defer unless needed).
 
-**Verify:** CLI integration tests; golden query docs in repo; `tet query` UX review on large **`operation_*`** responses.
+**Verify:** spawn-`tet` integration tests; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
+
+**Examples:**
+
+```bash
+tet query q.json -t data.tet              # plan (full JSON)
+tet query q.json -t data.tet -x -q        # execute, one-line stdout
+tet query q.json -t data.tet -x --format stats
+tet query q.json -t data.tet -x --format json | jq .
+```
 
 ## Phase 7 — Metadata & history
 
@@ -185,15 +195,16 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 Recent **`tet query`** documents are stored under the platform cache (`…/tetration/query_history.jsonl`), **not** in the `.tet` file:
 
 ```bash
-tet query -f q.json --tet data.tet --execute   # appends on success (best-effort)
+tet query q.json -t data.tet -x                # appends on success (best-effort)
 tet history                                     # last 10 (JSON)
 tet history --clear                             # remove file
 TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
+TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 ```
 
 ## Ongoing hygiene
 
-- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), convert (`tests/convert.rs`), layout (`tests/layout_roundtrip.rs`); shared builders in `tests/fixture.rs`.
+- [x] Integration tests: temp `.tet`, mmap, catalog (`tests/catalog.rs`), query (`tests/query.rs`), convert (`tests/convert.rs`), layout (`tests/layout_roundtrip.rs`), CLI output/history (`tests/cli_output.rs`, `tests/cli_history.rs`); shared builders in `tests/fixture.rs`.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`fixtures/README.md`**, and this file aligned when layout, codecs, convert, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
 - [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
@@ -205,7 +216,7 @@ TET_NO_QUERY_HISTORY=1 tet query …              # disable recording
 1. ~~**Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.~~ **Done** — wire tags `3`/`4`, writers, query preview/spill/ops.
 2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).~~ **Done**
 3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).
-4. **CLI focused output (Phase 6):** stats-only / compact query response modes; `--quiet` vs full JSON.
+4. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
 5. **Query doc v2 spike (Phase 6):** TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
 6. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
 7. **History events v2 (Phase 7):** structured transform event + session flush API.

@@ -118,6 +118,9 @@ pub fn clear_cli_query_history() -> io::Result<()> {
 }
 
 fn read_entries(path: &Path) -> io::Result<Vec<CliQueryHistoryEntry>> {
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
     let raw = fs::read_to_string(path)?;
     let mut out = Vec::new();
     for line in raw.lines() {

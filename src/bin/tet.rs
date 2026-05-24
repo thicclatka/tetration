@@ -5,12 +5,13 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tetration::{
-    CLI_QUERY_HISTORY_MAX, ConvertProgress, ConvertReport, SpillPathAllowlist,
+    CLI_QUERY_HISTORY_MAX, ConvertProgress, ConvertReport, QueryOutputFormat, SpillPathAllowlist,
     append_cli_query_history, clear_cli_query_history, convert_to_tet_with_progress,
-    detect_convert_format, list_cli_query_history, mmap_file_read, parse_query_json,
-    plan_query_empty, plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query,
+    detect_convert_format, format_query_response, list_cli_query_history, mmap_file_read,
+    parse_query_json, plan_query_empty, plan_query_with_tet_mmap_ex, read_tet_summary_v1,
+    validate_query,
 };
 
 #[derive(Parser)]
@@ -31,22 +32,38 @@ enum Commands {
         /// Path to `.tet` file.
         path: PathBuf,
     },
-    /// Validate a JSON query document and print a JSON plan; with `--tet`, attach catalog + read plan; with `--execute`, mmap-read raw `f32` preview (see `--preview-f32`).
+    /// Run a JSON query (plan, execute, or both).
+    ///
+    /// Typical flows:
+    ///   tet query q.json -t data.tet
+    ///   tet query q.json -t data.tet -x -q
+    ///   tet query '{"dataset":"f32","operation":{"mean":{"axes":[]}}}' -t data.tet -x
+    #[command(
+        visible_alias = "q",
+        after_help = "QUERY: path to .json, inline JSON, or `-` for stdin; omit QUERY to read stdin. \
+                      -x decodes chunks (requires -t). -q is --format quiet; else default full."
+    )]
     Query {
-        /// Path to JSON query; omit or use `-` to read stdin.
-        #[arg(short = 'f', long = "file", value_name = "PATH")]
-        file: Option<PathBuf>,
-        /// Optional `.tet` file: resolve `dataset` against the on-disk catalog (metadata only).
-        #[arg(long = "tet", value_name = "PATH")]
+        /// Query document: `.json` path, inline JSON, or `-` for stdin.
+        #[arg(value_name = "QUERY")]
+        query: Option<String>,
+        /// `.tet` file (catalog + optional execute).
+        #[arg(short = 't', long, value_name = "PATH")]
         tet: Option<PathBuf>,
-        /// After planning, mmap-read planned chunk payloads (raw or zstd `f32`); attach `execution` with capped `f32_preview`. With **`operation`** (`sum`, `mean`, `min`, `max`, `count`), aggregates use the full logical selection (`operation_*` / `operation_reduced_*`; scalar `axes: []` uses a single-pass fold).
-        #[arg(long = "execute", default_value_t = false)]
+        /// Decode planned chunks and attach `execution` (requires `-t`).
+        #[arg(short = 'x', long, requires = "tet")]
         execute: bool,
-        /// Max decoded `f32` values in `execution` when using `--execute` (default 64). Use `0` with a query `operation` to skip preview floats while still aggregating.
-        #[arg(long = "preview-f32", value_name = "N")]
-        preview_f32: Option<usize>,
-        /// Additional allowed directory roots for spill (repeatable). Default roots: `.tet` parent, platform cache (`~/.cache/tetration` and `~/.local/cache/tetration` on Linux; `~/.local/cache/tetration` on macOS; Windows `%LOCALAPPDATA%\\tetration`; temp dirs).
-        #[arg(long = "spill-allow", value_name = "DIR")]
+        /// stdout: full (pretty JSON), json, stats (slim), quiet (one line). Default: full.
+        #[arg(long, value_enum, default_value_t = QueryStdoutFormat::Full, conflicts_with = "quiet")]
+        format: QueryStdoutFormat,
+        /// Shorthand for `--format quiet` (one-line stdout).
+        #[arg(short = 'q', long, conflicts_with = "format")]
+        quiet: bool,
+        /// Sample values in JSON when executing (all dtypes). Default: 64 (full/json), 0 (quiet/stats).
+        #[arg(long, visible_alias = "preview-f32", value_name = "N")]
+        preview: Option<usize>,
+        /// Extra spill directory roots (repeatable; needs `-x` and `-t`).
+        #[arg(long, requires = "execute", requires = "tet")]
         spill_allow: Vec<PathBuf>,
     },
     /// Convert HDF5 / `NetCDF` / Zarr v3 directory store into `.tet` (format from input extension or sniff).
@@ -70,17 +87,70 @@ enum Commands {
     },
 }
 
+/// How `tet query` prints success on stdout (errors always go to stderr).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum QueryStdoutFormat {
+    /// Pretty JSON of the full `QueryResponse` (default).
+    #[default]
+    Full,
+    /// Compact one-line JSON (scripts, `jq`).
+    Json,
+    /// Slim JSON: plan summary + aggregates, no chunk list or preview arrays.
+    Stats,
+    /// One human-readable line (`dataset=… op=… mean=…`).
+    Quiet,
+}
+
+impl From<QueryStdoutFormat> for QueryOutputFormat {
+    fn from(f: QueryStdoutFormat) -> Self {
+        match f {
+            QueryStdoutFormat::Full => Self::Full,
+            QueryStdoutFormat::Json => Self::Json,
+            QueryStdoutFormat::Stats => Self::Stats,
+            QueryStdoutFormat::Quiet => Self::Quiet,
+        }
+    }
+}
+
+/// Default preview cap when `--preview` is omitted.
+const QUERY_PREVIEW_DEFAULT: usize = 64;
+
+fn resolve_execute_preview_limit(
+    execute: bool,
+    stdout: QueryOutputFormat,
+    explicit: Option<usize>,
+) -> Result<Option<usize>, String> {
+    if !execute {
+        if explicit.is_some() {
+            return Err("--preview requires -x / --execute".into());
+        }
+        return Ok(None);
+    }
+    Ok(Some(explicit.unwrap_or(match stdout {
+        QueryOutputFormat::Full | QueryOutputFormat::Json => QUERY_PREVIEW_DEFAULT,
+        QueryOutputFormat::Stats | QueryOutputFormat::Quiet => 0,
+    })))
+}
+
 fn read_stdin_string() -> io::Result<String> {
     let mut buf = String::new();
     io::stdin().read_to_string(&mut buf)?;
     Ok(buf)
 }
 
-fn read_query_payload(file: Option<&PathBuf>) -> io::Result<String> {
-    match file {
-        None => read_stdin_string(),
-        Some(p) if p.as_os_str() == "-" => read_stdin_string(),
-        Some(path) => fs::read_to_string(path),
+/// Read query JSON from a positional arg (file path or inline JSON) or stdin.
+fn read_query_payload(query: Option<&str>) -> io::Result<String> {
+    let Some(arg) = query else {
+        return read_stdin_string();
+    };
+    if arg == "-" {
+        return read_stdin_string();
+    }
+    let path = Path::new(arg);
+    if path.is_file() {
+        fs::read_to_string(path)
+    } else {
+        Ok(arg.to_owned())
     }
 }
 
@@ -144,7 +214,6 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
-    const QUERY_PREVIEW_F32_CAP: usize = 64;
     match cli.command {
         Commands::Info { path } => {
             let mmap = mmap_file_read(&path).map_err(|e| e.to_string())?;
@@ -158,32 +227,30 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Commands::Query {
-            file,
+            query,
             tet,
             execute,
-            preview_f32,
+            format,
+            quiet,
+            preview,
             spill_allow,
         } => {
-            let raw = read_query_payload(file.as_ref()).map_err(|e| e.to_string())?;
+            let stdout = if quiet {
+                QueryOutputFormat::Quiet
+            } else {
+                format.into()
+            };
+            let preview = resolve_execute_preview_limit(execute, stdout, preview)?;
+            let raw = read_query_payload(query.as_deref()).map_err(|e| e.to_string())?;
             let doc = parse_query_json(raw.trim()).map_err(|e| e.to_string())?;
             validate_query(&doc).map_err(|e| e.to_string())?;
-            let preview = if execute {
-                Some(preview_f32.unwrap_or(QUERY_PREVIEW_F32_CAP))
-            } else if preview_f32.is_some() {
-                return Err("`--preview-f32` requires `--execute`".into());
-            } else {
-                None
-            };
             let mut spill_owned = None;
             if execute {
-                if let Some(path) = tet.as_ref() {
-                    spill_owned = Some(
-                        SpillPathAllowlist::default_for_tet(path, spill_allow)
-                            .map_err(|e| e.to_string())?,
-                    );
-                }
-            } else if !spill_allow.is_empty() {
-                return Err("`--spill-allow` requires `--execute` and `--tet`".into());
+                let path = tet.as_ref().expect("clap requires --tet when -x is set");
+                spill_owned = Some(
+                    SpillPathAllowlist::default_for_tet(path, spill_allow)
+                        .map_err(|e| e.to_string())?,
+                );
             }
             let response = if let Some(path) = tet.as_ref() {
                 let path_display = path.display().to_string();
@@ -197,12 +264,9 @@ fn run(cli: Cli) -> Result<(), String> {
                 )
                 .map_err(|e| e.to_string())?
             } else {
-                if execute {
-                    return Err("`--execute` requires `--tet PATH` (mmap read needs a file)".into());
-                }
                 plan_query_empty(&doc)
             };
-            let out = serde_json::to_string_pretty(&response).map_err(|e| e.to_string())?;
+            let out = format_query_response(&response, stdout)?;
             println!("{out}");
             let tet_display = tet.as_ref().map(|p| p.display().to_string());
             if let Err(e) = append_cli_query_history(&doc, tet_display.as_deref(), execute) {

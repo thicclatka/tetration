@@ -55,7 +55,18 @@ flowchart TD
     end
 ```
 
-**CLI mapping:** `tet query` calls `validate_query` then `plan_query_empty` or `plan_query_with_tet_mmap`. `--tet PATH` supplies the mmap; `--execute` sets `raw_f32_preview_max` (default **64**; **`--preview-f32 0`** with an `operation` skips preview floats but still aggregates).
+**CLI mapping:** `tet query [QUERY]` calls `validate_query` then `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an `operation` skips preview arrays but still aggregates.
+
+Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
+
+| `--format` | Short | stdout |
+| ---------- | ----- | ------ |
+| `full` (default) | — | Pretty JSON, full `QueryResponse` |
+| `json` | — | Compact one-line JSON, full envelope |
+| `stats` | — | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays |
+| `quiet` | `-q` | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`) |
+
+Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
 
 ## Module map
 
@@ -67,8 +78,19 @@ flowchart TD
 | **`fold/`**        | `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel_fold.rs`, `partial_fold.rs`, … | `FoldPlanOutcome`, `ReductionKind`, streaming scalar + partial-axis reductions; bulk **`var` / `std`** via SIMD slab merge. |
 | **`dispatch.rs`**  | —                                                                                         | Dtype routing for materialize, spill, scalar/partial fold.                                                                  |
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                 | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                         |
+| **`cli/`**         | `history.rs`, `output/` (`mod.rs`, `quiet.rs`, `stats.rs`, `format_num.rs`)               | Platform query history JSONL; `QueryOutputFormat`, `format_query_response`.                                                 |
 
-Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …).
+Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …).
+
+## CLI query output
+
+Library entry: **`format_query_response(&QueryResponse, QueryOutputFormat)`** — builds strings for `tet` stdout without mutating the response.
+
+- **`full` / `json`** — serialize the full envelope (pretty vs compact). Use for debugging, golden tests, and tools that need `read_plan.chunks[]`.
+- **`stats`** — [`stats.rs`](../src/query/cli/output/stats.rs) projects catalog/read_plan summaries and execution I/O + `operation_*` fields; omits chunk rows and preview arrays.
+- **`quiet`** — [`quiet.rs`](../src/query/cli/output/quiet.rs) prints a single `key=value` line; partial-axis reductions include reduced shape + sample values. Plan-only and unmatched-dataset cases still emit a short line.
+
+Implement new presentation in **`src/query/cli/output/`**; keep planning/execution in **`engine/`**.
 
 ## Planning detail
 
@@ -136,7 +158,7 @@ So a full-file scalar op still **reads every payload byte once** and **touches e
 
 ```bash
 echo '{"dataset":"data","layout_version":1,"operation":{"mean":{"axes":[]}}}' \
-  | tet query --tet fixtures/extra_large/h5/tensor_20gb.tet --execute --preview-f32 0
+  | tet query -t fixtures/extra_large/h5/tensor_20gb.tet -x -q
 ```
 
 On a warm SSD (Apple Silicon, May 2026), expect on the order of **~0.5–0.6 s** for full-tensor **mean** and **~0.6 s** for **std/var** over the same selection (~30–40 GiB/s effective from page cache). Response checks:
@@ -392,7 +414,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ### Output protections (today)
 
-1. **`serde_json` serialization** — Strings in `QueryResponse` are JSON-escaped when written (default `tet query` pretty-print).
+1. **`serde_json` serialization** — Strings in `QueryResponse` are JSON-escaped when written (`tet query --format full` pretty-print, or `json` / `stats` compact JSON).
 2. **Bounded preview arrays** — `execution.f32_preview` / `execution.f64_preview` are capped by `--preview-f32` / `raw_f32_preview_max`; aggregates use full-tensor math but return numeric summaries, not opaque blobs.
 3. **Server-generated messages** — Most `message` text is produced by the engine; user strings appear mainly as echoed `dataset` / axis labels and in validation errors.
 

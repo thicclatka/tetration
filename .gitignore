@@ -47,3 +47,6 @@ target/
 test-data/
 
 .vscode/
+
+# Local scratch docs (not for PR / not tracked)
+docs/.local/

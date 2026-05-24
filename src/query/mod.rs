@@ -1,6 +1,6 @@
 //! JSON query documents: validated plans for reads and basic operations.
 
-mod cli_history;
+mod cli;
 mod decode;
 mod dispatch;
 mod document;
@@ -11,9 +11,10 @@ mod plan;
 mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;
-pub use cli_history::{
-    CLI_QUERY_HISTORY_MAX, CliQueryHistoryEntry, append_cli_query_history, clear_cli_query_history,
-    cli_query_history_enabled, cli_query_history_path, list_cli_query_history,
+pub use cli::{
+    CLI_QUERY_HISTORY_MAX, CliQueryHistoryEntry, QueryOutputFormat, append_cli_query_history,
+    clear_cli_query_history, cli_query_history_enabled, cli_query_history_path,
+    format_query_response, list_cli_query_history,
 };
 pub use document::{QueryLimits, parse_query_json, validate_query};
 #[doc(hidden)]

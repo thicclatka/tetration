@@ -4,6 +4,8 @@ dictionaryDefinitions: []
 dictionaries: []
 words:
   - Accum
+  - argmax
+  - argmin
   - badzstd
   - bytemuck
   - cdylib
