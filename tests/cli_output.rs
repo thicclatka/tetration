@@ -12,7 +12,7 @@ fn format_full_and_json_include_operation_fields() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fmt.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -30,7 +30,7 @@ fn format_stats_omits_chunk_rows_and_previews() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("stats.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(8)).unwrap();
@@ -47,7 +47,7 @@ fn format_quiet_scalar_mean() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -66,7 +66,7 @@ fn format_quiet_partial_sum_along_axis() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet_partial.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":["0"]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":0}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -123,7 +123,7 @@ fn format_plan_omits_chunks_and_execution() {
     assert!(!planned.contains("\"chunks\""));
     assert!(!planned.contains("\"execution\""));
 
-    let doc_op = parse_query_json(r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#).unwrap();
+    let doc_op = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
     validate_query(&doc_op).unwrap();
     let executed = plan_query_with_tet_mmap(&doc_op, None, &mmap, Some(0)).unwrap();
     let planned_exec = format_query_response(&executed, QueryOutputFormat::Plan).unwrap();

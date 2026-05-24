@@ -5,6 +5,7 @@
 
 use crate::catalog::MAX_NDIM;
 
+use super::document_wire::parse_query_value;
 use super::types::{AxisSlice, Operation, QueryDocument, TetError};
 
 /// Input limits enforced by [`parse_query_json`] and [`validate_query`].
@@ -67,7 +68,7 @@ pub fn parse_query_json(text: &str) -> Result<QueryDocument, TetError> {
             limits.max_json_depth
         )));
     }
-    Ok(serde_json::from_value(value)?)
+    parse_query_value(&value)
 }
 
 /// JSON-only checks: `step != 0`, and when both `start` and `stop` are set, `start < stop`.

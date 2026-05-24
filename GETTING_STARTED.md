@@ -58,7 +58,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 **Goal:** JSON **`operation`** over mmap’d chunks with memory-aware routing (stream, cap, spill, temp materialize).
 
 - [x] **Mmap + plan + read:** `plan_query_with_tet_mmap`, materialize **`f32` / `f64` / `i32` / `i64`** (sequential + parallel + `_into`); CLI **`--execute`** / **`--preview-f32`** (raw and zstd chunks; **`--preview-f32 0`** with **`operation`** skips preview bytes). Decoded layout is **logical row-major** over the strided selection.
-- [x] **`operation`:** `sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan` with **`axes: []`** (scalar) or **`axes: ["0",…]`** (partial reductions → **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`).
+- [x] **Reductions (flat JSON):** top-level keys `sum`, `mean`, … — scalar **`"mean": []`**, partial **`"mean": 0`** or **`"sum": [0,1]`** → **`operation_*`** / **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`.
 - [x] **Streaming reductions** — scalar and partial-axis folds without full logical tensor allocation; **`memory_strategy: streaming_fold`**.
 - [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); per-file settings via **`RawArrayWrite::file_execution`**.
 - [x] **Mmap spill** — `output.preferred.spill_array { handle }` → dtype-native spill paths (`memory_strategy: mmap_spill`).
@@ -101,7 +101,8 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 - [x] **History list / run** — `tet history list` (default), `--all` for all retained rows; `tet history run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
 - [x] **History extras** — `list` filters (`--dataset`, `--tet`, `--mode`, `--grep`); indices match filtered view for `run N` (not in `.tet`).
-- [ ] **Query document v2** — evaluate **TOML** or a lighter **JSON profile** (fewer nested brackets, line-oriented selection/operation blocks) alongside v1 JSON; shared validation → same `QueryDocument` internally.
+- [x] **Flat query JSON (v1 wire)** — top-level op keys (`mean: 0`, `quantile: { q, axis }`); nested `"operation"` rejected; see [`docs/query_engine.md`](docs/query_engine.md#query-document-json).
+- [ ] **Optional alternate front-ends** — TOML or line-oriented profile → same `QueryDocument` (later).
 - [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
 - [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
 - [ ] **Optional stdout modes** — human **`preview`** table (defer unless needed).
@@ -227,7 +228,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `tests/convert.rs`, [`fixtures/`](fixtures/README.md).~~ **Done**
 3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).
 4. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
-5. **Query doc v2 spike (Phase 6):** TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
+5. **Query front-end spike (Phase 6+):** optional TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
 6. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
 7. **History events v2 (Phase 7):** structured transform event + session flush API.
 8. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.

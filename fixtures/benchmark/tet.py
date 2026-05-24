@@ -38,7 +38,7 @@ def query_json(op: OpName) -> str:
         {
             "dataset": "data",
             "layout_version": 1,
-            "operation": {op: {"axes": []}},
+            op: [],
         }
     )
 

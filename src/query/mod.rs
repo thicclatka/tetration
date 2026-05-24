@@ -4,6 +4,7 @@ mod cli;
 mod decode;
 mod dispatch;
 mod document;
+mod document_wire;
 mod engine;
 mod fold;
 mod materialize;

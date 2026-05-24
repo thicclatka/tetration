@@ -41,7 +41,7 @@ fn sample_query_json() -> &'static str {
 }
 
 fn mean_query_json() -> &'static str {
-    r#"{"dataset":"temperature","operation":{"mean":{"axes":[]}}}"#
+    r#"{"dataset":"temperature","mean":[]}"#
 }
 
 #[test]

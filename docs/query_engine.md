@@ -2,7 +2,7 @@
 
 The **query engine** (`src/query/`) turns a validated JSON [`QueryDocument`](../src/query/types/document.rs) into a [`QueryResponse`](../src/query/types/response.rs): catalog resolution, a chunk-level **read plan**, and optionally mmap-backed decode plus **`operation`** aggregates.
 
-JSON parsing and schema validation live in **`document.rs`**; wire types live in **`types/`** (`document`, `plan`, `response`, `error`). Planning and decode live in **`plan/`** and **`decode/`**; materialize, fold, and dtype routing in **`materialize/`**, **`fold/`**, and **`dispatch.rs`**; orchestration in **`engine/`** (`run`, `operations`, `budget`, `spill_policy`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
+Flat JSON parsing lives in **`document_wire.rs`**; size/depth limits and **`validate_query`** live in **`document.rs`**. Wire types live in **`types/`** (`document`, `plan`, `response`, `error`). Planning and decode live in **`plan/`** and **`decode/`**; materialize, fold, and dtype routing in **`materialize/`**, **`fold/`**, and **`dispatch.rs`**; orchestration in **`engine/`** (`run`, `operations`, `budget`, `spill_policy`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
 
 See [JSON security (input and output)](#json-security-input-and-output) for trust boundaries and hardening notes.
 
@@ -59,12 +59,12 @@ flowchart TD
 
 Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
 
-| `--format` | Short | stdout |
-| ---------- | ----- | ------ |
-| `full` (default) | — | Pretty JSON, full `QueryResponse` |
-| `json` | — | Compact one-line JSON, full envelope |
-| `stats` | — | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays |
-| `quiet` | `-q` | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`) |
+| `--format`       | Short | stdout                                                                                                            |
+| ---------------- | ----- | ----------------------------------------------------------------------------------------------------------------- |
+| `full` (default) | —     | Pretty JSON, full `QueryResponse`                                                                                 |
+| `json`           | —     | Compact one-line JSON, full envelope                                                                              |
+| `stats`          | —     | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays |
+| `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                    |
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
 
@@ -87,7 +87,7 @@ Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and
 Library entry: **`format_query_response(&QueryResponse, QueryOutputFormat)`** — builds strings for `tet` stdout without mutating the response.
 
 - **`full` / `json`** — serialize the full envelope (pretty vs compact). Use for debugging, golden tests, and tools that need `read_plan.chunks[]`.
-- **`stats`** — [`stats.rs`](../src/query/cli/output/stats.rs) projects catalog/read_plan summaries and execution I/O + `operation_*` fields; omits chunk rows and preview arrays.
+- **`stats`** — [`stats.rs`](../src/query/cli/output/stats.rs) projects catalog/read*plan summaries and execution I/O + `operation*\*` fields; omits chunk rows and preview arrays.
 - **`quiet`** — [`quiet.rs`](../src/query/cli/output/quiet.rs) prints a single `key=value` line; partial-axis reductions include reduced shape + sample values. Plan-only and unmatched-dataset cases still emit a short line.
 
 Implement new presentation in **`src/query/cli/output/`**; keep planning/execution in **`engine/`**.
@@ -157,7 +157,7 @@ So a full-file scalar op still **reads every payload byte once** and **touches e
 **Reference (local, gitignored fixture):** `fixtures/extra_large/h5/tensor_20gb.tet` — 20 GiB logical **`f32`**, 320 chunks × 64 MiB raw (`dataset`: **`data`**). After convert from `tensor_20gb.h5`:
 
 ```bash
-echo '{"dataset":"data","layout_version":1,"operation":{"mean":{"axes":[]}}}' \
+echo '{"dataset":"data","layout_version":1,"mean":[]}' \
   | tet query -t fixtures/extra_large/h5/tensor_20gb.tet -x -q
 ```
 
@@ -246,11 +246,28 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 - On-disk layout (TIDX execution header): [`layout_v1.md`](layout_v1.md)
 - Roadmap checklist: [`GETTING_STARTED.md`](../GETTING_STARTED.md)
 
+## Query document (JSON)
+
+The wire format is **flat**: one top-level reduction key per document (`mean`, `sum`, …). Nested `"operation": { … }` is **rejected** at parse time.
+
+| Write                                          | Meaning (internal `operation.axes`)                                 |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| `"mean": []`                                   | Scalar mean over all selected elements                              |
+| `"mean": 0`                                    | Mean over axis **0** (`["0"]`)                                      |
+| `"sum": [0, 1]`                                | Partial reduction over axes 0 and 1                                 |
+| `"quantile": { "q": 0.95, "axis": 0 }`         | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)             |
+| `"histogram": { "bins": 10, "axis": 0 }`       | Histogram on axis 0                                                 |
+| `"execution": { "memory_budget_percent": 40 }` | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally) |
+
+`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Axis indices must be **non-negative decimals** (`0`, not `"time"` — named axes are Phase 8).
+
+At most **one** reduction key per document. Unknown top-level fields are rejected (`deny_unknown_fields` style in [`parse_query_value`](../src/query/document_wire.rs)).
+
 ## Operations (shipped in v1)
 
-JSON `operation` is a tagged object with decimal **`axes`** (dimension indices as strings, e.g. `"0"`):
+Reduction keys map to response fields below. **Scalar** = empty axis list (`[]` on the wire); **partial** = one or more axis indices.
 
-| Operation / JSON tag | `axes: []` (scalar)                                       | Non-empty `axes` (partial reduction)                                                                               |
+| Operation / JSON key | Scalar (`[]`)                                             | Non-empty axes (partial reduction)                                                                                 |
 | -------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `sum`                | `operation_sum`                                           | `operation_reduced_sum` + `operation_reduced_shape`                                                                |
 | `mean`               | `operation_mean`                                          | `operation_reduced_mean` + `operation_reduced_shape`                                                               |
@@ -284,13 +301,13 @@ Integer tags are reserved for a follow-up; [`ElementDtype`](../src/utils/dtype.r
 Quantile example (exact selection on sorted values, linear blend between adjacent ranks):
 
 ```json
-{ "dataset": "a", "operation": { "quantile": { "axes": [], "q": 0.95 } } }
+{ "dataset": "a", "quantile": { "q": 0.95 } }
 ```
 
 Histogram example (equal-width bins from per-cell min/max; scalar returns edges):
 
 ```json
-{ "dataset": "a", "operation": { "histogram": { "axes": ["0"], "bins": 10 } } }
+{ "dataset": "a", "histogram": { "axis": 0, "bins": 10 } }
 ```
 
 Example:
@@ -298,8 +315,8 @@ Example:
 ```json
 {
   "dataset": "temperature",
-  "operation": { "mean": { "axes": ["0"] } },
-  "execution": { "memory_budget_percent_bps": 4000 }
+  "mean": 0,
+  "execution": { "memory_budget_percent": 40 }
 }
 ```
 
@@ -317,7 +334,7 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 **Execution paths today:**
 
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
-- **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (`axes: []`) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in **`f32_preview`** or **`f64_preview`** when `raw_f32_preview_max > 0`.
+- **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (empty axis list) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in **`f32_preview`** or **`f64_preview`** when `raw_f32_preview_max > 0`.
 - **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
 - **Export spill** — **`mmap_spill`** when `output.preferred.spill_array` is set and no `operation`. Preview is read from the spilled file (single full decode; dtype-native bytes).
 
@@ -354,15 +371,15 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 These match the product vision but belong **beside** the reduction enum:
 
-| Capability                                | Why separate                                                                                         |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).   |
-| **`cast` / integer dtypes**               | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                    |
-| **Named axis labels**                     | Resolve `"time"` → index via dataset metadata before reductions.                                     |
-| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                    |
-| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                   |
-| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.      |
-| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                      |
+| Capability                                | Why separate                                                                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                      |
+| **`cast` / integer dtypes**               | Needs **`i32` / `i64`** tags on disk and in materialize (`f32` / `f64` **done**).                                                       |
+| **Named axis labels**                     | Resolve `"time"` → index via dataset metadata before reductions.                                                                        |
+| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                       |
+| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                      |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                         |
+| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                         |
 | **CLI query history**                     | **Done** — platform cache JSONL (`tet history list` / `run`); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer is write provenance only. |
 
 ### Non-goals for the JSON `operation` field

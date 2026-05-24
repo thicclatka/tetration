@@ -35,7 +35,7 @@ fn sample_query_parses_and_plans() {
             { "start": 0, "stop": 100, "step": 2 },
             { "start": null, "stop": null, "step": 1 }
         ],
-        "operation": { "mean": { "axes": [] } },
+        "mean":[],
         "output": { "preferred": { "inline_json": null } }
     }"#;
     let doc = parse_query_json(json).unwrap();
@@ -47,16 +47,43 @@ fn sample_query_parses_and_plans() {
 }
 
 #[test]
-fn rejects_invalid_operation_axis_token() {
-    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["x"]}}}"#;
+fn rejects_nested_operation_object() {
+    let json = r#"{"dataset":"a","operation":{"mean":{"axes":[]}}}"#;
+    let err = parse_query_json(json).unwrap_err();
+    assert!(err.to_string().contains("operation"), "{err}");
+}
+
+#[test]
+fn parses_flat_mean_on_axis_zero() {
+    let json = r#"{
+        "dataset": "temperature",
+        "mean": 0,
+        "execution": { "memory_budget_percent": 40 }
+    }"#;
     let doc = parse_query_json(json).unwrap();
-    let err = validate_query(&doc).unwrap_err();
+    validate_query(&doc).unwrap();
+    let op = doc.operation.as_ref().unwrap();
+    assert!(matches!(op, tetration::Operation::Mean { axes } if axes.as_slice() == ["0"]));
+    assert_eq!(
+        doc.execution.as_ref().unwrap().memory_budget_percent_bps,
+        Some(4000)
+    );
+    let roundtrip = serde_json::to_string_pretty(&doc).unwrap();
+    assert!(roundtrip.contains(r#""mean": 0"#));
+    assert!(roundtrip.contains(r#""memory_budget_percent": 40"#));
+    assert!(!roundtrip.contains("operation"));
+}
+
+#[test]
+fn rejects_invalid_operation_axis_token() {
+    let json = r#"{"dataset":"a","sum":"x"}"#;
+    let err = parse_query_json(json).unwrap_err();
     assert!(err.to_string().contains("decimal"), "{err}");
 }
 
 #[test]
 fn accepts_decimal_operation_axis_indices() {
-    let json = r#"{"dataset":"a","operation":{"sum":{"axes":["0"]}}}"#;
+    let json = r#"{"dataset":"a","sum":0}"#;
     let doc = parse_query_json(json).unwrap();
     validate_query(&doc).unwrap();
 }
@@ -64,15 +91,15 @@ fn accepts_decimal_operation_axis_indices() {
 #[test]
 fn accepts_min_max_count_operations() {
     for json in [
-        r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#,
-        r#"{"dataset":"a","operation":{"max":{"axes":["1"]}}}"#,
-        r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#,
-        r#"{"dataset":"a","operation":{"var":{"axes":[]}}}"#,
-        r#"{"dataset":"a","operation":{"std":{"axes":["0"]}}}"#,
-        r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#,
-        r#"{"dataset":"a","operation":{"median":{"axes":[]}}}"#,
-        r#"{"dataset":"a","operation":{"quantile":{"axes":[],"q":0.5}}}"#,
-        r#"{"dataset":"a","operation":{"histogram":{"axes":[],"bins":4}}}"#,
+        r#"{"dataset":"a","min":[]}"#,
+        r#"{"dataset":"a","max":1}"#,
+        r#"{"dataset":"a","count":[]}"#,
+        r#"{"dataset":"a","var":[]}"#,
+        r#"{"dataset":"a","std":0}"#,
+        r#"{"dataset":"a","product":[]}"#,
+        r#"{"dataset":"a","median":[]}"#,
+        r#"{"dataset":"a","quantile":{"q":0.5}}"#,
+        r#"{"dataset":"a","histogram":{"bins":4}}"#,
     ] {
         let doc = parse_query_json(json).unwrap();
         validate_query(&doc).unwrap();
@@ -405,7 +432,7 @@ fn plan_query_operation_requires_explicit_preview_limit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("op_req.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     assert!(plan_query_with_tet_mmap(&doc, None, &mmap, None).is_err());
@@ -434,18 +461,17 @@ fn plan_query_operation_min_max_count_scalar() {
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
 
-    let min_doc = parse_query_json(r#"{"dataset":"a","operation":{"min":{"axes":[]}}}"#).unwrap();
+    let min_doc = parse_query_json(r#"{"dataset":"a","min":[]}"#).unwrap();
     validate_query(&min_doc).unwrap();
     let min_plan = plan_query_with_tet_mmap(&min_doc, None, &mmap, Some(8)).unwrap();
     assert!((min_plan.execution.as_ref().unwrap().operation_min.unwrap() - 1.0).abs() < 1e-5);
 
-    let max_doc = parse_query_json(r#"{"dataset":"a","operation":{"max":{"axes":[]}}}"#).unwrap();
+    let max_doc = parse_query_json(r#"{"dataset":"a","max":[]}"#).unwrap();
     validate_query(&max_doc).unwrap();
     let max_plan = plan_query_with_tet_mmap(&max_doc, None, &mmap, Some(8)).unwrap();
     assert!((max_plan.execution.as_ref().unwrap().operation_max.unwrap() - 6.0).abs() < 1e-5);
 
-    let count_doc =
-        parse_query_json(r#"{"dataset":"a","operation":{"count":{"axes":[]}}}"#).unwrap();
+    let count_doc = parse_query_json(r#"{"dataset":"a","count":[]}"#).unwrap();
     validate_query(&count_doc).unwrap();
     let count_plan = plan_query_with_tet_mmap(&count_doc, None, &mmap, Some(0)).unwrap();
     let ex = count_plan.execution.as_ref().unwrap();
@@ -460,21 +486,20 @@ fn plan_query_operation_var_std_scalar_and_partial() {
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
 
-    let var_doc = parse_query_json(r#"{"dataset":"a","operation":{"var":{"axes":[]}}}"#).unwrap();
+    let var_doc = parse_query_json(r#"{"dataset":"a","var":[]}"#).unwrap();
     validate_query(&var_doc).unwrap();
     let var_plan = plan_query_with_tet_mmap(&var_doc, None, &mmap, Some(0)).unwrap();
     let var_ex = var_plan.execution.as_ref().unwrap();
     // population var of 1..6
     assert!((var_ex.operation_var.unwrap() - 2.916_666_7).abs() < 1e-5);
 
-    let std_doc = parse_query_json(r#"{"dataset":"a","operation":{"std":{"axes":[]}}}"#).unwrap();
+    let std_doc = parse_query_json(r#"{"dataset":"a","std":[]}"#).unwrap();
     validate_query(&std_doc).unwrap();
     let std_plan = plan_query_with_tet_mmap(&std_doc, None, &mmap, Some(0)).unwrap();
     let std_ex = std_plan.execution.as_ref().unwrap();
     assert!((std_ex.operation_std.unwrap() - 1.707_825_1).abs() < 1e-5);
 
-    let partial_doc =
-        parse_query_json(r#"{"dataset":"a","operation":{"var":{"axes":["0"]}}}"#).unwrap();
+    let partial_doc = parse_query_json(r#"{"dataset":"a","var":0}"#).unwrap();
     validate_query(&partial_doc).unwrap();
     let partial_plan = plan_query_with_tet_mmap(&partial_doc, None, &mmap, Some(4)).unwrap();
     let partial_ex = partial_plan.execution.as_ref().unwrap();
@@ -496,13 +521,12 @@ fn plan_query_operation_product_scalar_and_partial() {
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
 
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"product":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","product":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
     assert!((plan.execution.as_ref().unwrap().operation_product.unwrap() - 720.0).abs() < 1e-5);
 
-    let partial_doc =
-        parse_query_json(r#"{"dataset":"a","operation":{"product":{"axes":["0"]}}}"#).unwrap();
+    let partial_doc = parse_query_json(r#"{"dataset":"a","product":0}"#).unwrap();
     validate_query(&partial_doc).unwrap();
     let partial_plan = plan_query_with_tet_mmap(&partial_doc, None, &mmap, Some(4)).unwrap();
     let ex = partial_plan.execution.as_ref().unwrap();
@@ -519,7 +543,7 @@ fn plan_query_operation_min_along_axis_zero() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("min_axis0.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"min":{"axes":["0"]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","min":0}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
@@ -537,7 +561,7 @@ fn plan_query_scalar_sum_fold_matches_materialize_path() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fold_sum.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(8)).unwrap();
@@ -556,7 +580,7 @@ fn plan_query_operation_sum_full_tensor() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("op_sum.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(64)).unwrap();
@@ -573,7 +597,7 @@ fn plan_query_operation_mean_narrow_selection() {
     let path = dir.path().join("op_mean.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let doc = parse_query_json(
-        r#"{"dataset":"a","operation":{"mean":{"axes":[]}},"selection":[{"start":0,"stop":2},{"start":2,"stop":3}]}"#,
+        r#"{"dataset":"a","mean":[],"selection":[{"start":0,"stop":2},{"start":2,"stop":3}]}"#,
     )
     .unwrap();
     validate_query(&doc).unwrap();
@@ -590,7 +614,7 @@ fn plan_query_operation_sum_preview_truncated_but_aggregate_full() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("op_trunc.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(2)).unwrap();
@@ -606,7 +630,7 @@ fn plan_query_operation_sum_along_axis_zero() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("op_axis0.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"sum":{"axes":["0"]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":0}"#).unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
@@ -759,15 +783,14 @@ fn plan_query_operation_argmin_argmax_scalar_and_partial() {
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let doc = parse_query_json(r#"{"dataset":"a","operation":{"arg_min":{"axes":[]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","arg_min":[]}"#).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
     let ex = resp.execution.as_ref().unwrap();
     assert_eq!(ex.operation_argmin_index, Some(0));
     assert_eq!(ex.memory_strategy, Some("streaming_fold"));
 
-    let doc =
-        parse_query_json(r#"{"dataset":"a","operation":{"arg_max":{"axes":["0"]}}}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","arg_max":0}"#).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
     let ex = resp.execution.as_ref().unwrap();
@@ -847,7 +870,7 @@ fn plan_query_operation_median_scalar_in_memory() {
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":999999}}"#;
+    let json = r#"{"dataset":"a","median":[],"execution":{"memory_budget_bytes":999999}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(64)).unwrap();
@@ -864,7 +887,7 @@ fn plan_query_operation_median_scalar_temp_spill_when_over_budget() {
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
     // 8 bytes = 2 f32; logical selection is 6 f32 (24 bytes).
-    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":8}}"#;
+    let json = r#"{"dataset":"a","median":[],"execution":{"memory_budget_bytes":8}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(2)).unwrap();
@@ -880,7 +903,7 @@ fn plan_query_i32_preview_and_sum() {
     let path = dir.path().join("i32.tet");
     fixture::write_multichunk_2x3_i32_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#;
+    let json = r#"{"dataset":"a","sum":[]}"#;
     let doc = parse_query_json(json).unwrap();
     let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
     let ex = resp.execution.as_ref().unwrap();
@@ -911,7 +934,7 @@ fn plan_query_f64_preview_and_sum() {
     let path = dir.path().join("f64.tet");
     write_multichunk_2x3_f64_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"sum":{"axes":[]}}}"#;
+    let json = r#"{"dataset":"a","sum":[]}"#;
     let doc = parse_query_json(json).unwrap();
     let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
     let ex = resp.execution.as_ref().unwrap();
@@ -928,7 +951,7 @@ fn plan_query_operation_median_partial_axis_0() {
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"median":{"axes":["0"]}},"execution":{"memory_budget_bytes":999999}}"#;
+    let json = r#"{"dataset":"a","median":0,"execution":{"memory_budget_bytes":999999}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
@@ -947,7 +970,8 @@ fn plan_query_operation_quantile_scalar() {
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"quantile":{"axes":[],"q":0.95}},"execution":{"memory_budget_bytes":999999}}"#;
+    let json =
+        r#"{"dataset":"a","quantile":{"q":0.95},"execution":{"memory_budget_bytes":999999}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
@@ -961,7 +985,8 @@ fn plan_query_operation_histogram_scalar() {
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"histogram":{"axes":[],"bins":3}},"execution":{"memory_budget_bytes":999999}}"#;
+    let json =
+        r#"{"dataset":"a","histogram":{"bins":3},"execution":{"memory_budget_bytes":999999}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
@@ -979,7 +1004,7 @@ fn plan_query_f64_median_temp_spill_when_over_budget() {
     let path = dir.path().join("f64.tet");
     write_multichunk_2x3_f64_tiles(&path, "a");
     let mmap = mmap_file_read(&path).unwrap();
-    let json = r#"{"dataset":"a","operation":{"median":{"axes":[]}},"execution":{"memory_budget_bytes":16}}"#;
+    let json = r#"{"dataset":"a","median":[],"execution":{"memory_budget_bytes":16}}"#;
     let doc = parse_query_json(json).unwrap();
     let resp =
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(2)).unwrap();

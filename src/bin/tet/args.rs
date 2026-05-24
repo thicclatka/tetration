@@ -28,7 +28,7 @@ pub enum Commands {
     /// Typical flows:
     ///   tet query q.json -t data.tet
     ///   tet query q.json -t data.tet -x -q
-    ///   tet query '{"dataset":"f32","operation":{"mean":{"axes":[]}}}' -t data.tet -x
+    ///   tet query '{"dataset":"f32","mean":[]}' -t data.tet -x
     #[command(
         visible_alias = "q",
         after_help = "QUERY: path to .json, inline JSON, or `-` for stdin; omit QUERY to read stdin. \
