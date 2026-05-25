@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Local/manual formula bump push only. CI uses verified-bot-commit in release.yml
+# (unsigned github-actions[bot] commits are rejected by branch rules on main).
+
 # Env: TAG (required). Optional: FORMULA=Formula/tetration.rb, BRANCH=main
 
 : "${TAG:?TAG must be set}"

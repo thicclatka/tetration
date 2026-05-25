@@ -48,10 +48,15 @@ jobs:
           REPO: ${{ github.repository }}
         run: python3 .github/scripts/bump-homebrew-formula.py
 
-      - name: Commit and push
-        env:
-          TAG: ${{ github.ref_name }}
-        run: bash .github/scripts/commit-and-push-formula.sh
+      # Plain `git commit` is unsigned; main requires verified signatures.
+      - name: Commit and push (verified)
+        uses: iarekylew00t/verified-bot-commit@v2
+        with:
+          ref: main
+          message: brew: bump formula to ${{ github.ref_name }}
+          files: |
+            Formula/tetration.rb
+          if-no-commit: info
 
   publish:
     name: Publish to crates.io
