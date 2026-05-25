@@ -84,10 +84,10 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 
 **Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks, warm 2nd pass):** see [`fixtures/bench_results/latest.md`](fixtures/bench_results/latest.md). Regenerate with `mise run bench:h5` (or `bench:netcdf` / `bench:zarr`).
 
-| Regime | Machine | 20 GiB `.tet` mean (approx.) |
-| ------ | ------- | ---------------------------- |
-| In-core (data fits page cache) | Mac Studio M4 Max, ~25 GiB free | **~0.5–0.6 s** (parallel chunk fold) |
-| Out-of-core | MacBook M5, ~6 GiB free | **~4.0 s** (linear scan; ~2× HDF5 warm) |
+| Regime                         | Machine                         | 20 GiB `.tet` mean (approx.)            |
+| ------------------------------ | ------------------------------- | --------------------------------------- |
+| In-core (data fits page cache) | Mac Studio M4 Max, ~25 GiB free | **~0.5–0.6 s** (parallel chunk fold)    |
+| Out-of-core                    | MacBook M5, ~6 GiB free         | **~4.0 s** (linear scan; ~2× HDF5 warm) |
 
 ### Could add later (not Phase 5)
 
@@ -142,11 +142,12 @@ tet info data.tet --json | jq '.summary.datasets'
 
 ### Phase 7 focus (next)
 
+- [ ] **Rust embedder create + use** — first-class library workflows for building and querying `.tet` files in Rust (not only `tet` CLI or low-level `catalog::write_*` calls): documented examples, stable create/append/close entrypoints, in-process query plan + execute (`build_execution_preview` or a dedicated API), parity with `tet query … -x` / `tet info` without spawning the binary.
 - [ ] **File header metadata** — structured file-level blob (tool + library versions, creation time, optional git commit / hostname); spec in `layout_v1.md`, surfaced in `tet info`.
 - [ ] **Dataset attributes** — per-dataset key/value metadata (units, `long_name`, CF-style attrs, arbitrary JSON-safe strings); read in catalog summary; writers set on create/convert.
 - [ ] **Axis metadata** — **dimension names** (one string per axis, e.g. `time`, `lat`, `lon`) vs **coordinate labels** (one value per index along an axis); see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
 - [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
-- [ ] **Session / writer API** — accumulate events in memory during a write session; flush to footer (or metadata chunk) on `commit` / `close` (Rust first; Phase 10 bindings wrap it).
+- [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 10 bindings wrap the same API).
 - [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
 - [ ] **Import preservation** — carry selected HDF5/NetCDF/Zarr attrs into dataset metadata on convert.
 
@@ -248,7 +249,8 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 4. ~~**Adaptive out-of-core fold:** linear scan + SIMD bulk tier-A/B when data oversubscribes RAM.~~ **Done** — [PR #7](https://github.com/thicclatka/tetration/pull/7); see [`fold_policy.rs`](src/query/fold/fold_policy.rs), [`linear_scan.rs`](src/query/fold/linear_scan.rs).
 5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
 6. **Query front-end spike (Phase 6+):** optional TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
-7. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
-8. **History events v2 (Phase 7):** structured transform event + session flush API.
-9. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.
-10. **Python repo scaffold (Phase 10):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+7. **Rust embedder workflows (Phase 7):** crate `examples/` + docs.rs — create a `.tet`, append a dataset, run query execute in-process (no `tet` spawn).
+8. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
+9. **History events v2 (Phase 7):** structured transform event + session flush API.
+10. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.
+11. **Python repo scaffold (Phase 10):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
