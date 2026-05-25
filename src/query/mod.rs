@@ -7,6 +7,7 @@ mod decode;
 mod dispatch;
 mod document;
 mod document_wire;
+mod execute;
 pub(crate) mod engine;
 pub(crate) mod fold;
 pub(crate) mod materialize;
@@ -24,6 +25,7 @@ pub use cli::{
     list_cli_query_history, parse_history_execute_filter,
 };
 pub use document::{QueryLimits, parse_query_json, validate_query};
+pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 #[doc(hidden)]
 pub use engine::TempSpillFile;
 pub use engine::{

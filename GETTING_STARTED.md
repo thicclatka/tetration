@@ -142,7 +142,9 @@ tet info data.tet --json | jq '.summary.datasets'
 
 ### Phase 7 focus (next)
 
-- [ ] **Rust embedder create + use** — first-class library workflows for building and querying `.tet` files in Rust (not only `tet` CLI or low-level `catalog::write_*` calls): documented examples, stable create/append/close entrypoints, in-process query plan + execute (`build_execution_preview` or a dedicated API), parity with `tet query … -x` / `tet info` without spawning the binary.
+- [x] **Rust embedder examples** — `create_and_query`, `inspect_catalog`, `session_write`; run with `cargo run --example …`.
+- [x] **Rust embedder session API (baseline)** — [`TetWriterSession`](src/catalog/session.rs) / [`TetFile`](src/catalog/session.rs), [`execute_query_document`](src/query/execute.rs) / [`execute_query_json`](src/query/execute.rs), [`FileMetadataDraft`](src/catalog/session.rs) (in-memory until wire spec); [`prelude`](src/lib.rs) re-exports; tests in `src/tests/session.rs`.
+- [ ] **Rust embedder create + use (wire)** — append datasets to existing files, persist `FileMetadataDraft`, streaming session over `write_multi_raw_array_streaming`.
 - [ ] **File header metadata** — structured file-level blob (tool + library versions, creation time, optional git commit / hostname); spec in `layout_v1.md`, surfaced in `tet info`.
 - [ ] **Dataset attributes** — per-dataset key/value metadata (units, `long_name`, CF-style attrs, arbitrary JSON-safe strings); read in catalog summary; writers set on create/convert.
 - [ ] **Axis metadata** — **dimension names** (one string per axis, e.g. `time`, `lat`, `lon`) vs **coordinate labels** (one value per index along an axis); see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).

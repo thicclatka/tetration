@@ -12,5 +12,6 @@ mod fold;
 mod layout_roundtrip;
 mod query;
 mod reduction;
+mod session;
 mod utils;
 mod variance_simd;

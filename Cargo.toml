@@ -27,6 +27,18 @@ tetration-hdf5 = ["dep:hdf5-metno"]
 name = "tet"
 path = "src/bin/tet.rs"
 
+[[example]]
+name = "create_and_query"
+path = "examples/create_and_query.rs"
+
+[[example]]
+name = "inspect_catalog"
+path = "examples/inspect_catalog.rs"
+
+[[example]]
+name = "session_write"
+path = "examples/session_write.rs"
+
 [dependencies]
 bytemuck = "1.25.0"
 clap = { version = "4.5.51", features = ["derive"] }

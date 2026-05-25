@@ -6,6 +6,7 @@ mod dataset;
 pub mod execution;
 mod history;
 mod index;
+pub mod session;
 mod stream_write;
 pub mod tile;
 mod write;
@@ -21,7 +22,8 @@ use crate::utils::wire;
 
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
 pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
-pub use history::{HistoryEventV1, append_convert_history};
+pub use history::{HistoryEventV1, append_convert_history, append_history_events, unix_timestamp_now};
+pub use session::{FileMetadataDraft, TetDatasetWrite, TetFile, TetWriterSession};
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
 pub use stream_write::{
     ArrayWriteMeta, StreamTileJob, StreamWriteProgress, total_chunk_count_for_meta,

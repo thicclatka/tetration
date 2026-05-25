@@ -49,9 +49,33 @@ pub fn append_convert_history(
 }
 
 fn unix_timestamp_string() -> String {
+    unix_timestamp_now()
+}
+
+/// Unix seconds since epoch as a decimal string (history `at` field).
+#[must_use]
+pub fn unix_timestamp_now() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or_else(|_| "0".to_owned(), |d| d.as_secs().to_string())
+}
+
+/// Append a history footer with the given rows (replaces any prior footer is not supported).
+///
+/// # Errors
+///
+/// Returns [`CatalogError`] when JSON encoding or I/O fails.
+pub fn append_history_events(
+    path: &Path,
+    events: &[HistoryEventV1],
+) -> Result<(), CatalogError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let blob = HistoryBlobV1 {
+        history: events.to_vec(),
+    };
+    append_history_blob(path, &blob)
 }
 
 fn append_history_blob(path: &Path, blob: &HistoryBlobV1) -> Result<(), CatalogError> {
