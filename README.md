@@ -7,12 +7,9 @@
 
 [_For those who are more cur..._](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
 
-**HDF5-shaped** persistence (many large arrays in one durable file), **Zarr-shaped** chunking (regular grid, per-chunk compression, parallel I/O)—in a **single mmap-friendly `.tet` file`**, not a directory of shard blobs.
+**_STILL IN DEVELOPMENT, PRE 0.1.0 STATE_**
 
-| Artifact                 | Name            |
-| ------------------------ | --------------- |
-| Rust library (crates.io) | **`tetration`** |
-| CLI in the same crate    | **`tet`**       |
+**HDF5-shaped** persistence (many large arrays in one durable file), **Zarr-shaped** chunking (regular grid, per-chunk compression, parallel I/O)—in a **single mmap-friendly `.tet` file`**, not a directory of shard blobs.
 
 ## What it does today (v1)
 
@@ -27,8 +24,9 @@ Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`*
 ## Quick start
 
 ```bash
-cargo install tetration   # installs `tet` + library
-cargo test                # from a clone
+git clone git@github.com:thicclatka/tetration.git
+cd path/to/tetration
+cargo build
 
 tet info data.tet
 tet query '{"dataset":"f32","mean":[]}' -t data.tet -x -q

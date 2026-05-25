@@ -82,6 +82,46 @@ Each record is:
 
 Records are concatenated in catalog order; `dataset_id` in the chunk index is the **0-based index** into this list (`0` = first record).
 
+### Axis metadata (planned, Phase 7+)
+
+v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis names or per-index labels on disk yet. Planned metadata (file header blob, dataset attrs, or sidecar regions) distinguishes two **separate** layers:
+
+| Layer                 | What it names                               | Count                 | Example (3D weather)                 | Example (2D table)                |
+| --------------------- | ------------------------------------------- | --------------------- | ------------------------------------ | --------------------------------- |
+| **Dimension names**   | Each **axis** (the “major” row/column role) | **`ndim` strings**    | `time`, `lat`, `lon`                 | `row`, `column`                   |
+| **Coordinate labels** | Each **position** along one axis            | **`shape[d]` values** | timestamps, latitudes, station codes | row 0 = `Alice`, col 2 = `salary` |
+
+Do **not** conflate them:
+
+- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON (Phase 8) instead of `"mean": 0`.
+- **Coordinate label** — “index 42 along **time** is **2024-03-15**” → enables slice/filter by value, alignment across datasets, and (with extra ops) group-by keys.
+
+**Analogues:** NetCDF dimension name vs coordinate variable; pandas `Index.name` vs `Index` values; xarray `dims` vs `coords`.
+
+**Planned storage sketch** (informative, not wire-final):
+
+```json
+{
+  "dim_names": ["time", "station"],
+  "coords": {
+    "time": {
+      "dtype": "i64",
+      "storage": "inline | dataset_ref | payload_offset"
+    },
+    "station": { "dtype": "string", "storage": "…" }
+  },
+  "attrs": { "units": "K", "long_name": "surface temperature" }
+}
+```
+
+- **`dim_names`** — small, always safe in header/catalog attrs.
+- **`coords`** — may be **O(n)** along an axis; large coordinate vectors may live as a **1D dataset** in the same file, a metadata chunk, or inline when small.
+- **`attrs`** — CF-style scalar metadata (units, `long_name`); not an index.
+
+**Coordinate labels ≠ a query index by default.** Storing labels enables **name → integer index** resolution at plan time. Fast **filter / group-by** on high-cardinality keys may additionally need an auxiliary lookup structure (sorted coords, hash map, optional on-disk index) — a separate layout/query decision, not automatic from storing strings.
+
+See [query engine — dimension names vs coordinates](query_engine.md#dimension-names-vs-coordinate-labels-planned).
+
 ## Chunk index region
 
 - Starts at `chunk_index_offset`, which **must** equal `align8(40 + dataset_blob_len)` when `dataset_count > 0`.
@@ -135,6 +175,17 @@ flowchart LR
 
 Each index row’s `payload_offset` selects the byte span in region ⑤.
 
+### Contiguous raw payloads (query fold hint)
+
+For a **full dense** selection over a dataset, the query engine may treat all touched **raw** (`codec = 0`) payloads as one logical byte stream when:
+
+1. Each chunk’s `payload_offset + raw_byte_len` equals the next chunk’s `payload_offset` (in read-plan order).
+2. The sum of `raw_byte_len` equals the logical selection size in bytes.
+
+When that holds and the working set is **out-of-core** relative to host RAM, tier-A/B scalar folds can use **linear scan** — sequential 64 MiB windows over the hyperslab — instead of parallel per-chunk mmap. See [query engine — adaptive fold I/O](query_engine.md#adaptive-fold-io). **Zstd** chunks (`codec = 1`) or non-contiguous payload layout still use per-chunk decode/fold.
+
+Reference writers (`write_raw_array_file`) append payloads sequentially, so converted multi-chunk grids typically satisfy (1)–(2) for full-file scans.
+
 ### Per-chunk payload codecs
 
 | Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                                                  |
@@ -161,7 +212,7 @@ Chunk payload validation uses **`file_len − footer_size`**. Readers without hi
 
 The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`). **`dtype`** may be **`f32`** (`1`) or **`f64`** (`2`).
 
-`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). **`dtype`** is **`f32`** or **`f64`**. Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
+`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). **`dtype`** may be **`f32`**, **`f64`**, **`i32`**, or **`i64`**. Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
 
 ## Concurrency (informative)
 
