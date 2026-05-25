@@ -8,7 +8,10 @@ use crate::catalog::StreamTileJob;
 
 use super::ConvertError;
 use super::shared::ImportPlan;
-use super::tile_io::{read_hdf5_tile_le_into, read_netcdf_tile_le_into};
+#[cfg(feature = "tetration-hdf5")]
+use super::tile_io::read_hdf5_tile_le_into;
+#[cfg(feature = "tetration-netcdf")]
+use super::tile_io::read_netcdf_tile_le_into;
 
 /// Default worker count for parallel chunk reads (`available_parallelism`, clamped to 1..=64).
 #[must_use]
