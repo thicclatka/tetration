@@ -1,7 +1,7 @@
 //! Single-pass sum / sum-of-squares and min / max over numeric slabs (`f32` SIMD when available).
 
 #[inline]
-fn scalar_f32_sum_sumsq(vals: &[f32]) -> (f64, f64) {
+pub(crate) fn scalar_f32_sum_sumsq(vals: &[f32]) -> (f64, f64) {
     let mut sum = 0.0f64;
     let mut sumsq = 0.0f64;
     for &v in vals {
@@ -110,7 +110,7 @@ pub(crate) fn f32_sum_sumsq(vals: &[f32]) -> (f64, f64) {
 }
 
 #[inline]
-fn scalar_f32_min_max(vals: &[f32]) -> (f64, f64) {
+pub(crate) fn scalar_f32_min_max(vals: &[f32]) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in vals {
@@ -259,32 +259,4 @@ pub(crate) fn f64_sum_sumsq(vals: &[f64]) -> (f64, f64) {
         sumsq += v * v;
     }
     (sum, sumsq)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_slice() {
-        assert_eq!(f32_sum_sumsq(&[]), (0.0, 0.0));
-    }
-
-    #[test]
-    fn matches_scalar_reference() {
-        let vals: Vec<f32> = (0..10_000).map(|i| (i as f32) * 0.001 - 5.0).collect();
-        let scalar = scalar_f32_sum_sumsq(&vals);
-        let fast = f32_sum_sumsq(&vals);
-        assert!((scalar.0 - fast.0).abs() < 1e-6);
-        assert!((scalar.1 - fast.1).abs() < 1e-3);
-    }
-
-    #[test]
-    fn min_max_matches_scalar_reference() {
-        let vals: Vec<f32> = (0..10_000).map(|i| (i as f32) * 0.001 - 5.0).collect();
-        let scalar = scalar_f32_min_max(&vals);
-        let fast = f32_min_max(&vals);
-        assert_eq!(scalar.0, fast.0);
-        assert_eq!(scalar.1, fast.1);
-    }
 }

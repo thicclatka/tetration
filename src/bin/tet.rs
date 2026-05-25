@@ -19,7 +19,7 @@ mod util;
 use std::process::ExitCode;
 
 use clap::Parser;
-use tetration::parse_query_json;
+use tetration::query::parse_query_json;
 
 use args::{Cli, Commands};
 use convert::run_convert;

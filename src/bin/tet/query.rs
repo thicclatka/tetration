@@ -2,9 +2,10 @@
 
 use std::path::PathBuf;
 
-use tetration::{
+use tetration::layout::mmap_file_read;
+use tetration::query::{
     QueryDocument, QueryOutputFormat, SpillPathAllowlist, append_cli_query_history,
-    format_query_response, format_query_stderr_hints, mmap_file_read, plan_query_empty,
+    format_query_response, format_query_stderr_hints, plan_query_empty,
     plan_query_with_tet_mmap_ex, validate_query,
 };
 

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tetration::{
+use tetration::query::{
     HistoryListFilter, HistorySettings, clear_cli_query_history, format_history_list_json,
     format_history_list_text, get_cli_query_history_entry, parse_history_execute_filter,
 };
@@ -54,7 +54,7 @@ fn run_qhist_list(
 }
 
 struct QhistReplayOpts {
-    entry: tetration::CliQueryHistoryEntry,
+    entry: tetration::query::CliQueryHistoryEntry,
     tet: Option<PathBuf>,
     force_execute: bool,
     plan: bool,

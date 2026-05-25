@@ -6,11 +6,11 @@
 
 use std::path::Path;
 
-use crate::{
+use crate::catalog::{
     CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1,
-    FileExecutionSettingsV1, RawArrayWrite, mmap_file_read, read_tet_summary_v1,
-    write_raw_array_file,
+    FileExecutionSettingsV1, RawArrayWrite, read_tet_summary_v1, write_raw_array_file,
 };
+use crate::layout::mmap_file_read;
 
 /// Patch helpers for corrupting chunk index entries in on-disk fixtures.
 pub mod index_patch {

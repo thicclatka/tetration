@@ -2,13 +2,16 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::catalog::{DATASET_DTYPE_TAG_V1, read_tet_summary_v1};
 #[cfg(feature = "tetration-hdf5")]
-use crate::convert_h5_to_tet_with_progress;
-use crate::{
-    DATASET_DTYPE_TAG_V1, convert_netcdf_to_tet_with_progress, convert_zarr_to_tet_with_progress,
+use crate::convert::{
+    convert_h5_to_tet_with_progress, convert_netcdf_to_tet_with_progress,
+    convert_zarr_to_tet_with_progress,
+};
+use crate::layout::mmap_file_read;
+use crate::query::{
     materialize_read_plan_f32_le, materialize_read_plan_f64_le, materialize_read_plan_i32_le,
-    materialize_read_plan_i64_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
-    read_tet_summary_v1, validate_query,
+    materialize_read_plan_i64_le, parse_query_json, plan_query_with_tet_mmap, validate_query,
 };
 
 const FIXTURE_DTYPES: [&str; 4] = ["f32", "f64", "i32", "i64"];
@@ -337,7 +340,7 @@ fn convert_small_h5_cf_3d_decodes_temperature() {
 
 #[test]
 fn detect_convert_format_from_extension() {
-    use crate::{
+    use crate::convert::{
         ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, ZarrConvertInput,
         detect_convert_format,
     };
@@ -386,7 +389,9 @@ fn detect_convert_format_from_extension() {
 
 #[test]
 fn detect_convert_format_sniffs_file_signature() {
-    use crate::{ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format};
+    use crate::convert::{
+        ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format,
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let h5_path = dir.path().join("payload.bin");
@@ -406,7 +411,7 @@ fn detect_convert_format_sniffs_file_signature() {
 
 #[test]
 fn detect_convert_format_sniffs_zarr_directory() {
-    use crate::{ConvertInputFormat, detect_convert_format};
+    use crate::convert::{ConvertInputFormat, detect_convert_format};
 
     let path = small_zarr("tensor_3d");
     if path.is_dir() {

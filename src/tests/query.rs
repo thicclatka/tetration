@@ -6,14 +6,17 @@ use super::fixture::{
     self, CHUNK_2X2, SHAPE_2X3, write_multichunk_2x3_f64_tiles, write_multichunk_2x3_tiles,
     write_multichunk_2x3_zero_zstd,
 };
-use crate::{
-    CHUNK_PAYLOAD_CODEC_V1, CHUNK_TOUCH_POLICY, DATASET_DTYPE_TAG_V1, OneChunkRawWrite,
-    RawArrayWrite, SpillPathAllowlist, TempSpillFile, create_empty_v1_file,
+use crate::catalog::{
+    CHUNK_PAYLOAD_CODEC_V1, DATASET_DTYPE_TAG_V1, FileExecutionSettingsV1, OneChunkRawWrite,
+    RawArrayWrite, read_tet_summary_v1, write_one_chunk_raw_file, write_raw_array_file,
+};
+use crate::layout::{create_empty_v1_file, mmap_file_read};
+use crate::query::{
+    CHUNK_TOUCH_POLICY, Operation, OutputHint, QueryLimits, SpillPathAllowlist, TempSpillFile,
     materialize_read_plan_f32_le, materialize_read_plan_f32_le_into,
     materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,
-    mmap_file_read, parse_query_json, plan_query_empty, plan_query_with_tet_mmap,
-    plan_query_with_tet_mmap_ex, read_tet_summary_v1, validate_query, write_one_chunk_raw_file,
-    write_raw_array_file,
+    parse_query_json, plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex,
+    validate_query,
 };
 
 /// JSON string literal for a filesystem path embedded in test query fixtures.
@@ -65,7 +68,7 @@ fn parses_flat_spill_roundtrip() {
     let out = doc.output.as_ref().unwrap();
     assert!(matches!(
         out.preferred,
-        Some(crate::OutputHint::SpillArray { ref handle }) if handle == "slice.bin"
+        Some(OutputHint::SpillArray { ref handle }) if handle == "slice.bin"
     ));
     let roundtrip = serde_json::to_string(&doc).unwrap();
     assert!(roundtrip.contains(r#""spill":"slice.bin""#));
@@ -82,7 +85,7 @@ fn parses_flat_mean_on_axis_zero() {
     let doc = parse_query_json(json).unwrap();
     validate_query(&doc).unwrap();
     let op = doc.operation.as_ref().unwrap();
-    assert!(matches!(op, crate::Operation::Mean { axes } if axes.as_slice() == ["0"]));
+    assert!(matches!(op, Operation::Mean { axes } if axes.as_slice() == ["0"]));
     assert_eq!(
         doc.execution.as_ref().unwrap().memory_budget_percent_bps,
         Some(4000)
@@ -141,7 +144,7 @@ fn rejects_unknown_query_fields() {
 
 #[test]
 fn rejects_oversized_query_json() {
-    let limits = crate::QueryLimits::DEFAULT;
+    let limits = QueryLimits::DEFAULT;
     let pad = "x".repeat(limits.max_json_bytes);
     let json = format!(r#"{{"dataset":"{pad}"}}"#);
     let err = parse_query_json(&json).unwrap_err();
@@ -150,7 +153,7 @@ fn rejects_oversized_query_json() {
 
 #[test]
 fn rejects_oversized_dataset_name() {
-    let limits = crate::QueryLimits::DEFAULT;
+    let limits = QueryLimits::DEFAULT;
     let name = "a".repeat(limits.max_dataset_name_len + 1);
     let json = format!(r#"{{"dataset":"{name}"}}"#);
     let doc = parse_query_json(&json).unwrap();
@@ -160,7 +163,7 @@ fn rejects_oversized_dataset_name() {
 
 #[test]
 fn rejects_selection_rank_above_max_ndim() {
-    use crate::MAX_NDIM;
+    use crate::catalog::MAX_NDIM;
     let slices = (0..=MAX_NDIM)
         .map(|_| r#"{ "start": 0, "stop": 1 }"#)
         .collect::<Vec<_>>()
@@ -173,7 +176,7 @@ fn rejects_selection_rank_above_max_ndim() {
 
 #[test]
 fn rejects_deeply_nested_query_json() {
-    let limits = crate::QueryLimits::DEFAULT;
+    let limits = QueryLimits::DEFAULT;
     let mut inner = "null".to_string();
     for _ in 0..=limits.max_json_depth {
         inner = format!(r#"{{"x":{inner}}}"#);
@@ -761,7 +764,7 @@ use proptest::prelude::*;
 
 #[test]
 fn file_execution_settings_roundtrip_in_index_header() {
-    use crate::{FileExecutionSettingsV1, read_tet_summary_v1};
+    use crate::catalog::{FileExecutionSettingsV1, read_tet_summary_v1};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("exec.tet");
@@ -789,7 +792,7 @@ fn query_execution_reports_dataset_and_budget_fields() {
     assert_eq!(catalog.dataset_f32_bytes, Some(24));
     assert_eq!(
         catalog.file_execution,
-        Some(crate::FileExecutionSettingsV1::default_engine())
+        Some(FileExecutionSettingsV1::default_engine())
     );
     let exec = resp.execution.as_ref().unwrap();
     assert_eq!(exec.memory_budget_bytes, Some(999_999));

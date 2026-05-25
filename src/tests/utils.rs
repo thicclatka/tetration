@@ -1,6 +1,6 @@
 //! Utils integration tests.
 
-use crate::available_memory_bytes;
+use crate::utils::host_memory::available_memory_bytes;
 
 #[test]
 fn host_memory_probe_does_not_panic() {

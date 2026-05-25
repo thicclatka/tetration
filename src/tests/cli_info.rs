@@ -5,9 +5,10 @@ use std::{
     process::Command,
 };
 
-use crate::{
+use crate::catalog::read_tet_summary_v1;
+use crate::layout::mmap_file_read;
+use crate::query::{
     InfoListFilter, InfoViewSections, format_info_json, format_info_quiet, format_info_text,
-    mmap_file_read, read_tet_summary_v1,
 };
 
 use super::fixture::write_multichunk_2x3_tiles;

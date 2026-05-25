@@ -106,7 +106,7 @@ Examples: `cargo test --lib`, `cargo test --lib tests::catalog::index_bounds_pro
 
 ## Public API surface (high level)
 
-Re-exported from `src/lib.rs`: layout (`MAGIC`, mmap, `create_empty_v1_file`, …), catalog (writers, codecs, `FileExecutionSettingsV1`, index types, `read_tet_summary_v1`, `validate_chunk_payloads`, chunk coord helpers, `f32_tensor_bytes_from_shape`, `f64_tensor_bytes_from_shape`, `i32_tensor_bytes_from_shape`, `i64_tensor_bytes_from_shape`, `DATASET_DTYPE_TAG_V1`), query (`QueryDocument`, `QueryResponse`, `ReadPlan`, `QueryExecutionPreview`, `ExecutionBudget`, `QueryLimits`, `SpillPathAllowlist`, `QueryOutputFormat`, `format_query_response`, CLI history helpers, parse/validate/plan, f32/f64/i32/i64 materialize + spill, `plan_query_with_tet_mmap_ex`, `planned_chunk_mmap_slices`).
+Public API lives under **`tetration::catalog`**, **`tetration::convert`**, **`tetration::layout`**, and **`tetration::query`**. Common embedder imports are in **`tetration::prelude`** (`QueryDocument`, `parse_query_json`, `validate_query`, `plan_query_with_tet_mmap_ex`, `mmap_file_read`, `MAGIC`). Query helpers (`format_query_response`, `materialize_read_plan_*`, `ExecutionBudget`, …) re-export from **`query/mod.rs`**.
 
 ## Not implemented / intentional gaps
 

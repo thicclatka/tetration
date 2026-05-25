@@ -1,9 +1,10 @@
 //! CLI query output formatting (`QueryOutputFormat`).
 
 use super::fixture;
-use crate::{
-    QueryOutputFormat, format_query_response, format_query_stderr_hints, mmap_file_read,
-    parse_query_json, plan_query_empty, plan_query_with_tet_mmap, validate_query,
+use crate::layout::mmap_file_read;
+use crate::query::{
+    QueryOutputFormat, format_query_response, format_query_stderr_hints, parse_query_json,
+    plan_query_empty, plan_query_with_tet_mmap, validate_query,
 };
 
 #[test]

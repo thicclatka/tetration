@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use tetration::{HistorySettings, QueryOutputFormat};
+use tetration::query::{HistorySettings, QueryOutputFormat};
 
 #[derive(Parser)]
 #[command(

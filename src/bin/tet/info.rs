@@ -2,9 +2,11 @@
 
 use std::path::PathBuf;
 
-use tetration::{
+use tetration::catalog::read_tet_summary_v1;
+use tetration::layout::mmap_file_read;
+use tetration::query::{
     DEFAULT_INFO_CHUNK_TABLE_LIMIT, InfoListFilter, format_info_json, format_info_quiet,
-    format_info_text, info_view_sections_from_flags, mmap_file_read, read_tet_summary_v1,
+    format_info_text, info_view_sections_from_flags,
 };
 
 use crate::util::cli_error;
@@ -62,7 +64,7 @@ pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
 fn build_info_filter(
     dataset: Option<String>,
     grep: Option<String>,
-) -> Option<tetration::InfoListFilter> {
+) -> Option<tetration::query::InfoListFilter> {
     let filter = InfoListFilter { dataset, grep };
     if filter.is_empty() {
         None

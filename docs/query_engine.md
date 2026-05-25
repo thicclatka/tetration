@@ -81,7 +81,7 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                     | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                             |
 | **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                           | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                              |
 
-Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (crate root: `tetration::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …).
+Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
 
 ## CLI query output
 

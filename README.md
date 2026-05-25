@@ -7,7 +7,7 @@
 
 [_For those who are more cur..._](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
 
-**_STILL IN DEVELOPMENT, PRE 0.1.0 STATE_**
+**_STILL IN DEVELOPMENT — layout v1 and query JSON may change before 1.0._**
 
 **HDF5-shaped** persistence (many large arrays in one durable file), **Zarr-shaped** chunking (regular grid, per-chunk compression, parallel I/O)—in a **single mmap-friendly `.tet` file`**, not a directory of shard blobs.
 
@@ -80,7 +80,8 @@ tetration = "0.1"
 ```
 
 ```rust
-use tetration::{mmap_file_read, parse_query_json, plan_query_with_tet_mmap_ex, validate_query};
+use tetration::prelude::*;
+// or: tetration::layout::mmap_file_read, tetration::query::{parse_query_json, …}
 ```
 
-Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/fn.format_query_response.html) for stdout modes.
+Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes.

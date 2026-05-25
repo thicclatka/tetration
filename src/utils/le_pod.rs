@@ -63,6 +63,7 @@ macro_rules! define_le_pod_module {
 }
 
 define_le_pod_module! {
+    #[allow(dead_code)]
     #[doc = "Little-endian `f32` views into chunk payloads.\n\n\
         Layout v1 writers place the first payload at an **8-byte-aligned** file offset; each raw \
         `f32` tile has a byte length divisible by **4**. Mmap subslices are not always 4-byte \

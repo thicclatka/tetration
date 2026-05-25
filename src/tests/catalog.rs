@@ -9,13 +9,16 @@ use super::fixture::{
     le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_f64_tiles, write_multichunk_2x3_tiles,
     write_multichunk_2x3_zero_zstd,
 };
-use crate::{
+use crate::catalog::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, MAX_NDIM,
     OneChunkRawWrite, chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided,
-    create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
-    plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
-    validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
+    read_tet_summary_v1, validate_chunk_payloads, write_one_chunk_raw_file,
 };
+use crate::layout::{create_empty_v1_file, mmap_file_read};
+use crate::query::{
+    materialize_read_plan_f32_le, parse_query_json, plan_query_with_tet_mmap, validate_query,
+};
+use crate::utils::f32_le::{read_f32_le_at, try_cast_f32_le};
 use proptest::prelude::*;
 
 // --- roundtrip ---

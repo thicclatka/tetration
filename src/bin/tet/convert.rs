@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use tetration::{
+use tetration::convert::{
     ConvertProgress, ConvertReport, convert_to_tet_with_progress, detect_convert_format,
 };
 
@@ -25,14 +25,14 @@ pub(crate) fn run_convert(input: &Path, output: &Path, jobs: usize) -> Result<()
 
     let format = detect_convert_format(input).map_err(cli_error)?;
     let label = match format {
-        tetration::ConvertInputFormat::H5 => "HDF5 convert",
-        tetration::ConvertInputFormat::Netcdf => "NetCDF convert",
-        tetration::ConvertInputFormat::Zarr => "Zarr convert",
+        tetration::convert::ConvertInputFormat::H5 => "HDF5 convert",
+        tetration::convert::ConvertInputFormat::Netcdf => "NetCDF convert",
+        tetration::convert::ConvertInputFormat::Zarr => "Zarr convert",
     };
     let progress_prefix = match format {
-        tetration::ConvertInputFormat::H5 => "HDF5 → .tet",
-        tetration::ConvertInputFormat::Netcdf => "NetCDF → .tet",
-        tetration::ConvertInputFormat::Zarr => "Zarr → .tet",
+        tetration::convert::ConvertInputFormat::H5 => "HDF5 → .tet",
+        tetration::convert::ConvertInputFormat::Netcdf => "NetCDF → .tet",
+        tetration::convert::ConvertInputFormat::Zarr => "Zarr → .tet",
     };
 
     let pb = ProgressBar::new(0);

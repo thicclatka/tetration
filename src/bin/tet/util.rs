@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use crate::args::QueryStdoutFormat;
-use tetration::QueryOutputFormat;
+use tetration::query::QueryOutputFormat;
 
 pub(crate) fn cli_error(message: impl std::fmt::Display) -> String {
     format!("error: {message}")
