@@ -14,7 +14,7 @@ keywords = ["tensor", "data", "format", "mmap"]
 categories = ["encoding", "filesystem", "command-line-utilities"]
 default-run = "tet"
 
-# rustdoc on docs.rs: build with default features off (avoid native `netcdf` / etc. when gated).
+# rustdoc on docs.rs: build with default features off (avoid native NetCDF/HDF5; gate optional imports).
 [package.metadata.docs.rs]
 no-default-features = true
 

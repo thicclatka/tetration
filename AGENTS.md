@@ -1,4 +1,4 @@
-# AGENT.md — status and ops for contributors / automation
+# AGENTS.md — status and ops for contributors / automation
 
 Compact handoff for humans and agents: what exists today, how to verify it, and what is still stubbed. **Roadmap checklist:** [`GETTING_STARTED.md`](GETTING_STARTED.md). **Query engine detail:** [`docs/query_engine.md`](docs/query_engine.md).
 
@@ -94,6 +94,8 @@ Stricter local: `cargo clippy -- -D warnings -W clippy::pedantic`; `cargo test -
 | `src/tests/catalog.rs`          | Catalog roundtrip (f32/f64), index robustness, chunk tile geometry, proptest `validate_chunk_payloads`, `le_pod` / `f32_le` |
 | `src/tests/query.rs`            | Query JSON, mmap materialize, f64 + tier-C ops, memory budget, spill allowlist + temp spill cleanup                         |
 | `src/tests/fold.rs`             | `FoldIoPolicy`, contiguous raw span detection, I/O regime routing                                                           |
+| `src/tests/variance_simd.rs`    | SIMD vs scalar `f32` sum/sumsq and min/max                                                                                  |
+| `src/tests/reduction.rs`        | Bulk variance accumulators vs elementwise Welford                                                                           |
 | `src/tests/utils.rs`            | Host memory probe (`available_memory_bytes`)                                                                                |
 | `src/tests/layout_roundtrip.rs` | Superblock / empty file                                                                                                     |
 | `src/tests/convert.rs`          | HDF5 / NetCDF / Zarr import (`tensor_*`, `groups_3d`, `cf_3d`), parallel jobs, format sniff                                 |
@@ -116,6 +118,6 @@ Public API lives under **`tetration::catalog`**, **`tetration::convert`**, **`te
 - **`tet convert`:** richer HDF5/NetCDF metadata (attrs, non-CF edge cases); no other Zarr codecs beyond raw bytes and zstd.
 - **CLI / query UX (Phase 6+):** optional TOML/line-oriented query front-end, optional query `preview` stdout table; **`qhist run --plan`** on saved op rows (needs plan-only path without op gate).
 - **Bindings (Phase 10):** separate Python repo, PyPI rename, pins published `tetration`; convert via `h5py` / `netCDF4` / `zarr` extras — later.
-- **Metadata (Phase 7):** history footer + convert provenance done; file/dataset attrs, **Rust embedder create + use** (examples, session writer, in-process execute), session writer — next.
+- **Metadata (Phase 7):** history footer + convert provenance done; file/dataset attrs, **Rust embedder create + use** (examples, session writer, in-process execute) — next.
 
 When behavior changes, keep **README.md**, **`GETTING_STARTED.md`**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned. New cross-cutting helpers → **`src/utils/`**; query mmap logic → **`src/query/`** (`decode/`, `materialize/`, … — not a flat `engine/` tree).

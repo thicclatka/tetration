@@ -6,7 +6,7 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 
 | Phase        | Role of fixtures                                                                                                                    |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **1–3**      | Tests build temp `.tet` in `tests/fixture.rs`; no tracked import fixtures yet.                                                      |
+| **1–3**      | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                                      |
 | **4**        | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                          |
 | **5**        | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).        |
 | **6**        | Bench harness (`benchmark/`, `spec.json`); future query-format golden cases and CLI UX smoke.                                       |
@@ -67,10 +67,10 @@ mise run fixtures:clean-extra-large
 
 | Consumer           | What it checks                                                                                                    |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `tests/convert.rs` | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
+| `src/tests/convert.rs` | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
 | Manual / bench     | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks)                                      |
 
-Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --test convert`.
+Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --lib tests::convert`.
 
 ## Benchmarks
 

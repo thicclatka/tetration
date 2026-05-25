@@ -1,7 +1,4 @@
-//! Shared `.tet` test fixtures (integration tests only).
-//!
-//! Each integration test crate (`tests/query.rs`, `tests/catalog.rs`, …) compiles this file
-//! separately, so helpers used only in one crate trigger `dead_code` warnings in the others.
+//! Shared `.tet` test fixtures (compiled into each `src/tests/*.rs` module via `mod fixture`).
 #![allow(dead_code)]
 
 use std::path::Path;

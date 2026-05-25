@@ -359,7 +359,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
 
 /// Validate chunk index payload spans against a file length (same rules as [`read_tet_summary_v1`]).
 ///
-/// Exposed for integration tests in `tests/`.
+/// Exposed for integration tests in [`crate::tests`].
 pub use index::validate_chunk_payloads;
 
 pub(super) fn usize_from_u64(field: &'static str, v: u64) -> Result<usize, CatalogError> {

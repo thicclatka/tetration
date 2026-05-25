@@ -1,4 +1,4 @@
-//! In-crate integration tests (`cargo test`); uses `crate::` so `pub(crate)` helpers stay private.
+//! In-crate integration tests (`cargo test --lib`); uses submodule paths and `pub(crate)` helpers.
 
 #![allow(dead_code)]
 

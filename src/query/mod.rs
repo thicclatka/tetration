@@ -1,4 +1,6 @@
-//! JSON query documents: validated plans for reads and basic operations.
+//! JSON query documents: validated plans, execution, and CLI formatters.
+//!
+//! Primary public surface for query/embedder use; see also [`crate::prelude`].
 
 mod cli;
 mod decode;

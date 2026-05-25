@@ -1,4 +1,7 @@
 //! Parallel convert helpers: per-rayon-thread source file handles.
+//!
+//! HDF5/NetCDF tile readers are imported only when the matching `tetration-*` feature is
+//! enabled (required for docs.rs `--no-default-features` builds).
 
 use std::cell::RefCell;
 use std::path::PathBuf;

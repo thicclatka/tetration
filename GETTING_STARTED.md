@@ -7,7 +7,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 ## Environment
 
 - [x] Install Rust **1.95+** (see `rust-version` in `Cargo.toml`; `.mise.toml` pins **1.95**).
-- [x] Clone the repo and run `cargo test` to confirm the baseline passes.
+- [x] Clone the repo and run `cargo test --lib` to confirm the baseline passes.
 - [x] Skim `README.md` for non-goals (no full SQL-on-files day one, etc.) so scope stays focused.
 
 ## Phase 0 — Spec before bytes
@@ -234,7 +234,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 
 ## Ongoing hygiene
 
-- [x] Integration tests: temp `.tet`, mmap, catalog (`src/tests/catalog.rs`), query (`src/tests/query.rs`), fold policy (`src/tests/fold.rs`), convert (`src/tests/convert.rs`), layout (`src/tests/layout_roundtrip.rs`), CLI output/history/info (`src/tests/cli_output.rs`, `src/tests/cli_history.rs`, `src/tests/cli_info.rs`); shared builders in `src/tests/fixture.rs`. Run with **`cargo test --lib`**.
+- [x] Integration tests: temp `.tet`, mmap, catalog (`src/tests/catalog.rs`), query (`src/tests/query.rs`), fold policy (`src/tests/fold.rs`), SIMD/reduction refs (`src/tests/variance_simd.rs`, `src/tests/reduction.rs`), convert (`src/tests/convert.rs`), layout (`src/tests/layout_roundtrip.rs`), CLI output/history/info (`src/tests/cli_output.rs`, `src/tests/cli_history.rs`, `src/tests/cli_info.rs`); shared builders in `src/tests/fixture.rs`. Run with **`cargo test --lib`**.
 - [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`fixtures/README.md`**, and this file aligned when layout, codecs, convert, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
 - [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `src/tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.

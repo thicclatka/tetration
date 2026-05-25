@@ -14,7 +14,7 @@
 ## What it does today (v1)
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
-- **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/struct.ReadPlan.html).
+- **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
 - **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import** — `tet convert` from HDF5, NetCDF, Zarr v3 directory stores.
 - **CLI** — `tet info`, `tet query`, `tet qhist`, `tet convert`.
@@ -23,7 +23,25 @@ Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`*
 
 ## Quick start
 
-**`cargo install tetration` (default features)** also needs **system HDF5 and NetCDF** dev libraries (used by `tet convert` for `.h5` / `.nc`; Zarr v3 directories are pure Rust + **zstd**, bundled at build time):
+Requires **Rust 1.95+** for `cargo install`; the **`tet`** binary installs to `~/.cargo/bin` (or Homebrew’s prefix when using brew).
+
+### macOS — Homebrew (recommended)
+
+One-time tap (this repo ships `Formula/tetration.rb`; pulls in **HDF5** and **NetCDF** for `tet convert`):
+
+```bash
+brew tap thicclatka/tetration https://github.com/thicclatka/tetration
+brew install tetration
+tet --help
+```
+
+Upgrade later: `brew upgrade tetration`.
+
+From a local clone (no tap): `brew install --build-from-source Formula/tetration.rb`
+
+### `cargo install`
+
+**Default features** need **system HDF5 and NetCDF** dev libraries (`.h5` / `.nc` convert; Zarr v3 is Rust + bundled **zstd**):
 
 | Platform             | Typical packages                                                                                                                |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -31,29 +49,28 @@ Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`*
 | **macOS (Homebrew)** | `brew install hdf5 netcdf pkg-config`                                                                                           |
 | **Windows**          | OpenSSL + NetCDF/HDF5 (e.g. [vcpkg](https://vcpkg.io/) or conda-forge); see [`.github/scripts/`](.github/scripts/) for CI hints |
 
-Without those libs, use **`cargo install tetration --no-default-features`** — `tet info` / `tet query` on existing `.tet` files and **Zarr** import still work; HDF5/NetCDF convert is disabled.
+```bash
+cargo install tetration
+```
+
+Without HDF5/NetCDF libs: **`cargo install tetration --no-default-features`** — `tet info` / `tet query` on `.tet` files and **Zarr** import still work.
+
+### Build from source
 
 ```bash
-# Install CLI from crates.io (HDF5 + NetCDF enabled by default for tet convert)
-cargo install tetration
-
-# Or build from source
 git clone https://github.com/thicclatka/tetration.git
 cd tetration
 cargo build --release
 export PATH="$PWD/target/release:$PATH"   # or: alias tet="$PWD/target/release/tet"
+```
 
-# Need a .tet file first (convert), or use a file you already have
+### First commands
+
+```bash
 tet convert volume.h5 volume.tet          # HDF5 / NetCDF / Zarr v3 → .tet
 
 tet info volume.tet
 tet query '{"dataset":"<name>","mean":[]}' -t volume.tet -x -q   # <name> from info output
-```
-
-**Library-only** (skip HDF5/NetCDF system deps; no `.h5` / `.nc` convert):
-
-```bash
-cargo install tetration --no-default-features
 ```
 
 **Daily driver:** plan + execute with readable stdout:

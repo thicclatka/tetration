@@ -29,3 +29,53 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bump-homebrew-formula:
+    name: Bump Homebrew formula
+    runs-on: ubuntu-latest
+    # workflow_dispatch has no tag — tarball URL would be wrong.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update Formula/tetration.rb (url + sha256)
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/bump-homebrew-formula.py
+
+      - name: Commit and push
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash .github/scripts/commit-and-push-formula.sh
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95'
+
+      - name: Install HDF5 and NetCDF (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libnetcdf-dev pkg-config
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

@@ -556,7 +556,9 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Catalog robustness and index property tests: [`src/tests/catalog.rs`](../src/tests/catalog.rs).
 - Query planning, materialize, operations, memory budget, f64 path, tier-C stats: [`src/tests/query.rs`](../src/tests/query.rs).
 - Fold I/O policy and contiguous-span detection: [`src/tests/fold.rs`](../src/tests/fold.rs).
-- Payload decode uses [`src/utils/f32_le.rs`](../src/utils/f32_le.rs) and [`src/utils/f64_le.rs`](../src/utils/f64_le.rs) (bytemuck; aligned cast when possible).
+- SIMD bulk folds vs scalar reference: [`src/tests/variance_simd.rs`](../src/tests/variance_simd.rs).
+- Bulk variance vs Welford reference: [`src/tests/reduction.rs`](../src/tests/reduction.rs).
+- Payload decode uses [`src/utils/le_pod.rs`](../src/utils/le_pod.rs) (`f32_le` / `f64_le` / …; bytemuck; aligned cast when possible).
 
 ## Intentional gaps (v1)
 
