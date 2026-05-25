@@ -1,6 +1,9 @@
 //! `tet info` formatting and filters.
 
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::{
     InfoListFilter, InfoViewSections, format_info_json, format_info_quiet, format_info_text,
@@ -8,6 +11,28 @@ use crate::{
 };
 
 use super::fixture::write_multichunk_2x3_tiles;
+
+/// Resolve the `tet` binary for spawn smoke tests (lib tests do not set `CARGO_BIN_EXE_tet`).
+fn tet_info_command(tet_path: &Path) -> Command {
+    let path_arg = tet_path.to_str().expect("fixture path must be UTF-8");
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_tet") {
+        let mut cmd = Command::new(exe);
+        cmd.args(["info", path_arg]);
+        return cmd;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for rel in ["target/debug/tet", "target/release/tet"] {
+        let bin = root.join(rel);
+        if bin.is_file() {
+            let mut cmd = Command::new(bin);
+            cmd.args(["info", path_arg]);
+            return cmd;
+        }
+    }
+    let mut cmd = Command::new(env!("CARGO"));
+    cmd.args(["run", "--quiet", "--bin", "tet", "--", "info", path_arg]);
+    cmd
+}
 
 #[test]
 fn info_default_table_lists_datasets() {
@@ -71,12 +96,7 @@ fn tet_info_binary_runs_on_fixture() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let tet = std::env::var("CARGO_BIN_EXE_tet")
-        .unwrap_or_else(|_| format!("{}/target/debug/tet", env!("CARGO_MANIFEST_DIR")));
-    let out = Command::new(tet)
-        .args(["info", path.to_str().unwrap()])
-        .output()
-        .unwrap();
+    let out = tet_info_command(&path).output().unwrap();
     assert!(
         out.status.success(),
         "stderr={}",

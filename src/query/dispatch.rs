@@ -140,6 +140,7 @@ pub(crate) fn scalar_fold(
     kind: ReductionKind,
     dtype: ElementDtype,
     policy: &FoldIoPolicy,
+    tet_path: Option<&Path>,
 ) -> Result<FoldPlanOutcome, TetError> {
     if policy.linear_scan && crate::query::fold::linear_scan::supports_scalar_kind(kind) {
         return crate::query::fold::linear_scan::fold_read_plan_scalar_linear(
@@ -148,6 +149,7 @@ pub(crate) fn scalar_fold(
             max_preview,
             kind,
             dtype,
+            tet_path,
         );
     }
     match dtype {

@@ -189,6 +189,7 @@ pub(super) struct ExecutionPreviewInput<'a> {
     pub budget: ExecutionBudget,
     pub execution: Option<&'a ExecutionHints>,
     pub spill_allowlist: Option<&'a SpillPathAllowlist>,
+    pub tet_path: Option<&'a Path>,
 }
 
 pub(super) fn build_execution_preview(
@@ -204,6 +205,7 @@ pub(super) fn build_execution_preview(
         budget,
         execution,
         spill_allowlist,
+        tet_path,
     } = *input;
     let elem_dtype = ElementDtype::from_wire(dtype)?;
 
@@ -226,6 +228,7 @@ pub(super) fn build_execution_preview(
             execution,
             spill_allowlist,
             elem_dtype,
+            tet_path,
         ),
     }
 }
@@ -298,6 +301,7 @@ fn build_operation_preview(
     execution: Option<&ExecutionHints>,
     spill_allowlist: Option<&SpillPathAllowlist>,
     dtype: ElementDtype,
+    tet_path: Option<&Path>,
 ) -> Result<QueryExecutionPreview, TetError> {
     if op.materialize_tier() == OperationMaterializeTier::MaterializeRequired {
         let policy = spill_allowlist.ok_or_else(|| {
@@ -318,7 +322,7 @@ fn build_operation_preview(
     }
     let fold_policy = FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
-        let folded = scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy)?;
+        let folded = scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy, tet_path)?;
         return Ok(fold_outcome_to_preview(
             folded,
             MemoryStrategy::StreamingFold,

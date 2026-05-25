@@ -248,6 +248,7 @@ fn matched_dataset_execution(
             ),
             execution: ctx.doc.execution.as_ref(),
             spill_allowlist: spill_ref,
+            tet_path: ctx.tet_path.map(Path::new),
         })?;
     if ctx.doc.operation.is_some() {
         message.push_str("; operation executed (see execution.memory_strategy and operation_*)");

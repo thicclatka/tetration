@@ -1,5 +1,9 @@
 //! Sequential byte-stream scalar fold over one contiguous raw payload span (hyperslab path).
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+
 use crate::catalog::CHUNK_PAYLOAD_CODEC_V1;
 use crate::query::fold::reduction::{ReductionKind, ValueAccum};
 use crate::query::fold::shared::{
@@ -226,6 +230,46 @@ fn fold_span_windows(
     Ok((acc, saw_preview))
 }
 
+/// Sequential `read` from `path` (one seek + streaming reads) — avoids cold mmap page faults.
+fn fold_span_file(
+    path: &Path,
+    span: ContiguousRawSpan,
+    elem_size: usize,
+    mut fold_window: impl FnMut(&mut ValueAccum, &[u8], usize) -> bool,
+) -> Result<(ValueAccum, bool), TetError> {
+    let mut file = File::open(path).map_err(|e| {
+        TetError::Validation(format!(
+            "linear scan open failed for {}: {e}",
+            path.display()
+        ))
+    })?;
+    file.seek(SeekFrom::Start(span.start as u64))
+        .map_err(|e| TetError::Validation(format!("linear scan seek failed: {e}")))?;
+
+    let win_cap = SCAN_WINDOW_RAW_BYTES.max(elem_size);
+    let mut buf = vec![0u8; win_cap];
+    let mut acc = ValueAccum::default();
+    let mut offset = 0usize;
+    let mut global_elems = 0usize;
+    let mut saw_preview = false;
+
+    while offset < span.len {
+        let win_len = SCAN_WINDOW_RAW_BYTES.min(span.len - offset);
+        let window = &mut buf[..win_len];
+        file.read_exact(window)
+            .map_err(|e| TetError::Validation(format!("linear scan read failed: {e}")))?;
+        if !window.len().is_multiple_of(elem_size) {
+            return Err(TetError::Validation(
+                "contiguous payload span length is not a multiple of element size".into(),
+            ));
+        }
+        saw_preview |= fold_window(&mut acc, window, global_elems);
+        offset += win_len;
+        global_elems += window.len() / elem_size;
+    }
+    Ok((acc, saw_preview))
+}
+
 fn require_nonempty(acc: &ValueAccum) -> Result<(), TetError> {
     if acc.is_empty() {
         return Err(TetError::Validation(
@@ -244,100 +288,151 @@ fn require_int_preview(preview_cap: usize, saw_preview: bool) -> Result<(), TetE
     Ok(())
 }
 
+fn fold_span_source(
+    mmap: &[u8],
+    tet_path: Option<&Path>,
+    span: ContiguousRawSpan,
+    elem_size: usize,
+    mut fold_window: impl FnMut(&mut ValueAccum, &[u8], usize) -> bool,
+) -> Result<(ValueAccum, bool), TetError> {
+    if let Some(path) = tet_path {
+        fold_span_file(path, span, elem_size, &mut fold_window)
+    } else {
+        let raw = span_slice(mmap, span)?;
+        fold_span_windows(raw, elem_size, fold_window)
+    }
+}
+
+struct LinearFoldParams<'a> {
+    mmap: &'a [u8],
+    tet_path: Option<&'a Path>,
+    span: ContiguousRawSpan,
+    elem_size: usize,
+    kind: ReductionKind,
+    max_preview: usize,
+    preview_cap: usize,
+    n: usize,
+    total_bytes: u64,
+}
+
+fn linear_fold_f32(
+    p: LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![f32::NAN; p.preview_cap];
+    let (acc, _) = fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+        fold_window_f32(acc, window, p.kind, &mut preview, g)
+    })?;
+    require_nonempty(&acc)?;
+    validate_fold_preview(true, &preview, p.preview_cap)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::F32(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
+fn linear_fold_f64(
+    p: LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![f64::NAN; p.preview_cap];
+    let (acc, _) = fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+        fold_window_f64(acc, window, p.kind, &mut preview, g)
+    })?;
+    require_nonempty(&acc)?;
+    validate_fold_preview_f64(true, &preview, p.preview_cap)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::F64(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
+fn linear_fold_i32(
+    p: LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![0i32; p.preview_cap];
+    let (acc, saw_preview) =
+        fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+            fold_window_i32(acc, window, p.kind, &mut preview, g)
+        })?;
+    require_nonempty(&acc)?;
+    require_int_preview(p.preview_cap, saw_preview || p.preview_cap == 0)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::I32(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
+fn linear_fold_i64(
+    p: LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![0i64; p.preview_cap];
+    let (acc, saw_preview) =
+        fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+            fold_window_i64(acc, window, p.kind, &mut preview, g)
+        })?;
+    require_nonempty(&acc)?;
+    require_int_preview(p.preview_cap, saw_preview || p.preview_cap == 0)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::I64(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
 pub(crate) fn fold_read_plan_scalar_linear(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
     kind: ReductionKind,
     dtype: ElementDtype,
+    tet_path: Option<&Path>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
     let elem_size = dtype.elem_size();
     let span = detect_contiguous_raw_span(plan, elem_size).ok_or_else(|| {
         TetError::Validation("linear scan requires contiguous raw payload span".into())
     })?;
     let n = plan.logical_f32_element_count;
-    let preview_cap = max_preview.min(n);
-    let raw = span_slice(mmap, span)?;
-    let total_bytes = u64::try_from(span.len).unwrap_or(u64::MAX);
-
+    let p = LinearFoldParams {
+        mmap,
+        tet_path,
+        span,
+        elem_size,
+        kind,
+        max_preview,
+        preview_cap: max_preview.min(n),
+        n,
+        total_bytes: u64::try_from(span.len).unwrap_or(u64::MAX),
+    };
     match dtype {
-        ElementDtype::F32 => {
-            let mut preview = vec![f32::NAN; preview_cap];
-            let (acc, _) = fold_span_windows(raw, elem_size, |acc, window, global_elems| {
-                fold_window_f32(acc, window, kind, &mut preview, global_elems)
-            })?;
-            require_nonempty(&acc)?;
-            validate_fold_preview(true, &preview, preview_cap)?;
-            Ok(build_fold_plan_outcome_typed(
-                FoldPreviewBuffer::F32(if max_preview == 0 {
-                    Vec::new()
-                } else {
-                    preview
-                }),
-                max_preview,
-                n,
-                total_bytes,
-                acc.finish_scalar(kind).into(),
-            ))
-        }
-        ElementDtype::F64 => {
-            let mut preview = vec![f64::NAN; preview_cap];
-            let (acc, _) = fold_span_windows(raw, elem_size, |acc, window, global_elems| {
-                fold_window_f64(acc, window, kind, &mut preview, global_elems)
-            })?;
-            require_nonempty(&acc)?;
-            validate_fold_preview_f64(true, &preview, preview_cap)?;
-            Ok(build_fold_plan_outcome_typed(
-                FoldPreviewBuffer::F64(if max_preview == 0 {
-                    Vec::new()
-                } else {
-                    preview
-                }),
-                max_preview,
-                n,
-                total_bytes,
-                acc.finish_scalar(kind).into(),
-            ))
-        }
-        ElementDtype::I32 => {
-            let mut preview = vec![0i32; preview_cap];
-            let (acc, saw_preview) =
-                fold_span_windows(raw, elem_size, |acc, window, global_elems| {
-                    fold_window_i32(acc, window, kind, &mut preview, global_elems)
-                })?;
-            require_nonempty(&acc)?;
-            require_int_preview(preview_cap, saw_preview || preview_cap == 0)?;
-            Ok(build_fold_plan_outcome_typed(
-                FoldPreviewBuffer::I32(if max_preview == 0 {
-                    Vec::new()
-                } else {
-                    preview
-                }),
-                max_preview,
-                n,
-                total_bytes,
-                acc.finish_scalar(kind).into(),
-            ))
-        }
-        ElementDtype::I64 => {
-            let mut preview = vec![0i64; preview_cap];
-            let (acc, saw_preview) =
-                fold_span_windows(raw, elem_size, |acc, window, global_elems| {
-                    fold_window_i64(acc, window, kind, &mut preview, global_elems)
-                })?;
-            require_nonempty(&acc)?;
-            require_int_preview(preview_cap, saw_preview || preview_cap == 0)?;
-            Ok(build_fold_plan_outcome_typed(
-                FoldPreviewBuffer::I64(if max_preview == 0 {
-                    Vec::new()
-                } else {
-                    preview
-                }),
-                max_preview,
-                n,
-                total_bytes,
-                acc.finish_scalar(kind).into(),
-            ))
-        }
+        ElementDtype::F32 => linear_fold_f32(p),
+        ElementDtype::F64 => linear_fold_f64(p),
+        ElementDtype::I32 => linear_fold_i32(p),
+        ElementDtype::I64 => linear_fold_i64(p),
     }
 }
