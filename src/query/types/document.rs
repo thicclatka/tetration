@@ -114,4 +114,7 @@ pub struct ExecutionHints {
     /// Share of host available RAM in basis points (10000 = 100%); overrides `.tet` header percent when no fixed bytes.
     #[serde(default)]
     pub memory_budget_percent_bps: Option<u16>,
+    /// When `Some(true)`, force parallel streaming fold; `Some(false)` force sequential; `None` = auto from RAM vs selection size.
+    #[serde(default)]
+    pub fold_parallel: Option<bool>,
 }

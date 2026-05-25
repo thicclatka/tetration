@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use tetration::{
+use crate::{
     CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1,
     FileExecutionSettingsV1, RawArrayWrite, mmap_file_read, read_tet_summary_v1,
     write_raw_array_file,

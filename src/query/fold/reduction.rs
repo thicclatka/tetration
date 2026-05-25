@@ -96,7 +96,7 @@ impl WelfordAccum {
     }
 
     /// Merge population variance stats from sum and sum-of-squares over `count` values.
-    fn merge_sum_sumsq(&mut self, count: f64, sum: f64, sumsq: f64) {
+    pub(crate) fn merge_sum_sumsq(&mut self, count: f64, sum: f64, sumsq: f64) {
         if count == 0.0 {
             return;
         }
@@ -110,6 +110,7 @@ impl WelfordAccum {
     }
 
     /// Merge population variance stats for a contiguous `f32` slice (slab / chunk bulk path).
+    #[allow(dead_code)]
     pub fn merge_f32_slice(&mut self, vals: &[f32]) {
         if vals.is_empty() {
             return;
@@ -119,6 +120,7 @@ impl WelfordAccum {
     }
 
     /// Like [`Self::merge_f32_slice`] for an `f64` slice.
+    #[allow(dead_code)]
     pub fn merge_f64_slice(&mut self, vals: &[f64]) {
         if vals.is_empty() {
             return;
@@ -203,31 +205,25 @@ impl ValueAccum {
             }
             ReductionKind::Sum | ReductionKind::Mean => {
                 self.count += vals.len();
-                for &v in vals {
-                    self.sum += f64::from(v);
-                }
+                self.sum += variance_simd::f32_sum_sumsq(vals).0;
             }
             ReductionKind::Var | ReductionKind::Std => {
                 self.count += vals.len();
-                let mut slab_sum = 0.0f64;
-                for &v in vals {
-                    slab_sum += f64::from(v);
-                }
+                let (slab_sum, slab_sumsq) = variance_simd::f32_sum_sumsq(vals);
                 self.sum += slab_sum;
-                self.welford.merge_f32_slice(vals);
+                self.welford
+                    .merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
             }
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
-                for &v in vals {
-                    let vd = f64::from(v);
-                    if self.have_min_max {
-                        self.min = self.min.min(vd);
-                        self.max = self.max.max(vd);
-                    } else {
-                        self.min = vd;
-                        self.max = vd;
-                        self.have_min_max = true;
-                    }
+                let (slab_min, slab_max) = variance_simd::f32_min_max(vals);
+                if self.have_min_max {
+                    self.min = self.min.min(slab_min);
+                    self.max = self.max.max(slab_max);
+                } else {
+                    self.min = slab_min;
+                    self.max = slab_max;
+                    self.have_min_max = true;
                 }
             }
             ReductionKind::Product => {
@@ -293,15 +289,14 @@ impl ValueAccum {
             }
             ReductionKind::Sum | ReductionKind::Mean => {
                 self.count += vals.len();
-                for &v in vals {
-                    self.sum += v;
-                }
+                self.sum += variance_simd::f64_sum_sumsq(vals).0;
             }
             ReductionKind::Var | ReductionKind::Std => {
                 self.count += vals.len();
-                let slab_sum: f64 = vals.iter().sum();
+                let (slab_sum, slab_sumsq) = variance_simd::f64_sum_sumsq(vals);
                 self.sum += slab_sum;
-                self.welford.merge_f64_slice(vals);
+                self.welford
+                    .merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
             }
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();

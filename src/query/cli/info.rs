@@ -422,7 +422,7 @@ fn shape_label(shape: &[u64]) -> String {
     }
     shape
         .iter()
-        .map(|d| d.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("×")
 }

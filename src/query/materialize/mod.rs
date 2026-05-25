@@ -197,21 +197,29 @@ pub(crate) fn fold_read_plan_scalar_operation(
     plan: &ReadPlan,
     max_f32: usize,
     kind: ReductionKind,
+    policy: &crate::query::fold::fold_policy::FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
         return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_parallel(
-            mmap, plan, max_f32, kind,
+            mmap,
+            plan,
+            max_f32,
+            kind,
+            policy.fold_workers,
         );
     }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_f32.min(n);
     let mut preview = vec![f32::NAN; preview_cap];
     let mut total_bytes_read_from_disk: u64 = 0;
+    let chunk_order =
+        crate::query::fold::fold_policy::chunk_indices_for_fold(plan, policy.sequential_io);
 
     let operation = match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut acc = ArgIndexAccum::default();
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = fold_planned_chunk_f32(
                     mmap,
                     plan,
@@ -231,7 +239,8 @@ pub(crate) fn fold_read_plan_scalar_operation(
         _ => {
             let mut acc = ValueAccum::default();
             let mut arg = ArgIndexAccum::default();
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes =
                     fold_planned_chunk_f32(mmap, plan, c, kind, &mut acc, &mut arg, &mut preview)?;
                 total_bytes_read_from_disk = total_bytes_read_from_disk
@@ -762,24 +771,29 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
     plan: &ReadPlan,
     max_preview: usize,
     kind: ReductionKind,
+    policy: &crate::query::fold::fold_policy::FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
         return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_f64_parallel(
             mmap,
             plan,
             max_preview,
             kind,
+            policy.fold_workers,
         );
     }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
     let mut f64_preview = vec![f64::NAN; preview_cap];
     let mut total_bytes_read_from_disk: u64 = 0;
+    let chunk_order =
+        crate::query::fold::fold_policy::chunk_indices_for_fold(plan, policy.sequential_io);
 
     let operation = match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut acc = ArgIndexAccum::default();
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     acc.push_f64(li as u64, v, kind);
                     if li < preview_cap {
@@ -805,7 +819,8 @@ pub(crate) fn fold_read_plan_scalar_operation_f64(
         }
         _ => {
             let mut acc = ValueAccum::default();
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     acc.push_f64(v);
                     if li < preview_cap {

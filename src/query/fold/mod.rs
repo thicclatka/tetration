@@ -1,5 +1,7 @@
 //! Scalar and partial-axis reductions over decoded selections.
 
+pub mod fold_policy;
+pub mod linear_scan;
 pub mod parallel_fold;
 pub mod partial_fold;
 pub mod partial_geometry;

@@ -172,7 +172,10 @@ fn parse_execution(v: &Value) -> Result<ExecutionHints, TetError> {
     for key in obj.keys() {
         if !matches!(
             key.as_str(),
-            "memory_budget_bytes" | "memory_budget_percent" | "memory_budget_percent_bps"
+            "memory_budget_bytes"
+                | "memory_budget_percent"
+                | "memory_budget_percent_bps"
+                | "fold_parallel"
         ) {
             return Err(TetError::Validation(format!(
                 "unknown field `execution.{key}`"
@@ -204,9 +207,17 @@ fn parse_execution(v: &Value) -> Result<ExecutionHints, TetError> {
         )?)?);
     }
 
+    let fold_parallel = match obj.get("fold_parallel") {
+        None => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| {
+            TetError::Validation("`execution.fold_parallel` must be a boolean".into())
+        })?),
+    };
+
     Ok(ExecutionHints {
         memory_budget_bytes,
         memory_budget_percent_bps,
+        fold_parallel,
     })
 }
 
@@ -512,6 +523,9 @@ where
             "memory_budget_percent".to_owned(),
             serde_json::json!(percent),
         );
+    }
+    if let Some(par) = ex.fold_parallel {
+        obj.insert("fold_parallel".to_owned(), serde_json::json!(par));
     }
     if !obj.is_empty() {
         map.serialize_entry("execution", &obj)?;

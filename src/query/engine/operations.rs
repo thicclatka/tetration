@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use crate::query::types::{
-    Operation, OperationPreviewFields, OutputHint, OutputHints, QueryExecutionPreview, ReadPlan,
-    TetError,
+    ExecutionHints, Operation, OperationPreviewFields, OutputHint, OutputHints,
+    QueryExecutionPreview, ReadPlan, TetError,
 };
 use crate::utils::dtype::ElementDtype;
 
@@ -15,6 +15,7 @@ use crate::query::dispatch::{
 use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
 use crate::query::engine::spill_policy::SpillPathAllowlist;
 use crate::query::fold::FoldPlanOutcome;
+use crate::query::fold::fold_policy::FoldIoPolicy;
 use crate::query::fold::reduction::ReductionKind;
 use crate::query::materialize::stats::run_tier_c_operation;
 use crate::query::materialize::{
@@ -94,6 +95,7 @@ fn attach_budget_fields(
     budget: ExecutionBudget,
     plan: &ReadPlan,
     dtype: ElementDtype,
+    fold_policy: Option<FoldIoPolicy>,
 ) {
     preview.memory_budget_bytes = Some(budget.memory_budget_bytes);
     preview.host_available_ram_bytes = budget.host_available_ram_bytes;
@@ -103,6 +105,12 @@ fn attach_budget_fields(
     if dtype == ElementDtype::F32 {
         preview.logical_selection_f32_bytes = preview.logical_selection_bytes;
     }
+    if let Some(policy) = fold_policy {
+        preview.fold_parallel = Some(policy.parallel);
+        preview.fold_workers = policy.fold_workers;
+        preview.io_regime = Some(policy.io_regime.as_str());
+        preview.fold_linear_scan = Some(policy.linear_scan);
+    }
 }
 
 fn fold_outcome_to_preview(
@@ -111,6 +119,7 @@ fn fold_outcome_to_preview(
     budget: ExecutionBudget,
     plan: &ReadPlan,
     dtype: ElementDtype,
+    fold_policy: FoldIoPolicy,
 ) -> QueryExecutionPreview {
     let mut preview = preview_from_bundle(
         folded.total_bytes_read_from_disk,
@@ -129,7 +138,7 @@ fn fold_outcome_to_preview(
         None,
         None,
     );
-    attach_budget_fields(&mut preview, budget, plan, dtype);
+    attach_budget_fields(&mut preview, budget, plan, dtype, Some(fold_policy));
     preview
 }
 
@@ -155,7 +164,7 @@ fn run_materialize_required_operation(
         None,
         None,
     );
-    attach_budget_fields(&mut preview, *budget, plan, dtype);
+    attach_budget_fields(&mut preview, *budget, plan, dtype, None);
     Ok(preview)
 }
 
@@ -178,7 +187,9 @@ pub(super) struct ExecutionPreviewInput<'a> {
     pub output: Option<&'a OutputHints>,
     pub max_f32: usize,
     pub budget: ExecutionBudget,
+    pub execution: Option<&'a ExecutionHints>,
     pub spill_allowlist: Option<&'a SpillPathAllowlist>,
+    pub tet_path: Option<&'a Path>,
 }
 
 pub(super) fn build_execution_preview(
@@ -192,7 +203,9 @@ pub(super) fn build_execution_preview(
         output,
         max_f32,
         budget,
+        execution,
         spill_allowlist,
+        tet_path,
     } = *input;
     let elem_dtype = ElementDtype::from_wire(dtype)?;
 
@@ -206,9 +219,17 @@ pub(super) fn build_execution_preview(
             spill_allowlist,
             elem_dtype,
         ),
-        Some(op) => {
-            build_operation_preview(mmap, plan, op, max_f32, budget, spill_allowlist, elem_dtype)
-        }
+        Some(op) => build_operation_preview(
+            mmap,
+            plan,
+            op,
+            max_f32,
+            budget,
+            execution,
+            spill_allowlist,
+            elem_dtype,
+            tet_path,
+        ),
     }
 }
 
@@ -246,7 +267,7 @@ fn build_decode_preview(
             Some(resolved.display().to_string()),
             Some(spill_bytes),
         );
-        attach_budget_fields(&mut preview, budget, plan, dtype);
+        attach_budget_fields(&mut preview, budget, plan, dtype, None);
         return Ok(preview);
     }
     if budget.full_tensor_exceeds_budget(plan, dtype)? && max_preview == 0 {
@@ -267,7 +288,7 @@ fn build_decode_preview(
         None,
         None,
     );
-    attach_budget_fields(&mut preview, budget, plan, dtype);
+    attach_budget_fields(&mut preview, budget, plan, dtype, None);
     Ok(preview)
 }
 
@@ -277,8 +298,10 @@ fn build_operation_preview(
     op: &Operation,
     max_preview: usize,
     budget: ExecutionBudget,
+    execution: Option<&ExecutionHints>,
     spill_allowlist: Option<&SpillPathAllowlist>,
     dtype: ElementDtype,
+    tet_path: Option<&Path>,
 ) -> Result<QueryExecutionPreview, TetError> {
     if op.materialize_tier() == OperationMaterializeTier::MaterializeRequired {
         let policy = spill_allowlist.ok_or_else(|| {
@@ -297,23 +320,34 @@ fn build_operation_preview(
             dtype,
         );
     }
+    let fold_policy = FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
-        let folded = scalar_fold(mmap, plan, max_preview, kind, dtype)?;
+        let folded = scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy, tet_path)?;
         return Ok(fold_outcome_to_preview(
             folded,
             MemoryStrategy::StreamingFold,
             budget,
             plan,
             dtype,
+            fold_policy,
         ));
     }
     let kind = ReductionKind::from(op);
-    let folded = partial_fold(mmap, plan, max_preview, kind, op.axes(), dtype)?;
+    let folded = partial_fold(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        op.axes(),
+        dtype,
+        &fold_policy,
+    )?;
     Ok(fold_outcome_to_preview(
         folded,
         MemoryStrategy::StreamingFold,
         budget,
         plan,
         dtype,
+        fold_policy,
     ))
 }

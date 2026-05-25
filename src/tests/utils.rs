@@ -1,6 +1,6 @@
 //! Utils integration tests.
 
-use tetration::available_memory_bytes;
+use crate::available_memory_bytes;
 
 #[test]
 fn host_memory_probe_does_not_panic() {

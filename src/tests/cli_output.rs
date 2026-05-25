@@ -1,8 +1,7 @@
 //! CLI query output formatting (`QueryOutputFormat`).
 
-mod fixture;
-
-use tetration::{
+use super::fixture;
+use crate::{
     QueryOutputFormat, format_query_response, format_query_stderr_hints, mmap_file_read,
     parse_query_json, plan_query_empty, plan_query_with_tet_mmap, validate_query,
 };

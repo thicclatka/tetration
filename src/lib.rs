@@ -1,12 +1,15 @@
 //! **tetration** — Rust library for the Tetration mmap-oriented chunked tensor format.
 //! The companion CLI binary is **`tet`** (see `src/bin/tet.rs` and `src/bin/tet/`).
 
-mod utils;
+pub(crate) mod utils;
 
 pub mod catalog;
 pub mod convert;
 pub mod layout;
 pub mod query;
+
+#[cfg(test)]
+mod tests;
 
 pub use catalog::{
     CHUNK_INDEX_HEADER_V1, CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1,
