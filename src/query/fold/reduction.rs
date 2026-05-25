@@ -216,16 +216,14 @@ impl ValueAccum {
             }
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
-                for &v in vals {
-                    let vd = f64::from(v);
-                    if self.have_min_max {
-                        self.min = self.min.min(vd);
-                        self.max = self.max.max(vd);
-                    } else {
-                        self.min = vd;
-                        self.max = vd;
-                        self.have_min_max = true;
-                    }
+                let (slab_min, slab_max) = variance_simd::f32_min_max(vals);
+                if self.have_min_max {
+                    self.min = self.min.min(slab_min);
+                    self.max = self.max.max(slab_max);
+                } else {
+                    self.min = slab_min;
+                    self.max = slab_max;
+                    self.have_min_max = true;
                 }
             }
             ReductionKind::Product => {

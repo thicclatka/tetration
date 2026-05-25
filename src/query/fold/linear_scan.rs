@@ -316,7 +316,7 @@ struct LinearFoldParams<'a> {
 }
 
 fn linear_fold_f32(
-    p: LinearFoldParams<'_>,
+    p: &LinearFoldParams<'_>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
     let mut preview = vec![f32::NAN; p.preview_cap];
     let (acc, _) = fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
@@ -338,7 +338,7 @@ fn linear_fold_f32(
 }
 
 fn linear_fold_f64(
-    p: LinearFoldParams<'_>,
+    p: &LinearFoldParams<'_>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
     let mut preview = vec![f64::NAN; p.preview_cap];
     let (acc, _) = fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
@@ -360,7 +360,7 @@ fn linear_fold_f64(
 }
 
 fn linear_fold_i32(
-    p: LinearFoldParams<'_>,
+    p: &LinearFoldParams<'_>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
     let mut preview = vec![0i32; p.preview_cap];
     let (acc, saw_preview) =
@@ -383,7 +383,7 @@ fn linear_fold_i32(
 }
 
 fn linear_fold_i64(
-    p: LinearFoldParams<'_>,
+    p: &LinearFoldParams<'_>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
     let mut preview = vec![0i64; p.preview_cap];
     let (acc, saw_preview) =
@@ -430,9 +430,9 @@ pub(crate) fn fold_read_plan_scalar_linear(
         total_bytes: u64::try_from(span.len).unwrap_or(u64::MAX),
     };
     match dtype {
-        ElementDtype::F32 => linear_fold_f32(p),
-        ElementDtype::F64 => linear_fold_f64(p),
-        ElementDtype::I32 => linear_fold_i32(p),
-        ElementDtype::I64 => linear_fold_i64(p),
+        ElementDtype::F32 => linear_fold_f32(&p),
+        ElementDtype::F64 => linear_fold_f64(&p),
+        ElementDtype::I32 => linear_fold_i32(&p),
+        ElementDtype::I64 => linear_fold_i64(&p),
     }
 }
