@@ -2,60 +2,64 @@
 
 use rayon::prelude::*;
 
-use crate::query::decode::chunk_decode::{
-    fold_planned_chunk_f32, fold_planned_chunk_f64, visit_planned_chunk, visit_planned_chunk_f64,
-};
-use crate::query::decode::indexing::coords_from_linear_row_major;
-use crate::query::dispatch::sum_chunk_read_bytes;
-use crate::query::fold::partial_fold::{partial_arg_fields, partial_fields};
-use crate::query::fold::partial_geometry::{
-    PartialAxisLayout, fiber_linear_index, partial_axis_layout, reduced_index,
-};
-use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{
-    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
-    validate_fold_preview, validate_fold_preview_f64,
-};
+use crate::query::fold::{fold_policy, partial_fold, partial_geometry, reduction, shared};
 use crate::query::materialize::int::IntVisit;
 use crate::query::types::{OperationPreviewFields, ReadPlan, TetError};
+use crate::query::{decode, dispatch};
 use crate::utils::dtype::ElementDtype;
 
-/// Use Rayon when more than one planned chunk is touched (matches materialize dispatch).
+/// Run `f` on a Rayon pool capped to `workers` when below the global thread count.
+pub(crate) fn with_fold_workers<R>(workers: Option<usize>, f: impl FnOnce() -> R + Send) -> R
+where
+    R: Send,
+{
+    if let Some(n) = workers.filter(|&n| n > 0 && n < rayon::current_num_threads()) {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build()
+            .expect("fold rayon pool")
+            .install(f)
+    } else {
+        f()
+    }
+}
+
+/// Use Rayon when policy requests parallel fold and more than one chunk is touched.
 #[must_use]
-pub(crate) fn use_parallel_fold(plan: &ReadPlan) -> bool {
-    plan.chunks.len() > 1
+pub(crate) fn use_parallel_fold(plan: &ReadPlan, policy: &fold_policy::FoldIoPolicy) -> bool {
+    !policy.linear_scan && policy.parallel && plan.chunks.len() > 1
 }
 
 struct ScalarChunkWork {
     bytes: u64,
-    value: ValueAccum,
-    arg: ArgIndexAccum,
+    value: reduction::ValueAccum,
+    arg: reduction::ArgIndexAccum,
 }
 
 struct PartialChunkValue {
     bytes: u64,
-    cells: Vec<ValueAccum>,
+    cells: Vec<reduction::ValueAccum>,
     saw_any: bool,
 }
 
 struct PartialChunkArg {
     bytes: u64,
-    cells: Vec<ArgIndexAccum>,
+    cells: Vec<reduction::ArgIndexAccum>,
     saw_any: bool,
 }
 
 fn sum_chunk_bytes(bytes: impl IntoIterator<Item = u64>) -> Result<u64, TetError> {
-    sum_chunk_read_bytes(bytes)
+    dispatch::sum_chunk_read_bytes(bytes)
 }
 
 fn merge_scalar_chunks(
     parts: &[ScalarChunkWork],
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     n: usize,
 ) -> Result<OperationPreviewFields, TetError> {
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            let mut acc = ArgIndexAccum::default();
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            let mut acc = reduction::ArgIndexAccum::default();
             for p in parts {
                 acc.merge_from(&p.arg, kind);
             }
@@ -67,7 +71,7 @@ fn merge_scalar_chunks(
             Ok(acc.finish_scalar(kind, n).into())
         }
         _ => {
-            let mut acc = ValueAccum::default();
+            let mut acc = reduction::ValueAccum::default();
             for p in parts {
                 acc.merge_from(&p.value);
             }
@@ -81,13 +85,17 @@ fn merge_scalar_chunks(
     }
 }
 
-fn merge_partial_value_cells(dst: &mut [ValueAccum], src: &[ValueAccum]) {
+fn merge_partial_value_cells(dst: &mut [reduction::ValueAccum], src: &[reduction::ValueAccum]) {
     for (d, s) in dst.iter_mut().zip(src) {
         d.merge_from(s);
     }
 }
 
-fn merge_partial_arg_cells(dst: &mut [ArgIndexAccum], src: &[ArgIndexAccum], kind: ReductionKind) {
+fn merge_partial_arg_cells(
+    dst: &mut [reduction::ArgIndexAccum],
+    src: &[reduction::ArgIndexAccum],
+    kind: reduction::ReductionKind,
+) {
     for (d, s) in dst.iter_mut().zip(src) {
         d.merge_from(s, kind);
     }
@@ -96,11 +104,11 @@ fn merge_partial_arg_cells(dst: &mut [ArgIndexAccum], src: &[ArgIndexAccum], kin
 fn reduced_cell_index(
     li: usize,
     shape: &[u64],
-    layout: &PartialAxisLayout,
+    layout: &partial_geometry::PartialAxisLayout,
 ) -> Result<(usize, u64), TetError> {
-    let coords = coords_from_linear_row_major(li, shape)?;
-    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-    let fi = fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
+    let coords = decode::indexing::coords_from_linear_row_major(li, shape)?;
+    let oi = partial_geometry::reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+    let fi = partial_geometry::fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
     Ok((oi, fi))
 }
 
@@ -137,9 +145,9 @@ enum ScalarFoldVisit {
 }
 
 struct ScalarFoldChunkCtx<'a> {
-    kind: ReductionKind,
-    value: &'a mut ValueAccum,
-    arg: &'a mut ArgIndexAccum,
+    kind: reduction::ReductionKind,
+    value: &'a mut reduction::ValueAccum,
+    arg: &'a mut reduction::ArgIndexAccum,
     preview_addr: usize,
     preview_len: usize,
 }
@@ -164,7 +172,9 @@ impl ScalarFoldVisit {
                         )
                     }
                 };
-                fold_planned_chunk_f32(mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview)
+                decode::chunk_decode::fold_planned_chunk_f32(
+                    mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview,
+                )
             }
             Self::F64 => {
                 let preview = if ctx.preview_len == 0 {
@@ -177,11 +187,13 @@ impl ScalarFoldVisit {
                         )
                     }
                 };
-                fold_planned_chunk_f64(mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview)
+                decode::chunk_decode::fold_planned_chunk_f64(
+                    mmap, plan, c, ctx.kind, ctx.value, ctx.arg, preview,
+                )
             }
             Self::Int(_) => self.visit_chunk(mmap, plan, c, |li, val| {
                 match ctx.kind {
-                    ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                    reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
                         self.push_arg(ctx.arg, li, val, ctx.kind);
                     }
                     _ => self.push_value(ctx.value, val),
@@ -203,20 +215,28 @@ impl ScalarFoldVisit {
         F: FnMut(usize, f64) -> Result<(), TetError>,
     {
         match self {
-            Self::F32 => visit_planned_chunk(mmap, plan, c, |li, v| visit(li, f64::from(v))),
-            Self::F64 => visit_planned_chunk_f64(mmap, plan, c, visit),
+            Self::F32 => decode::chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
+                visit(li, f64::from(v))
+            }),
+            Self::F64 => decode::chunk_decode::visit_planned_chunk_f64(mmap, plan, c, visit),
             Self::Int(v) => v.visit_chunk_as_f64(mmap, plan, c, visit),
         }
     }
 
-    fn push_value(self, acc: &mut ValueAccum, v: f64) {
+    fn push_value(self, acc: &mut reduction::ValueAccum, v: f64) {
         match self {
             Self::F32 => acc.push(v as f32),
             Self::F64 | Self::Int(_) => acc.push_f64(v),
         }
     }
 
-    fn push_arg(self, acc: &mut ArgIndexAccum, li: usize, v: f64, kind: ReductionKind) {
+    fn push_arg(
+        self,
+        acc: &mut reduction::ArgIndexAccum,
+        li: usize,
+        v: f64,
+        kind: reduction::ReductionKind,
+    ) {
         match self {
             Self::F32 => acc.push(li as u64, v as f32, kind),
             Self::F64 | Self::Int(_) => acc.push_f64(li as u64, v, kind),
@@ -241,15 +261,16 @@ fn fold_read_plan_scalar_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     visit: ScalarFoldVisit,
-) -> Result<FoldPlanOutcome, TetError> {
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
     let mut f32_preview = vec![f32::NAN; preview_cap];
     let mut f64_preview = vec![f64::NAN; preview_cap];
-    let mut i32_preview = vec![0i32; preview_cap];
-    let mut i64_preview = vec![0i64; preview_cap];
+    let mut i32_preview = vec![0; preview_cap];
+    let mut i64_preview = vec![0; preview_cap];
     let (preview_addr, preview_len) = match visit {
         ScalarFoldVisit::F32 => (f32_preview.as_mut_ptr() as usize, f32_preview.len()),
         ScalarFoldVisit::F64 => (f64_preview.as_mut_ptr() as usize, f64_preview.len()),
@@ -261,31 +282,32 @@ fn fold_read_plan_scalar_parallel(
         }
     };
 
-    let parts: Vec<ScalarChunkWork> = plan
-        .chunks
-        .par_iter()
-        .map(|c| {
-            let mut value = ValueAccum::default();
-            let mut arg = ArgIndexAccum::default();
-            let mut ctx = ScalarFoldChunkCtx {
-                kind,
-                value: &mut value,
-                arg: &mut arg,
-                preview_addr,
-                preview_len,
-            };
-            let bytes = visit.fold_chunk(mmap, plan, c, &mut ctx)?;
-            Ok(ScalarChunkWork { bytes, value, arg })
-        })
-        .collect::<Result<Vec<_>, TetError>>()?;
+    let parts: Vec<ScalarChunkWork> = with_fold_workers(workers, || {
+        plan.chunks
+            .par_iter()
+            .map(|c| {
+                let mut value = reduction::ValueAccum::default();
+                let mut arg = reduction::ArgIndexAccum::default();
+                let mut ctx = ScalarFoldChunkCtx {
+                    kind,
+                    value: &mut value,
+                    arg: &mut arg,
+                    preview_addr,
+                    preview_len,
+                };
+                let bytes = visit.fold_chunk(mmap, plan, c, &mut ctx)?;
+                Ok(ScalarChunkWork { bytes, value, arg })
+            })
+            .collect::<Result<Vec<_>, TetError>>()
+    })?;
 
     let total_bytes_read_from_disk = sum_chunk_bytes(parts.iter().map(|p| p.bytes))?;
     let operation = merge_scalar_chunks(&parts, kind, n)?;
 
     match visit {
         ScalarFoldVisit::F32 => {
-            validate_fold_preview(true, &f32_preview, preview_cap)?;
-            Ok(build_fold_plan_outcome(
+            shared::validate_fold_preview(true, &f32_preview, preview_cap)?;
+            Ok(shared::build_fold_plan_outcome(
                 f32_preview,
                 max_preview,
                 n,
@@ -294,24 +316,24 @@ fn fold_read_plan_scalar_parallel(
             ))
         }
         ScalarFoldVisit::F64 => {
-            validate_fold_preview_f64(true, &f64_preview, preview_cap)?;
-            Ok(build_fold_plan_outcome_typed(
-                FoldPreviewBuffer::F64(f64_preview),
+            shared::validate_fold_preview_f64(true, &f64_preview, preview_cap)?;
+            Ok(shared::build_fold_plan_outcome_typed(
+                shared::FoldPreviewBuffer::F64(f64_preview),
                 max_preview,
                 n,
                 total_bytes_read_from_disk,
                 operation,
             ))
         }
-        ScalarFoldVisit::Int(IntVisit::I32) => Ok(build_fold_plan_outcome_typed(
-            FoldPreviewBuffer::I32(i32_preview),
+        ScalarFoldVisit::Int(IntVisit::I32) => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::I32(i32_preview),
             max_preview,
             n,
             total_bytes_read_from_disk,
             operation,
         )),
-        ScalarFoldVisit::Int(IntVisit::I64) => Ok(build_fold_plan_outcome_typed(
-            FoldPreviewBuffer::I64(i64_preview),
+        ScalarFoldVisit::Int(IntVisit::I64) => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::I64(i64_preview),
             max_preview,
             n,
             total_bytes_read_from_disk,
@@ -325,9 +347,10 @@ pub(crate) fn fold_read_plan_scalar_operation_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_f32: usize,
-    kind: ReductionKind,
-) -> Result<FoldPlanOutcome, TetError> {
-    fold_read_plan_scalar_parallel(mmap, plan, max_f32, kind, ScalarFoldVisit::F32)
+    kind: reduction::ReductionKind,
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    fold_read_plan_scalar_parallel(mmap, plan, max_f32, kind, ScalarFoldVisit::F32, workers)
 }
 
 /// Parallel scalar fold over `f64` planned chunks.
@@ -335,9 +358,10 @@ pub(crate) fn fold_read_plan_scalar_operation_f64_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
-) -> Result<FoldPlanOutcome, TetError> {
-    fold_read_plan_scalar_parallel(mmap, plan, max_preview, kind, ScalarFoldVisit::F64)
+    kind: reduction::ReductionKind,
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    fold_read_plan_scalar_parallel(mmap, plan, max_preview, kind, ScalarFoldVisit::F64, workers)
 }
 
 /// Parallel scalar fold for `i32` / `i64` (promoted to `f64` accumulators).
@@ -345,9 +369,10 @@ pub(crate) fn fold_read_plan_scalar_operation_int_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     dtype: ElementDtype,
-) -> Result<FoldPlanOutcome, TetError> {
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     let visit = match dtype {
         ElementDtype::I32 => ScalarFoldVisit::Int(IntVisit::I32),
         ElementDtype::I64 => ScalarFoldVisit::Int(IntVisit::I64),
@@ -357,7 +382,7 @@ pub(crate) fn fold_read_plan_scalar_operation_int_parallel(
             ));
         }
     };
-    fold_read_plan_scalar_parallel(mmap, plan, max_preview, kind, visit)
+    fold_read_plan_scalar_parallel(mmap, plan, max_preview, kind, visit, workers)
 }
 
 #[derive(Copy, Clone)]
@@ -378,19 +403,27 @@ impl PartialFoldVisit {
         F: FnMut(usize, f64) -> Result<(), TetError>,
     {
         match self {
-            Self::F32 => visit_planned_chunk(mmap, plan, c, |li, v| visit(li, f64::from(v))),
-            Self::F64 => visit_planned_chunk_f64(mmap, plan, c, visit),
+            Self::F32 => decode::chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
+                visit(li, f64::from(v))
+            }),
+            Self::F64 => decode::chunk_decode::visit_planned_chunk_f64(mmap, plan, c, visit),
         }
     }
 
-    fn push_value(self, cell: &mut ValueAccum, v: f64) {
+    fn push_value(self, cell: &mut reduction::ValueAccum, v: f64) {
         match self {
             Self::F32 => cell.push(v as f32),
             Self::F64 => cell.push_f64(v),
         }
     }
 
-    fn push_arg(self, cell: &mut ArgIndexAccum, fi: u64, v: f64, kind: ReductionKind) {
+    fn push_arg(
+        self,
+        cell: &mut reduction::ArgIndexAccum,
+        fi: u64,
+        v: f64,
+        kind: reduction::ReductionKind,
+    ) {
         match self {
             Self::F32 => cell.push(fi, v as f32, kind),
             Self::F64 => cell.push_f64(fi, v, kind),
@@ -412,8 +445,8 @@ impl PartialFoldVisit {
         preview_cap: usize,
     ) -> Result<(), TetError> {
         match self {
-            Self::F32 => validate_fold_preview(saw_any, f32_preview, preview_cap),
-            Self::F64 => validate_fold_preview_f64(saw_any, f64_preview, preview_cap),
+            Self::F32 => shared::validate_fold_preview(saw_any, f32_preview, preview_cap),
+            Self::F64 => shared::validate_fold_preview_f64(saw_any, f64_preview, preview_cap),
         }
     }
 }
@@ -428,40 +461,44 @@ struct PartialParallelCtx<'a> {
     mmap: &'a [u8],
     plan: &'a ReadPlan,
     visit: PartialFoldVisit,
-    kind: ReductionKind,
-    layout: &'a PartialAxisLayout,
+    kind: reduction::ReductionKind,
+    layout: &'a partial_geometry::PartialAxisLayout,
     shape: &'a [u64],
     preview_addr: usize,
     preview_len: usize,
     n: usize,
 }
 
-fn parallel_partial_arg(ctx: &PartialParallelCtx<'_>) -> Result<PartialParallelWork, TetError> {
+fn parallel_partial_arg(
+    ctx: &PartialParallelCtx<'_>,
+    workers: Option<usize>,
+) -> Result<PartialParallelWork, TetError> {
     let out_len = ctx.layout.out_len;
-    let parts: Vec<PartialChunkArg> = ctx
-        .plan
-        .chunks
-        .par_iter()
-        .map(|c| {
-            let mut cells = vec![ArgIndexAccum::default(); out_len];
-            let mut saw_any = false;
-            let bytes = ctx.visit.visit_chunk(ctx.mmap, ctx.plan, c, |li, v| {
-                saw_any = true;
-                ctx.visit
-                    .write_preview(ctx.preview_addr, ctx.preview_len, li, v);
-                let (oi, fi) = reduced_cell_index(li, ctx.shape, ctx.layout)?;
-                ctx.visit.push_arg(&mut cells[oi], fi, v, ctx.kind);
-                Ok(())
-            })?;
-            Ok(PartialChunkArg {
-                bytes,
-                cells,
-                saw_any,
+    let parts: Vec<PartialChunkArg> = with_fold_workers(workers, || {
+        ctx.plan
+            .chunks
+            .par_iter()
+            .map(|c| {
+                let mut cells = vec![reduction::ArgIndexAccum::default(); out_len];
+                let mut saw_any = false;
+                let bytes = ctx.visit.visit_chunk(ctx.mmap, ctx.plan, c, |li, v| {
+                    saw_any = true;
+                    ctx.visit
+                        .write_preview(ctx.preview_addr, ctx.preview_len, li, v);
+                    let (oi, fi) = reduced_cell_index(li, ctx.shape, ctx.layout)?;
+                    ctx.visit.push_arg(&mut cells[oi], fi, v, ctx.kind);
+                    Ok(())
+                })?;
+                Ok(PartialChunkArg {
+                    bytes,
+                    cells,
+                    saw_any,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, TetError>>()?;
+            .collect::<Result<Vec<_>, TetError>>()
+    })?;
 
-    let mut merged = vec![ArgIndexAccum::default(); out_len];
+    let mut merged = vec![reduction::ArgIndexAccum::default(); out_len];
     let mut saw_any = false;
     let mut total_bytes = 0u64;
     for p in &parts {
@@ -472,38 +509,47 @@ fn parallel_partial_arg(ctx: &PartialParallelCtx<'_>) -> Result<PartialParallelW
             .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
     }
     Ok(PartialParallelWork {
-        operation: partial_arg_fields(ctx.kind, ctx.n, &ctx.layout.out_shape, &merged),
+        operation: partial_fold::partial_arg_fields(
+            ctx.kind,
+            ctx.n,
+            &ctx.layout.out_shape,
+            &merged,
+        ),
         total_bytes,
         saw_any,
     })
 }
 
-fn parallel_partial_value(ctx: &PartialParallelCtx<'_>) -> Result<PartialParallelWork, TetError> {
+fn parallel_partial_value(
+    ctx: &PartialParallelCtx<'_>,
+    workers: Option<usize>,
+) -> Result<PartialParallelWork, TetError> {
     let out_len = ctx.layout.out_len;
-    let parts: Vec<PartialChunkValue> = ctx
-        .plan
-        .chunks
-        .par_iter()
-        .map(|c| {
-            let mut cells = vec![ValueAccum::default(); out_len];
-            let mut saw_any = false;
-            let bytes = ctx.visit.visit_chunk(ctx.mmap, ctx.plan, c, |li, v| {
-                saw_any = true;
-                ctx.visit
-                    .write_preview(ctx.preview_addr, ctx.preview_len, li, v);
-                let (oi, _) = reduced_cell_index(li, ctx.shape, ctx.layout)?;
-                ctx.visit.push_value(&mut cells[oi], v);
-                Ok(())
-            })?;
-            Ok(PartialChunkValue {
-                bytes,
-                cells,
-                saw_any,
+    let parts: Vec<PartialChunkValue> = with_fold_workers(workers, || {
+        ctx.plan
+            .chunks
+            .par_iter()
+            .map(|c| {
+                let mut cells = vec![reduction::ValueAccum::default(); out_len];
+                let mut saw_any = false;
+                let bytes = ctx.visit.visit_chunk(ctx.mmap, ctx.plan, c, |li, v| {
+                    saw_any = true;
+                    ctx.visit
+                        .write_preview(ctx.preview_addr, ctx.preview_len, li, v);
+                    let (oi, _) = reduced_cell_index(li, ctx.shape, ctx.layout)?;
+                    ctx.visit.push_value(&mut cells[oi], v);
+                    Ok(())
+                })?;
+                Ok(PartialChunkValue {
+                    bytes,
+                    cells,
+                    saw_any,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, TetError>>()?;
+            .collect::<Result<Vec<_>, TetError>>()
+    })?;
 
-    let mut merged = vec![ValueAccum::default(); out_len];
+    let mut merged = vec![reduction::ValueAccum::default(); out_len];
     let mut saw_any = false;
     let mut total_bytes = 0u64;
     for p in &parts {
@@ -515,7 +561,13 @@ fn parallel_partial_value(ctx: &PartialParallelCtx<'_>) -> Result<PartialParalle
     }
     let reduced: Vec<f64> = merged.iter().map(|c| c.finish_f64(ctx.kind)).collect();
     Ok(PartialParallelWork {
-        operation: partial_fields(ctx.kind, ctx.n, &ctx.layout.out_shape, &reduced, &merged),
+        operation: partial_fold::partial_fields(
+            ctx.kind,
+            ctx.n,
+            &ctx.layout.out_shape,
+            &reduced,
+            &merged,
+        ),
         total_bytes,
         saw_any,
     })
@@ -525,11 +577,12 @@ fn parallel_partial_axis_fold(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
     visit: PartialFoldVisit,
-) -> Result<FoldPlanOutcome, TetError> {
-    let layout = partial_axis_layout(plan, axis_labels)?;
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    let layout = partial_geometry::partial_axis_layout(plan, axis_labels)?;
     let shape = plan.logical_selection_shape.clone();
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
@@ -552,22 +605,24 @@ fn parallel_partial_axis_fold(
         n,
     };
     let work = match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => parallel_partial_arg(&ctx)?,
-        _ => parallel_partial_value(&ctx)?,
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            parallel_partial_arg(&ctx, workers)?
+        }
+        _ => parallel_partial_value(&ctx, workers)?,
     };
 
     visit.validate_preview(work.saw_any, &f32_preview, &f64_preview, preview_cap)?;
 
     match visit {
-        PartialFoldVisit::F32 => Ok(build_fold_plan_outcome(
+        PartialFoldVisit::F32 => Ok(shared::build_fold_plan_outcome(
             f32_preview,
             max_preview,
             n,
             work.total_bytes,
             work.operation,
         )),
-        PartialFoldVisit::F64 => Ok(build_fold_plan_outcome_typed(
-            FoldPreviewBuffer::F64(f64_preview),
+        PartialFoldVisit::F64 => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::F64(f64_preview),
             max_preview,
             n,
             work.total_bytes,
@@ -581,9 +636,10 @@ pub(crate) fn fold_read_plan_partial_operation_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-) -> Result<FoldPlanOutcome, TetError> {
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     parallel_partial_axis_fold(
         mmap,
         plan,
@@ -591,6 +647,7 @@ pub(crate) fn fold_read_plan_partial_operation_parallel(
         kind,
         axis_labels,
         PartialFoldVisit::F32,
+        workers,
     )
 }
 
@@ -599,9 +656,10 @@ pub(crate) fn fold_read_plan_partial_operation_f64_parallel(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-) -> Result<FoldPlanOutcome, TetError> {
+    workers: Option<usize>,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     parallel_partial_axis_fold(
         mmap,
         plan,
@@ -609,5 +667,6 @@ pub(crate) fn fold_read_plan_partial_operation_f64_parallel(
         kind,
         axis_labels,
         PartialFoldVisit::F64,
+        workers,
     )
 }

@@ -3,7 +3,7 @@
 use std::env;
 use std::sync::{Mutex, MutexGuard};
 
-use tetration::{
+use crate::{
     HistoryExecuteFilter, HistoryListFilter, HistorySettings, append_cli_query_history,
     clear_cli_query_history, cli_query_history_max, format_history_list_json,
     format_history_list_text, get_cli_query_history_entry, history_entry_mode,

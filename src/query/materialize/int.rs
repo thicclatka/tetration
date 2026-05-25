@@ -437,13 +437,15 @@ macro_rules! int_scalar_fold_run {
         $n:expr;
         $kind:ident;
         $acc:ident;
+        $sequential_io:expr;
         on_value: $on_value:expr,
         finish => $finish:expr
     ) => {{
         let mut preview = vec![0 as $elem; $preview_cap];
         let mut total_bytes_read_from_disk: u64 = 0;
         let mut saw_preview = $preview_cap == 0;
-        for c in &$plan.chunks {
+        for i in crate::query::fold::fold_policy::chunk_indices_for_fold($plan, $sequential_io) {
+            let c = &$plan.chunks[i];
             let chunk_bytes = $visit.visit_chunk_as_f64($mmap, $plan, c, |li, v| {
                 $on_value(&mut $acc, li, v, $kind);
                 if li < $preview_cap {
@@ -486,13 +488,15 @@ macro_rules! int_scalar_fold_run {
         $n:expr;
         $kind:ident;
         $acc:ident;
+        $sequential_io:expr;
         on_value: $on_value:expr,
         finish => $finish:expr
     ) => {{
         let mut preview = vec![0 as $elem; $preview_cap];
         let mut total_bytes_read_from_disk: u64 = 0;
         let mut saw_preview = $preview_cap == 0;
-        for c in &$plan.chunks {
+        for i in crate::query::fold::fold_policy::chunk_indices_for_fold($plan, $sequential_io) {
+            let c = &$plan.chunks[i];
             let chunk_bytes = $visit.visit_chunk_as_f64($mmap, $plan, c, |li, v| {
                 $on_value(&mut $acc, li, v, $kind);
                 if li < $preview_cap {
@@ -525,15 +529,29 @@ macro_rules! int_scalar_fold_run {
     }};
 }
 
-fn int_scalar_fold_arg(
-    mmap: &[u8],
-    plan: &ReadPlan,
+/// Shared inputs for sequential integer scalar fold (`i32` / `i64` promoted to `f64`).
+struct IntScalarFoldCtx<'a> {
+    mmap: &'a [u8],
+    plan: &'a ReadPlan,
     max_preview: usize,
     kind: ReductionKind,
     visit: IntVisit,
     n: usize,
     preview_cap: usize,
-) -> Result<FoldPlanOutcome, TetError> {
+    sequential_io: bool,
+}
+
+fn int_scalar_fold_arg(ctx: &IntScalarFoldCtx<'_>) -> Result<FoldPlanOutcome, TetError> {
+    let IntScalarFoldCtx {
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        visit,
+        n,
+        preview_cap,
+        sequential_io,
+    } = *ctx;
     match visit {
         IntVisit::I32 => {
             let mut acc = ArgIndexAccum::default();
@@ -549,6 +567,7 @@ fn int_scalar_fold_arg(
                 n;
                 kind;
                 acc;
+                sequential_io;
                 on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
                     acc.push_f64(li as u64, v, kind);
                 },
@@ -569,6 +588,7 @@ fn int_scalar_fold_arg(
                 n;
                 kind;
                 acc;
+                sequential_io;
                 on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
                     acc.push_f64(li as u64, v, kind);
                 },
@@ -578,15 +598,17 @@ fn int_scalar_fold_arg(
     }
 }
 
-fn int_scalar_fold_value(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    max_preview: usize,
-    kind: ReductionKind,
-    visit: IntVisit,
-    n: usize,
-    preview_cap: usize,
-) -> Result<FoldPlanOutcome, TetError> {
+fn int_scalar_fold_value(ctx: &IntScalarFoldCtx<'_>) -> Result<FoldPlanOutcome, TetError> {
+    let IntScalarFoldCtx {
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        visit,
+        n,
+        preview_cap,
+        sequential_io,
+    } = *ctx;
     match visit {
         IntVisit::I32 => {
             let mut acc = ValueAccum::default();
@@ -602,6 +624,7 @@ fn int_scalar_fold_value(
                 n;
                 kind;
                 acc;
+                sequential_io;
                 on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
                 finish => acc.finish_scalar(kind)
             )
@@ -620,6 +643,7 @@ fn int_scalar_fold_value(
                 n;
                 kind;
                 acc;
+                sequential_io;
                 on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
                 finish => acc.finish_scalar(kind)
             )
@@ -633,16 +657,8 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
     max_preview: usize,
     kind: ReductionKind,
     dtype: ElementDtype,
+    policy: &crate::query::fold::fold_policy::FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
-        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_int_parallel(
-            mmap,
-            plan,
-            max_preview,
-            kind,
-            dtype,
-        );
-    }
     let visit = match dtype {
         ElementDtype::I32 => IntVisit::I32,
         ElementDtype::I64 => IntVisit::I64,
@@ -652,12 +668,30 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
             ));
         }
     };
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
+        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_int_parallel(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            dtype,
+            policy.fold_workers,
+        );
+    }
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
+    let ctx = IntScalarFoldCtx {
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        visit,
+        n,
+        preview_cap,
+        sequential_io: policy.sequential_io,
+    };
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            int_scalar_fold_arg(mmap, plan, max_preview, kind, visit, n, preview_cap)
-        }
-        _ => int_scalar_fold_value(mmap, plan, max_preview, kind, visit, n, preview_cap),
+        ReductionKind::ArgMin | ReductionKind::ArgMax => int_scalar_fold_arg(&ctx),
+        _ => int_scalar_fold_value(&ctx),
     }
 }

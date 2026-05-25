@@ -246,6 +246,7 @@ fn matched_dataset_execution(
                 &ctx.summary.file_execution,
                 ctx.doc.execution.as_ref(),
             ),
+            execution: ctx.doc.execution.as_ref(),
             spill_allowlist: spill_ref,
         })?;
     if ctx.doc.operation.is_some() {

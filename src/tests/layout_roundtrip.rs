@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use tetration::{
+use crate::{
     LayoutError, SUPERBLOCK_V1_LEN, SuperblockV1, create_empty_v1_file, open_superblock_v1,
     read_superblock_v1,
 };

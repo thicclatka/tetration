@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "tetration-hdf5")]
-use tetration::convert_h5_to_tet_with_progress;
-use tetration::{
+use crate::convert_h5_to_tet_with_progress;
+use crate::{
     DATASET_DTYPE_TAG_V1, convert_netcdf_to_tet_with_progress, convert_zarr_to_tet_with_progress,
     materialize_read_plan_f32_le, materialize_read_plan_f64_le, materialize_read_plan_i32_le,
     materialize_read_plan_i64_le, mmap_file_read, parse_query_json, plan_query_with_tet_mmap,
@@ -337,7 +337,7 @@ fn convert_small_h5_cf_3d_decodes_temperature() {
 
 #[test]
 fn detect_convert_format_from_extension() {
-    use tetration::{
+    use crate::{
         ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, ZarrConvertInput,
         detect_convert_format,
     };
@@ -386,9 +386,7 @@ fn detect_convert_format_from_extension() {
 
 #[test]
 fn detect_convert_format_sniffs_file_signature() {
-    use tetration::{
-        ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format,
-    };
+    use crate::{ConvertInputFormat, Hdf5ConvertInput, NetcdfConvertInput, detect_convert_format};
 
     let dir = tempfile::tempdir().unwrap();
     let h5_path = dir.path().join("payload.bin");
@@ -408,7 +406,7 @@ fn detect_convert_format_sniffs_file_signature() {
 
 #[test]
 fn detect_convert_format_sniffs_zarr_directory() {
-    use tetration::{ConvertInputFormat, detect_convert_format};
+    use crate::{ConvertInputFormat, detect_convert_format};
 
     let path = small_zarr("tensor_3d");
     if path.is_dir() {

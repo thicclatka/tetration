@@ -160,6 +160,18 @@ pub struct QueryExecutionPreview {
     /// Logical selection size in bytes (`elem_size * logical_f32_element_count`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logical_selection_bytes: Option<u64>,
+    /// Whether streaming fold used parallel chunk workers for this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fold_parallel: Option<bool>,
+    /// Rayon worker cap for parallel chunk fold (`None` = global pool size).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fold_workers: Option<usize>,
+    /// Page-cache regime used for fold I/O routing (`in_core`, `out_of_core`, `unknown`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io_regime: Option<&'static str>,
+    /// Sequential byte-stream fold over one contiguous raw payload span.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fold_linear_scan: Option<bool>,
     /// Shape after reducing along `operation.axes` (decimal dimension indices); row-major flattened payloads follow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_shape: Option<Vec<u64>>,

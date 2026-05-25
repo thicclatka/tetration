@@ -122,6 +122,10 @@ fn push_execution_io_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPrev
         "logical_selection_f32_bytes",
         ex.logical_selection_f32_bytes,
     );
+    opt_bool(map, "fold_parallel", ex.fold_parallel);
+    opt_usize(map, "fold_workers", ex.fold_workers);
+    opt_str(map, "io_regime", ex.io_regime);
+    opt_bool(map, "fold_linear_scan", ex.fold_linear_scan);
 }
 
 fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPreview) {

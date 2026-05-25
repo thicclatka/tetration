@@ -2,27 +2,26 @@
 
 use std::path::Path;
 
-use crate::query::types::{ReadPlan, TetError};
-use crate::utils::dtype::ElementDtype;
-
-use crate::query::fold::FoldPlanOutcome;
-use crate::query::fold::partial_fold::{
-    fold_read_plan_partial_operation, fold_read_plan_partial_operation_f64,
-    fold_read_plan_partial_operation_int,
-};
-use crate::query::fold::reduction::ReductionKind;
-use crate::query::materialize::int::{
-    fold_read_plan_scalar_operation_int, materialize_read_plan_i32_le,
-    materialize_read_plan_i64_le, spill_read_plan_int_le,
-};
-use crate::query::materialize::parallel::{
-    materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le_parallel,
-    materialize_read_plan_i32_le_parallel, materialize_read_plan_i64_le_parallel,
+use crate::query::fold::{
+    FoldPlanOutcome,
+    fold_policy::FoldIoPolicy,
+    partial_fold::{
+        fold_read_plan_partial_operation, fold_read_plan_partial_operation_f64,
+        fold_read_plan_partial_operation_int,
+    },
+    reduction::ReductionKind,
 };
 use crate::query::materialize::{
-    DecodePreviewBundle, materialize_read_plan_f32_le, materialize_read_plan_f64_le,
+    DecodePreviewBundle,
+    int::{
+        fold_read_plan_scalar_operation_int, materialize_read_plan_i32_le,
+        materialize_read_plan_i64_le, spill_read_plan_int_le,
+    },
+    materialize_read_plan_f32_le, materialize_read_plan_f64_le, parallel,
     preview_from_spill_export_file, spill_read_plan_f32_le, spill_read_plan_f64_le,
 };
+use crate::query::types::{ReadPlan, TetError};
+use crate::utils::dtype::ElementDtype;
 
 pub(crate) fn accumulate_chunk_read_bytes(
     total: &mut u64,
@@ -51,7 +50,7 @@ pub(crate) fn materialize_for_execution(
     match dtype {
         ElementDtype::F32 => {
             let (p, t, bytes) = if parallel {
-                materialize_read_plan_f32_le_parallel(mmap, plan, max_elements)?
+                parallel::materialize_read_plan_f32_le_parallel(mmap, plan, max_elements)?
             } else {
                 materialize_read_plan_f32_le(mmap, plan, max_elements)?
             };
@@ -66,7 +65,7 @@ pub(crate) fn materialize_for_execution(
         }
         ElementDtype::F64 => {
             let (p, t, bytes) = if parallel {
-                materialize_read_plan_f64_le_parallel(mmap, plan, max_elements)?
+                parallel::materialize_read_plan_f64_le_parallel(mmap, plan, max_elements)?
             } else {
                 materialize_read_plan_f64_le(mmap, plan, max_elements)?
             };
@@ -81,7 +80,7 @@ pub(crate) fn materialize_for_execution(
         }
         ElementDtype::I32 => {
             let (p, t, bytes) = if parallel {
-                materialize_read_plan_i32_le_parallel(mmap, plan, max_elements)?
+                parallel::materialize_read_plan_i32_le_parallel(mmap, plan, max_elements)?
             } else {
                 materialize_read_plan_i32_le(mmap, plan, max_elements)?
             };
@@ -96,7 +95,7 @@ pub(crate) fn materialize_for_execution(
         }
         ElementDtype::I64 => {
             let (p, t, bytes) = if parallel {
-                materialize_read_plan_i64_le_parallel(mmap, plan, max_elements)?
+                parallel::materialize_read_plan_i64_le_parallel(mmap, plan, max_elements)?
             } else {
                 materialize_read_plan_i64_le(mmap, plan, max_elements)?
             };
@@ -140,22 +139,34 @@ pub(crate) fn scalar_fold(
     max_preview: usize,
     kind: ReductionKind,
     dtype: ElementDtype,
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
+    if policy.linear_scan && crate::query::fold::linear_scan::supports_scalar_kind(kind) {
+        return crate::query::fold::linear_scan::fold_read_plan_scalar_linear(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            dtype,
+        );
+    }
     match dtype {
         ElementDtype::F32 => crate::query::materialize::fold_read_plan_scalar_operation(
             mmap,
             plan,
             max_preview,
             kind,
+            policy,
         ),
         ElementDtype::F64 => crate::query::materialize::fold_read_plan_scalar_operation_f64(
             mmap,
             plan,
             max_preview,
             kind,
+            policy,
         ),
         ElementDtype::I32 | ElementDtype::I64 => {
-            fold_read_plan_scalar_operation_int(mmap, plan, max_preview, kind, dtype)
+            fold_read_plan_scalar_operation_int(mmap, plan, max_preview, kind, dtype, policy)
         }
     }
 }
@@ -167,16 +178,23 @@ pub(crate) fn partial_fold(
     kind: ReductionKind,
     axis_labels: &[String],
     dtype: ElementDtype,
+    policy: &crate::query::fold::fold_policy::FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
     match dtype {
         ElementDtype::F32 => {
-            fold_read_plan_partial_operation(mmap, plan, max_preview, kind, axis_labels)
+            fold_read_plan_partial_operation(mmap, plan, max_preview, kind, axis_labels, policy)
         }
         ElementDtype::F64 => {
-            fold_read_plan_partial_operation_f64(mmap, plan, max_preview, kind, axis_labels)
+            fold_read_plan_partial_operation_f64(mmap, plan, max_preview, kind, axis_labels, policy)
         }
-        ElementDtype::I32 | ElementDtype::I64 => {
-            fold_read_plan_partial_operation_int(mmap, plan, max_preview, kind, axis_labels, dtype)
-        }
+        ElementDtype::I32 | ElementDtype::I64 => fold_read_plan_partial_operation_int(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            axis_labels,
+            dtype,
+            policy,
+        ),
     }
 }

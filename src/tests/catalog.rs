@@ -1,9 +1,7 @@
 //! Catalog integration tests: roundtrip, robustness, index property tests, f32 helpers.
 
-mod fixture;
-
-use fixture::{
-    SHAPE_2X3,
+use super::fixture::{
+    self, SHAPE_2X3,
     index_patch::{
         self, ENTRY_CODEC_OFFSET, ENTRY_PAYLOAD_OFFSET, ENTRY_RAW_BYTE_LEN_OFFSET,
         ENTRY_STORED_BYTE_LEN_OFFSET,
@@ -11,14 +9,14 @@ use fixture::{
     le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_f64_tiles, write_multichunk_2x3_tiles,
     write_multichunk_2x3_zero_zstd,
 };
-use proptest::prelude::*;
-use tetration::{
+use crate::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, MAX_NDIM,
     OneChunkRawWrite, chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided,
     create_empty_v1_file, materialize_read_plan_f32_le, mmap_file_read, parse_query_json,
     plan_query_with_tet_mmap, read_f32_le_at, read_tet_summary_v1, try_cast_f32_le,
     validate_chunk_payloads, validate_query, write_one_chunk_raw_file,
 };
+use proptest::prelude::*;
 
 // --- roundtrip ---
 

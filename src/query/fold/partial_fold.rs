@@ -10,6 +10,7 @@ use crate::query::decode::chunk_decode::{
 };
 use crate::query::decode::indexing::coords_from_linear_row_major;
 use crate::query::dispatch::accumulate_chunk_read_bytes;
+use crate::query::fold::fold_policy::FoldIoPolicy;
 use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 use crate::query::fold::shared::{
@@ -80,17 +81,27 @@ pub(crate) fn fold_read_plan_partial_operation(
     max_f32: usize,
     kind: ReductionKind,
     axis_labels: &[String],
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
         return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_parallel(
             mmap,
             plan,
             max_f32,
             kind,
             axis_labels,
+            policy.fold_workers,
         );
     }
-    fold_read_plan_partial_operation_impl(mmap, plan, max_f32, kind, axis_labels, false)
+    fold_read_plan_partial_operation_impl(
+        mmap,
+        plan,
+        max_f32,
+        kind,
+        axis_labels,
+        false,
+        policy.sequential_io,
+    )
 }
 
 /// Stream a **partial-axis** reduction (`i32` / `i64` promoted to `f64` accumulators).
@@ -101,14 +112,15 @@ pub(crate) fn fold_read_plan_partial_operation_int(
     kind: ReductionKind,
     axis_labels: &[String],
     dtype: crate::utils::dtype::ElementDtype,
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
     use crate::utils::dtype::ElementDtype;
     match dtype {
         ElementDtype::I32 => {
-            fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels)
+            fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels, policy)
         }
         ElementDtype::I64 => {
-            fold_read_plan_partial_operation_i64(mmap, plan, max_preview, kind, axis_labels)
+            fold_read_plan_partial_operation_i64(mmap, plan, max_preview, kind, axis_labels, policy)
         }
         _ => Err(TetError::Validation(
             "integer partial fold requires i32 or i64 dtype".into(),
@@ -123,8 +135,17 @@ pub(crate) fn fold_read_plan_partial_operation_i32(
     max_preview: usize,
     kind: ReductionKind,
     axis_labels: &[String],
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    fold_read_plan_partial_operation_promoted(mmap, plan, max_preview, kind, axis_labels, true)
+    fold_read_plan_partial_operation_promoted(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        axis_labels,
+        true,
+        policy.sequential_io,
+    )
 }
 
 /// Stream a **partial-axis** reduction without allocating the full logical tensor (`i64` → `f64` accum).
@@ -134,8 +155,17 @@ pub(crate) fn fold_read_plan_partial_operation_i64(
     max_preview: usize,
     kind: ReductionKind,
     axis_labels: &[String],
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    fold_read_plan_partial_operation_promoted(mmap, plan, max_preview, kind, axis_labels, false)
+    fold_read_plan_partial_operation_promoted(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        axis_labels,
+        false,
+        policy.sequential_io,
+    )
 }
 
 fn fold_read_plan_partial_operation_promoted(
@@ -145,6 +175,7 @@ fn fold_read_plan_partial_operation_promoted(
     kind: ReductionKind,
     axis_labels: &[String],
     is_i32: bool,
+    sequential_io: bool,
 ) -> Result<FoldPlanOutcome, TetError> {
     let layout = partial_axis_layout(plan, axis_labels)?;
     let shape = &plan.logical_selection_shape;
@@ -166,6 +197,7 @@ fn fold_read_plan_partial_operation_promoted(
             &mut i32_preview,
             &mut saw_any,
             &mut total_bytes_read_from_disk,
+            sequential_io,
         )?
     } else {
         run_partial_promoted_i64(
@@ -179,6 +211,7 @@ fn fold_read_plan_partial_operation_promoted(
             &mut i64_preview,
             &mut saw_any,
             &mut total_bytes_read_from_disk,
+            sequential_io,
         )?
     };
     if !saw_any {
@@ -206,17 +239,27 @@ pub(crate) fn fold_read_plan_partial_operation_f64(
     max_preview: usize,
     kind: ReductionKind,
     axis_labels: &[String],
+    policy: &FoldIoPolicy,
 ) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan) {
+    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
         return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_f64_parallel(
             mmap,
             plan,
             max_preview,
             kind,
             axis_labels,
+            policy.fold_workers,
         );
     }
-    fold_read_plan_partial_operation_impl(mmap, plan, max_preview, kind, axis_labels, true)
+    fold_read_plan_partial_operation_impl(
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        axis_labels,
+        true,
+        policy.sequential_io,
+    )
 }
 
 fn fold_read_plan_partial_operation_impl(
@@ -226,6 +269,7 @@ fn fold_read_plan_partial_operation_impl(
     kind: ReductionKind,
     axis_labels: &[String],
     f64_path: bool,
+    sequential_io: bool,
 ) -> Result<FoldPlanOutcome, TetError> {
     let layout = partial_axis_layout(plan, axis_labels)?;
     let shape = &plan.logical_selection_shape;
@@ -248,6 +292,7 @@ fn fold_read_plan_partial_operation_impl(
             &mut f64_preview,
             &mut saw_any,
             &mut total_bytes_read_from_disk,
+            sequential_io,
         )?
     } else {
         run_partial_f32(
@@ -261,6 +306,7 @@ fn fold_read_plan_partial_operation_impl(
             &mut f32_preview,
             &mut saw_any,
             &mut total_bytes_read_from_disk,
+            sequential_io,
         )?
     };
 
@@ -296,11 +342,14 @@ fn run_partial_f32(
     preview: &mut [f32],
     saw_any: &mut bool,
     total_bytes: &mut u64,
+    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
+    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -322,7 +371,8 @@ fn run_partial_f32(
         }
         _ => {
             let mut cells = vec![ValueAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -352,11 +402,14 @@ fn run_partial_f64(
     preview: &mut [f64],
     saw_any: &mut bool,
     total_bytes: &mut u64,
+    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
+    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -378,7 +431,8 @@ fn run_partial_f64(
         }
         _ => {
             let mut cells = vec![ValueAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -408,11 +462,14 @@ fn run_partial_promoted_i32(
     preview: &mut [i32],
     saw_any: &mut bool,
     total_bytes: &mut u64,
+    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
+    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -434,7 +491,8 @@ fn run_partial_promoted_i32(
         }
         _ => {
             let mut cells = vec![ValueAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -464,11 +522,14 @@ fn run_partial_promoted_i64(
     preview: &mut [i64],
     saw_any: &mut bool,
     total_bytes: &mut u64,
+    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
+    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
         ReductionKind::ArgMin | ReductionKind::ArgMax => {
             let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
@@ -490,7 +551,8 @@ fn run_partial_promoted_i64(
         }
         _ => {
             let mut cells = vec![ValueAccum::default(); layout.out_len];
-            for c in &plan.chunks {
+            for i in chunk_order {
+                let c = &plan.chunks[i];
                 let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {

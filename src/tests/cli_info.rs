@@ -2,14 +2,12 @@
 
 use std::process::Command;
 
-use tetration::{
+use crate::{
     InfoListFilter, InfoViewSections, format_info_json, format_info_quiet, format_info_text,
     mmap_file_read, read_tet_summary_v1,
 };
 
-mod fixture;
-
-use fixture::write_multichunk_2x3_tiles;
+use super::fixture::write_multichunk_2x3_tiles;
 
 #[test]
 fn info_default_table_lists_datasets() {
@@ -73,7 +71,8 @@ fn tet_info_binary_runs_on_fixture() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let tet = env!("CARGO_BIN_EXE_tet");
+    let tet = std::env::var("CARGO_BIN_EXE_tet")
+        .unwrap_or_else(|_| format!("{}/target/debug/tet", env!("CARGO_MANIFEST_DIR")));
     let out = Command::new(tet)
         .args(["info", path.to_str().unwrap()])
         .output()

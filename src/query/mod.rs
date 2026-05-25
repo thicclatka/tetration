@@ -5,11 +5,11 @@ mod decode;
 mod dispatch;
 mod document;
 mod document_wire;
-mod engine;
-mod fold;
-mod materialize;
+pub(crate) mod engine;
+pub(crate) mod fold;
+pub(crate) mod materialize;
 mod plan;
-mod types;
+pub(crate) mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;
 pub use cli::{
