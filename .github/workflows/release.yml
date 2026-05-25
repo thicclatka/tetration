@@ -53,7 +53,7 @@ jobs:
         uses: iarekylew00t/verified-bot-commit@v2
         with:
           ref: main
-          message: brew: bump formula to ${{ github.ref_name }}
+          message: "brew: bump formula to ${{ github.ref_name }}"
           files: |
             Formula/tetration.rb
           if-no-commit: info
