@@ -23,8 +23,6 @@ Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`*
 
 ## Quick start
 
-Requires **Rust 1.95+** for `cargo install`; the **`tet`** binary installs to `~/.cargo/bin` (or Homebrew’s prefix when using brew).
-
 ### macOS — Homebrew (recommended)
 
 One-time tap (this repo ships `Formula/tetration.rb`; pulls in **HDF5** and **NetCDF** for `tet convert`):
