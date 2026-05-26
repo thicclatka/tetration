@@ -12,7 +12,7 @@ use memmap2::Mmap;
 
 use super::dataset::RawArrayWrite;
 use super::execution::FileExecutionSettingsV1;
-use super::history::{self, FooterBlobV1, HistoryEventV1, write_footer_blob};
+use super::history::{self, FooterBlobV1, HistoryEvent, write_footer_blob};
 use super::metadata::{CoordAxisV1, DatasetMetadataV1, FileMetadataV1, TetMetadataV1};
 use super::stream_write::{ArrayWriteMeta, StreamTileJob, write_multi_raw_array_streaming};
 use super::tile;
@@ -279,7 +279,7 @@ pub struct TetWriterSession {
     mode: SessionMode,
     base_metadata: TetMetadataV1,
     datasets: Vec<SessionDataset>,
-    history: Vec<HistoryEventV1>,
+    history: Vec<HistoryEvent>,
     file_execution: Option<FileExecutionSettingsV1>,
     pub metadata: FileMetadataDraft,
 }
@@ -410,8 +410,7 @@ impl TetWriterSession {
 
     /// Append a history row flushed on commit (`op`, `source`, Unix seconds as decimal string).
     pub fn push_history_event(&mut self, op: impl Into<String>, source: impl Into<String>) {
-        self.history
-            .push((op.into(), source.into(), history::unix_timestamp_now()));
+        self.history.push(HistoryEvent::new(op, source));
     }
 
     fn has_streaming(&self) -> bool {
@@ -469,6 +468,7 @@ impl TetWriterSession {
                 &FooterBlobV1 {
                     history: self.history.clone(),
                     metadata,
+                    metadata_ref: None,
                 },
             )?;
         }

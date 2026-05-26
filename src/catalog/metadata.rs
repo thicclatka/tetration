@@ -23,6 +23,14 @@ pub struct MetadataLimitsV1 {
     pub coord_axes: usize,
     /// Max index labels per coordinate axis (inline storage).
     pub coord_labels_per_axis: usize,
+    /// Max rows in footer `history`.
+    pub history_events: usize,
+    /// Max `parents` entries per history row.
+    pub history_parents: usize,
+    /// Max `params` keys per history row.
+    pub history_params: usize,
+    /// Max UTF-8 bytes for spilled `metadata` blob (before `THST` JSON).
+    pub metadata_blob_bytes: usize,
 }
 
 impl MetadataLimitsV1 {
@@ -35,6 +43,10 @@ impl MetadataLimitsV1 {
         dim_names: 8,
         coord_axes: 8,
         coord_labels_per_axis: 64,
+        history_events: 4096,
+        history_parents: 16,
+        history_params: 32,
+        metadata_blob_bytes: 16 * 1024 * 1024,
     };
 }
 
@@ -213,7 +225,7 @@ fn validate_opt_string(
     Ok(())
 }
 
-fn validate_attr_string(
+pub(crate) fn validate_attr_string(
     s: &str,
     field: &'static str,
     max_bytes: usize,
@@ -240,6 +252,22 @@ pub fn validate_footer_json_len(json: &[u8]) -> Result<(), CatalogError> {
     if json.len() > limits.footer_json_bytes {
         return Err(CatalogError::InvalidWriteSpec(
             "footer JSON exceeds footer_json_bytes limit",
+        ));
+    }
+    Ok(())
+}
+
+/// Reject spilled metadata blobs that exceed the wire size cap.
+///
+/// # Errors
+///
+/// Returns [`CatalogError::InvalidWriteSpec`] when `json.len()` exceeds
+/// [`MetadataLimitsV1::metadata_blob_bytes`].
+pub fn validate_metadata_blob_len(json: &[u8]) -> Result<(), CatalogError> {
+    let limits = MetadataLimitsV1::DEFAULT;
+    if json.len() > limits.metadata_blob_bytes {
+        return Err(CatalogError::InvalidWriteSpec(
+            "metadata spill exceeds metadata_blob_bytes limit",
         ));
     }
     Ok(())

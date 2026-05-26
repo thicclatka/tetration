@@ -69,6 +69,7 @@ fn info_default_shows_footer_metadata_under_dataset() {
         &path,
         &FooterBlobV1 {
             history: Vec::new(),
+            metadata_ref: None,
             metadata: Some(TetMetadataV1 {
                 file: None,
                 datasets: [(
@@ -110,6 +111,7 @@ fn info_grep_matches_footer_attrs() {
         &path,
         &FooterBlobV1 {
             history: Vec::new(),
+            metadata_ref: None,
             metadata: Some(TetMetadataV1 {
                 file: None,
                 datasets: [(

@@ -175,8 +175,8 @@ fn assert_small_fixture_h5_with_jobs(stem: &str, parallel_jobs: usize) {
     let summary = read_tet_summary_v1(&mmap).unwrap();
     assert_eq!(summary.datasets.len(), 4);
     assert_eq!(summary.history.len(), 1);
-    assert_eq!(summary.history[0].0, "convert");
-    assert_eq!(summary.history[0].1, "h5");
+    assert_eq!(summary.history[0].op, "convert");
+    assert_eq!(summary.history[0].source, "h5");
 
     let src = hdf5_metno::File::open(&input).unwrap();
     for name in FIXTURE_DTYPES {
@@ -201,8 +201,8 @@ fn assert_small_fixture_netcdf_with_jobs(stem: &str, parallel_jobs: usize) {
     let summary = read_tet_summary_v1(&mmap).unwrap();
     assert_eq!(summary.datasets.len(), 4);
     assert_eq!(summary.history.len(), 1);
-    assert_eq!(summary.history[0].0, "convert");
-    assert_eq!(summary.history[0].1, "nc");
+    assert_eq!(summary.history[0].op, "convert");
+    assert_eq!(summary.history[0].source, "nc");
 
     let src = netcdf::open(&input).unwrap();
     for name in FIXTURE_DTYPES {
@@ -223,8 +223,8 @@ fn assert_small_fixture_zarr(stem: &str) {
     let summary = read_tet_summary_v1(&mmap).unwrap();
     assert_eq!(summary.datasets.len(), 4);
     assert_eq!(summary.history.len(), 1);
-    assert_eq!(summary.history[0].0, "convert");
-    assert_eq!(summary.history[0].1, "zarr");
+    assert_eq!(summary.history[0].op, "convert");
+    assert_eq!(summary.history[0].source, "zarr");
 
     for name in FIXTURE_DTYPES {
         let want_path = input.join(name);

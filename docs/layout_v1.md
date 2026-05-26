@@ -203,12 +203,17 @@ When superblock **`flags & 1`**, the file may end with a self-describing footer 
 
 | Region (suffix at EOF) | Size     | Notes                                                                 |
 | ---------------------- | -------- | --------------------------------------------------------------------- |
-| `history_json`         | variable | UTF-8 JSON object: `{"history":[["convert","h5","<unix_secs>"], …], "metadata":{…}}` (optional `metadata` key, Phase 7). |
+| `history_json`         | variable | UTF-8 JSON object: `{"history":[…], "metadata":{…}}` (optional keys). See below. |
+| `metadata_spill`       | variable | Optional raw UTF-8 JSON for `metadata` when inline `history_json` would exceed **64 KiB**; referenced by `metadata_ref` in `history_json`. Lies after chunk payloads, before `history_json`. |
 | `history_json_len`     | 8        | `u64` LE byte length of `history_json`.                               |
 | `history_version`      | 4        | `u32` LE; must be **1**.                                              |
 | magic                  | 4        | ASCII **`THST`**.                                                     |
 
-Chunk payload validation uses **`file_len − footer_size`**. Readers without history support ignore the flag and treat the full file length as payload bounds only when the flag is **0**. `tet info` / [`read_tet_summary_v1`](../src/catalog/mod.rs) surface parsed `history`.
+Chunk payload validation uses **`file_len − footer_suffix`** (footer JSON + tail + optional `metadata_spill`). Readers without history support ignore the flag and treat the full file length as payload bounds only when the flag is **0**. `tet info` / [`read_tet_summary_v1`](../src/catalog/mod.rs) surface parsed `history` and resolved `metadata`.
+
+**`history` rows** — each entry is a JSON object `{ "op", "source", "at", "parents"?, "params"? }`. Legacy files may use a three-element array `[op, source, at]`; readers accept both. New writers emit objects only.
+
+**`metadata`** — inline object when small (see [`MetadataLimitsV1`](../src/catalog/metadata.rs)). When too large, writers spill UTF-8 JSON to `metadata_spill` and set `"metadata_ref": { "offset", "len" }` in `history_json` (mutually exclusive with inline `metadata`).
 
 ## Reference subset (current Rust writer)
 

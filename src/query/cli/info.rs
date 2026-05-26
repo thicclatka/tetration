@@ -523,8 +523,20 @@ fn format_history_section(history: &[HistoryEventV1]) -> String {
         return out;
     }
     for (i, ev) in history.iter().enumerate() {
-        let (kind, fmt, ts) = ev;
-        let _ = writeln!(out, "  {:>3}  {kind}  {fmt}  at={ts}", i + 1);
+        let _ = writeln!(
+            out,
+            "  {:>3}  {}  {}  at={}",
+            i + 1,
+            ev.op,
+            ev.source,
+            ev.at
+        );
+        if !ev.parents.is_empty() {
+            let _ = writeln!(out, "       parents: {}", ev.parents.join(", "));
+        }
+        for (k, v) in &ev.params {
+            let _ = writeln!(out, "       {k}: {v}");
+        }
     }
     out
 }

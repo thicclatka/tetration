@@ -62,8 +62,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !summary.history.is_empty() {
         println!("history:");
-        for (op, source, at) in &summary.history {
-            println!("  {op}  {source}  {at}");
+        for ev in &summary.history {
+            println!("  {}  {}  {}", ev.op, ev.source, ev.at);
         }
     }
 

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::catalog::{
-    CatalogError, CoordAxisV1, DatasetMetadataV1, FileMetadataV1, FooterBlobV1, HistoryEventV1,
+    CatalogError, CoordAxisV1, DatasetMetadataV1, FileMetadataV1, FooterBlobV1, HistoryEvent,
     MetadataLimitsV1, TetMetadataV1, unix_timestamp_now, write_footer_blob,
 };
 
@@ -31,18 +31,15 @@ pub fn finish_convert_footer(
     output: &Path,
     source: &str,
     plans: &[ImportPlan],
-) -> Result<Vec<HistoryEventV1>, CatalogError> {
+) -> Result<Vec<HistoryEvent>, CatalogError> {
     let metadata = build_convert_metadata(plans)?;
-    let event = (
-        "convert".to_owned(),
-        source.to_owned(),
-        unix_timestamp_now(),
-    );
+    let event = HistoryEvent::new("convert", source);
     write_footer_blob(
         output,
         &FooterBlobV1 {
             history: vec![event.clone()],
             metadata,
+            metadata_ref: None,
         },
     )?;
     Ok(vec![event])

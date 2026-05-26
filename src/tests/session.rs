@@ -53,7 +53,7 @@ fn writer_session_commit_and_query() {
     let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(summary.datasets.len(), 1);
     assert_eq!(summary.history.len(), 1);
-    assert_eq!(summary.history[0].0, "write");
+    assert_eq!(summary.history[0].op, "write");
     assert_eq!(
         summary
             .metadata
@@ -99,8 +99,8 @@ fn writer_session_default_history_on_commit() {
     session.commit().unwrap();
     let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(summary.history.len(), 1);
-    assert_eq!(summary.history[0].0, "write");
-    assert_eq!(summary.history[0].1, path.display().to_string());
+    assert_eq!(summary.history[0].op, "write");
+    assert_eq!(summary.history[0].source, path.display().to_string());
 }
 
 #[test]
@@ -187,8 +187,8 @@ fn writer_session_append_second_dataset() {
     let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(summary.datasets.len(), 2);
     assert_eq!(summary.history.len(), 2);
-    assert_eq!(summary.history[0].0, "write");
-    assert_eq!(summary.history[1].0, "append");
+    assert_eq!(summary.history[0].op, "write");
+    assert_eq!(summary.history[1].op, "append");
     assert_eq!(
         summary.metadata.datasets["humidity"]
             .attrs

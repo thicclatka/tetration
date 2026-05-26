@@ -166,7 +166,7 @@ pub struct ConvertReport {
     pub dataset_names: Vec<String>,
     pub datasets: Vec<ConvertDatasetSummary>,
     /// History row written to the `.tet` footer: `(op, source, unix_timestamp)`.
-    pub history: Vec<(String, String, String)>,
+    pub history: Vec<crate::catalog::HistoryEvent>,
     /// Wall-clock seconds for the full convert (plan + stream write + history footer).
     pub elapsed_secs: f64,
 }
@@ -209,7 +209,7 @@ fn report(
     path_in: &Path,
     path_out: &Path,
     plans: &[shared::ImportPlan],
-    history: Vec<(String, String, String)>,
+    history: Vec<crate::catalog::HistoryEvent>,
     elapsed_secs: f64,
 ) -> ConvertReport {
     let datasets: Vec<ConvertDatasetSummary> = plans
