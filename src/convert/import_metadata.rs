@@ -344,6 +344,24 @@ fn hdf5_read_1d_labels(
             .into_iter()
             .map(label_from_display)
             .collect(),
+        ElementDtype::U8 => ds
+            .read_raw::<u8>()
+            .ok()?
+            .into_iter()
+            .map(label_from_display)
+            .collect(),
+        ElementDtype::U16 => ds
+            .read_raw::<u16>()
+            .ok()?
+            .into_iter()
+            .map(label_from_display)
+            .collect(),
+        ElementDtype::I16 => ds
+            .read_raw::<i16>()
+            .ok()?
+            .into_iter()
+            .map(label_from_display)
+            .collect(),
     })
 }
 
@@ -377,6 +395,15 @@ pub(crate) fn netcdf_inline_coord_labels(var: &netcdf::Variable<'_>) -> Option<C
             .collect(),
         NcVariableType::Int(netcdf::types::IntType::I64) => (0..n)
             .filter_map(|i| var.get_value::<i64, _>(i).ok().map(label_from_display))
+            .collect(),
+        NcVariableType::Int(netcdf::types::IntType::U8) => (0..n)
+            .filter_map(|i| var.get_value::<u8, _>(i).ok().map(label_from_display))
+            .collect(),
+        NcVariableType::Int(netcdf::types::IntType::U16) => (0..n)
+            .filter_map(|i| var.get_value::<u16, _>(i).ok().map(label_from_display))
+            .collect(),
+        NcVariableType::Int(netcdf::types::IntType::I16) => (0..n)
+            .filter_map(|i| var.get_value::<i16, _>(i).ok().map(label_from_display))
             .collect(),
         _ => return None,
     };

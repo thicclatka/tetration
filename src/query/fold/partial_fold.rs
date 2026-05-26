@@ -122,8 +122,11 @@ pub(crate) fn fold_read_plan_partial_operation_int(
         ElementDtype::I64 => {
             fold_read_plan_partial_operation_i64(mmap, plan, max_preview, kind, axis_labels, policy)
         }
+        ElementDtype::U8 | ElementDtype::U16 | ElementDtype::I16 => {
+            fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels, policy)
+        }
         _ => Err(TetError::Validation(
-            "integer partial fold requires i32 or i64 dtype".into(),
+            "integer partial fold requires i32, i64, u8, u16, or i16 dtype".into(),
         )),
     }
 }

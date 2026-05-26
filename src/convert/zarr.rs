@@ -202,6 +202,10 @@ fn map_zarr_dtype(
     match tag.as_str() {
         "float32" => Ok(ElementDtype::F32),
         "float64" => Ok(ElementDtype::F64),
+        "uint8" | "bool" => Ok(ElementDtype::U8),
+        "int8" => Ok(ElementDtype::U8),
+        "uint16" => Ok(ElementDtype::U16),
+        "int16" => Ok(ElementDtype::I16),
         "int32" => Ok(ElementDtype::I32),
         "int64" => Ok(ElementDtype::I64),
         other => Err(ConvertError::UnsupportedDtype {

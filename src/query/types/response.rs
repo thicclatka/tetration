@@ -31,6 +31,15 @@ pub struct DatasetResolution {
     /// `8 * product(shape)` when dtype is `i64` and the dataset matched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dataset_i64_bytes: Option<u64>,
+    /// `1 * product(shape)` when dtype is `u8` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_u8_bytes: Option<u64>,
+    /// `2 * product(shape)` when dtype is `u16` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_u16_bytes: Option<u64>,
+    /// `2 * product(shape)` when dtype is `i16` and the dataset matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dataset_i16_bytes: Option<u64>,
     /// Execution preferences from the `.tet` chunk index header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_execution: Option<crate::catalog::FileExecutionSettingsV1>,
@@ -101,6 +110,12 @@ pub struct QueryExecutionPreview {
     pub i32_preview_truncated: bool,
     pub i64_preview: Vec<i64>,
     pub i64_preview_truncated: bool,
+    pub u8_preview: Vec<u8>,
+    pub u8_preview_truncated: bool,
+    pub u16_preview: Vec<u16>,
+    pub u16_preview_truncated: bool,
+    pub i16_preview: Vec<i16>,
+    pub i16_preview_truncated: bool,
     /// Set when an operation ran: number of `f32` values aggregated (full planned decode).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_element_count: Option<usize>,
@@ -284,6 +299,12 @@ impl QueryExecutionPreview {
         i32_preview_truncated: bool,
         i64_preview: Vec<i64>,
         i64_preview_truncated: bool,
+        u8_preview: Vec<u8>,
+        u8_preview_truncated: bool,
+        u16_preview: Vec<u16>,
+        u16_preview_truncated: bool,
+        i16_preview: Vec<i16>,
+        i16_preview_truncated: bool,
         operation: OperationPreviewFields,
         memory_strategy: Option<&'static str>,
         spill_f32_path: Option<String>,
@@ -299,6 +320,12 @@ impl QueryExecutionPreview {
             i32_preview_truncated,
             i64_preview,
             i64_preview_truncated,
+            u8_preview,
+            u8_preview_truncated,
+            u16_preview,
+            u16_preview_truncated,
+            i16_preview,
+            i16_preview_truncated,
             memory_strategy,
             spill_f32_path,
             spill_f32_bytes,

@@ -137,6 +137,23 @@ fn write_disjoint_preview_i64(preview_addr: usize, preview_len: usize, li: usize
     write_disjoint_preview(preview_addr, preview_len, li, v as i64);
 }
 
+fn write_disjoint_preview_u8(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
+    write_disjoint_preview(preview_addr, preview_len, li, v.clamp(0., 255.) as u8);
+}
+
+fn write_disjoint_preview_u16(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
+    write_disjoint_preview(preview_addr, preview_len, li, v.clamp(0., 65535.) as u16);
+}
+
+fn write_disjoint_preview_i16(preview_addr: usize, preview_len: usize, li: usize, v: f64) {
+    write_disjoint_preview(
+        preview_addr,
+        preview_len,
+        li,
+        v.clamp(i16::MIN as f64, i16::MAX as f64) as i16,
+    );
+}
+
 #[derive(Copy, Clone)]
 enum ScalarFoldVisit {
     F32,
@@ -253,6 +270,15 @@ impl ScalarFoldVisit {
             Self::Int(IntVisit::I64) => {
                 write_disjoint_preview_i64(preview_addr, preview_len, li, v);
             }
+            Self::Int(IntVisit::U8) => {
+                write_disjoint_preview_u8(preview_addr, preview_len, li, v);
+            }
+            Self::Int(IntVisit::U16) => {
+                write_disjoint_preview_u16(preview_addr, preview_len, li, v);
+            }
+            Self::Int(IntVisit::I16) => {
+                write_disjoint_preview_i16(preview_addr, preview_len, li, v);
+            }
         }
     }
 }
@@ -271,6 +297,9 @@ fn fold_read_plan_scalar_parallel(
     let mut f64_preview = vec![f64::NAN; preview_cap];
     let mut i32_preview = vec![0; preview_cap];
     let mut i64_preview = vec![0; preview_cap];
+    let mut u8_preview = vec![0u8; preview_cap];
+    let mut u16_preview = vec![0u16; preview_cap];
+    let mut i16_preview = vec![0i16; preview_cap];
     let (preview_addr, preview_len) = match visit {
         ScalarFoldVisit::F32 => (f32_preview.as_mut_ptr() as usize, f32_preview.len()),
         ScalarFoldVisit::F64 => (f64_preview.as_mut_ptr() as usize, f64_preview.len()),
@@ -279,6 +308,13 @@ fn fold_read_plan_scalar_parallel(
         }
         ScalarFoldVisit::Int(IntVisit::I64) => {
             (i64_preview.as_mut_ptr() as usize, i64_preview.len())
+        }
+        ScalarFoldVisit::Int(IntVisit::U8) => (u8_preview.as_mut_ptr() as usize, u8_preview.len()),
+        ScalarFoldVisit::Int(IntVisit::U16) => {
+            (u16_preview.as_mut_ptr() as usize, u16_preview.len())
+        }
+        ScalarFoldVisit::Int(IntVisit::I16) => {
+            (i16_preview.as_mut_ptr() as usize, i16_preview.len())
         }
     };
 
@@ -339,6 +375,27 @@ fn fold_read_plan_scalar_parallel(
             total_bytes_read_from_disk,
             operation,
         )),
+        ScalarFoldVisit::Int(IntVisit::U8) => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::U8(u8_preview),
+            max_preview,
+            n,
+            total_bytes_read_from_disk,
+            operation,
+        )),
+        ScalarFoldVisit::Int(IntVisit::U16) => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::U16(u16_preview),
+            max_preview,
+            n,
+            total_bytes_read_from_disk,
+            operation,
+        )),
+        ScalarFoldVisit::Int(IntVisit::I16) => Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::I16(i16_preview),
+            max_preview,
+            n,
+            total_bytes_read_from_disk,
+            operation,
+        )),
     }
 }
 
@@ -376,9 +433,12 @@ pub(crate) fn fold_read_plan_scalar_operation_int_parallel(
     let visit = match dtype {
         ElementDtype::I32 => ScalarFoldVisit::Int(IntVisit::I32),
         ElementDtype::I64 => ScalarFoldVisit::Int(IntVisit::I64),
+        ElementDtype::U8 => ScalarFoldVisit::Int(IntVisit::U8),
+        ElementDtype::U16 => ScalarFoldVisit::Int(IntVisit::U16),
+        ElementDtype::I16 => ScalarFoldVisit::Int(IntVisit::I16),
         _ => {
             return Err(TetError::Validation(
-                "integer fold requires i32 or i64 dtype".into(),
+                "integer fold requires i32, i64, u8, u16, or i16 dtype".into(),
             ));
         }
     };

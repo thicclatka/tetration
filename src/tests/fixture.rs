@@ -76,6 +76,29 @@ pub fn le_row_major_2x3_f32_one_to_six() -> Vec<u8> {
     data
 }
 
+/// Row-major `u8` tensor values 1..=6 (`shape` [2, 3]).
+pub fn le_row_major_2x3_u8_one_to_six() -> Vec<u8> {
+    (1_u8..=6).collect()
+}
+
+/// Row-major `u16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_u16..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `i16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_i16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_i16..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
 /// Row-major `i32` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
 pub fn le_row_major_2x3_i32_one_to_six() -> Vec<u8> {
     let mut data = vec![0u8; 24];
@@ -162,6 +185,39 @@ fn write_multichunk_2x3_f64(path: &Path, dataset_name: &str, chunk_codec: u32, d
         chunk_codec,
         DATASET_DTYPE_TAG_V1.f64,
         data,
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u16` file (values 1..6).
+pub fn write_multichunk_2x3_u16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u16,
+        &le_row_major_2x3_u16_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i16` file (values 1..6).
+pub fn write_multichunk_2x3_i16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.i16,
+        &le_row_major_2x3_i16_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u8` file (values 1..6).
+pub fn write_multichunk_2x3_u8_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u8,
+        &le_row_major_2x3_u8_one_to_six(),
     );
 }
 

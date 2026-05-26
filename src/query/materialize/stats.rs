@@ -297,7 +297,11 @@ pub(crate) fn run_tier_c_operation(
 ) -> Result<OperationPreviewFields, TetError> {
     if matches!(
         materialized,
-        MaterializedLogical::I32 { .. } | MaterializedLogical::I64 { .. }
+        MaterializedLogical::I32 { .. }
+            | MaterializedLogical::I64 { .. }
+            | MaterializedLogical::U8 { .. }
+            | MaterializedLogical::U16 { .. }
+            | MaterializedLogical::I16 { .. }
     ) {
         let vec = int::materialized_logical_as_f64(materialized)?;
         let synthetic = MaterializedLogical::F64 {

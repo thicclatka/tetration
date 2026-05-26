@@ -157,6 +157,12 @@ pub struct DatasetDtypeTagV1 {
     pub i32: u32,
     /// Two's-complement `i64`, row-major within each chunk.
     pub i64: u32,
+    /// Unsigned `u8`, row-major within each chunk.
+    pub u8: u32,
+    /// Unsigned `u16`, row-major within each chunk.
+    pub u16: u32,
+    /// Two's-complement `i16`, row-major within each chunk.
+    pub i16: u32,
 }
 
 /// Defined dataset element dtypes for layout v1 (see `docs/layout_v1.md`).
@@ -165,6 +171,9 @@ pub const DATASET_DTYPE_TAG_V1: DatasetDtypeTagV1 = DatasetDtypeTagV1 {
     f64: 2,
     i32: 3,
     i64: 4,
+    u8: 5,
+    u16: 6,
+    i16: 7,
 };
 
 impl DatasetDtypeTagV1 {
@@ -189,8 +198,29 @@ impl DatasetDtypeTagV1 {
     }
 
     #[must_use]
+    pub const fn is_u8(self, dtype: u32) -> bool {
+        dtype == self.u8
+    }
+
+    #[must_use]
+    pub const fn is_u16(self, dtype: u32) -> bool {
+        dtype == self.u16
+    }
+
+    #[must_use]
+    pub const fn is_i16(self, dtype: u32) -> bool {
+        dtype == self.i16
+    }
+
+    #[must_use]
     pub const fn is_supported(self, dtype: u32) -> bool {
-        self.is_f32(dtype) || self.is_f64(dtype) || self.is_i32(dtype) || self.is_i64(dtype)
+        self.is_f32(dtype)
+            || self.is_f64(dtype)
+            || self.is_i32(dtype)
+            || self.is_i64(dtype)
+            || self.is_u8(dtype)
+            || self.is_u16(dtype)
+            || self.is_i16(dtype)
     }
 }
 

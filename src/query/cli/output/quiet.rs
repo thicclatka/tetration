@@ -118,6 +118,15 @@ fn preview_dtype_summary(ex: &QueryExecutionPreview) -> Option<(&'static str, us
     if !ex.i64_preview.is_empty() {
         return Some(("i64", ex.i64_preview.len(), ex.i64_preview_truncated));
     }
+    if !ex.u8_preview.is_empty() {
+        return Some(("u8", ex.u8_preview.len(), ex.u8_preview_truncated));
+    }
+    if !ex.u16_preview.is_empty() {
+        return Some(("u16", ex.u16_preview.len(), ex.u16_preview_truncated));
+    }
+    if !ex.i16_preview.is_empty() {
+        return Some(("i16", ex.i16_preview.len(), ex.i16_preview_truncated));
+    }
     None
 }
 
@@ -153,6 +162,30 @@ fn preview_sample_values(ex: &QueryExecutionPreview, label: &str) -> Option<Stri
                 .iter()
                 .take(SAMPLE)
                 .copied()
+                .collect::<Vec<_>>(),
+            QUIET_VEC_INLINE_MAX,
+        )),
+        "u8" => Some(fmt_u64_list(
+            &ex.u8_preview
+                .iter()
+                .take(SAMPLE)
+                .map(|v| u64::from(*v))
+                .collect::<Vec<_>>(),
+            QUIET_VEC_INLINE_MAX,
+        )),
+        "u16" => Some(fmt_u64_list(
+            &ex.u16_preview
+                .iter()
+                .take(SAMPLE)
+                .map(|v| u64::from(*v))
+                .collect::<Vec<_>>(),
+            QUIET_VEC_INLINE_MAX,
+        )),
+        "i16" => Some(fmt_i64_list(
+            &ex.i16_preview
+                .iter()
+                .take(SAMPLE)
+                .map(|v| i64::from(*v))
                 .collect::<Vec<_>>(),
             QUIET_VEC_INLINE_MAX,
         )),

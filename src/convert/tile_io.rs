@@ -29,6 +29,9 @@ pub(crate) fn read_hdf5_tile_le_into(
     match spec.dtype {
         ElementDtype::F32 => read_hdf5_tile_typed_into::<f32>(ds, &ranges, spec.ndim, buf),
         ElementDtype::F64 => read_hdf5_tile_typed_into::<f64>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::U8 => read_hdf5_tile_typed_into::<u8>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::U16 => read_hdf5_tile_typed_into::<u16>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::I16 => read_hdf5_tile_typed_into::<i16>(ds, &ranges, spec.ndim, buf),
         ElementDtype::I32 => read_hdf5_tile_typed_into::<i32>(ds, &ranges, spec.ndim, buf),
         ElementDtype::I64 => read_hdf5_tile_typed_into::<i64>(ds, &ranges, spec.ndim, buf),
     }?;

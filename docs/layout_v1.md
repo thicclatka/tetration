@@ -72,7 +72,7 @@ Each record is:
 | Field         | Type            | Notes                                                                                                                                                                                |
 | ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `name_len`    | `u32` LE        | Byte length of UTF-8 `name` that follows.                                                                                                                                            |
-| `dtype`       | `u32` LE        | `1` = IEEE754 **`f32`**, `2` = IEEE754 **`f64`**, `3` = **`i32`**, `4` = **`i64`**, row-major within each chunk.                                                                     |
+| `dtype`       | `u32` LE        | `1` = **`f32`**, `2` = **`f64`**, `3` = **`i32`**, `4` = **`i64`**, `5` = **`u8`**, `6` = **`u16`**, `7` = **`i16`**, row-major within each chunk.                                   |
 | `ndim`        | `u32` LE        | Rank in `1 … 8`.                                                                                                                                                                     |
 | `reserved`    | `u32` LE        | Write **0**.                                                                                                                                                                         |
 | `name`        | `[u8]`          | UTF-8 of length `name_len`.                                                                                                                                                          |
@@ -82,7 +82,7 @@ Each record is:
 
 Records are concatenated in catalog order; `dataset_id` in the chunk index is the **0-based index** into this list (`0` = first record).
 
-**Additional dtypes (`u8`, `u16`, …):** not on the v1 wire today. Planned under [Phase 8 — Dtypes & file health](../GETTING_STARTED.md#phase-8--dtypes--file-health-next) (tag assignment, writers, convert, query execution). Layout v2 is reserved for changes that cannot extend v1.
+**Additional dtypes (`u32`, `f16`, …):** beyond the integer tags above, planned under [Phase 8 — Dtypes & file health](../GETTING_STARTED.md#phase-8--dtypes--file-health-in-progress). Layout v2 is reserved for changes that cannot extend v1. **Booleans** are not a separate wire tag: import maps HDF5 `Boolean`, Zarr `bool`, and similar to **`u8`** (0/1).
 
 ### Axis metadata (Phase 7 baseline)
 
@@ -217,9 +217,9 @@ Chunk payload validation uses **`file_len − footer_suffix`** (footer JSON + ta
 
 ## Reference subset (current Rust writer)
 
-The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`). **`dtype`** may be **`f32`** (`1`) or **`f64`** (`2`).
+The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **one** dataset and **one** chunk: `chunk_shape` must equal `shape` so the chunk grid has a single tile; payloads are always **raw** (`codec = 0`). **`dtype`** may be **`f32`**–**`i16`** (tags `1`–`7`).
 
-`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). **`dtype`** may be **`f32`**, **`f64`**, **`i32`**, or **`i64`**. Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
+`write_raw_array_file` / `RawArrayWrite` accept per-chunk **`chunk_codec`**: compare to **`CHUNK_PAYLOAD_CODEC_V1.raw`** (**0**, raw tiles) or **`CHUNK_PAYLOAD_CODEC_V1.zstd`** (**1**, zstd-compressed frames; `stored_byte_len` may differ from `raw_byte_len`). **`dtype`** may be any supported element tag (`1`–`7`). Optional **`file_execution`** writes TIDX execution settings (memory budget). The Rust API exposes this as the `ChunkPayloadCodecV1` struct plus the `CHUNK_PAYLOAD_CODEC_V1` constant in `tetration::catalog`; decode symmetry via **`ChunkPayloadCodecV1::decode_tile_payload`**.
 
 ## Concurrency (informative)
 

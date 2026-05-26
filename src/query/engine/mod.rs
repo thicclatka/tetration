@@ -7,8 +7,9 @@ pub(crate) mod spill_policy;
 
 pub use crate::query::decode::planned_chunk_mmap_slices;
 pub use crate::query::materialize::int::{
-    materialize_read_plan_i32_le, materialize_read_plan_i64_le, spill_read_plan_i32_le,
-    spill_read_plan_i64_le,
+    materialize_read_plan_i16_le, materialize_read_plan_i32_le, materialize_read_plan_i64_le,
+    materialize_read_plan_u8_le, materialize_read_plan_u16_le, spill_read_plan_i16_le,
+    spill_read_plan_i32_le, spill_read_plan_i64_le, spill_read_plan_u8_le, spill_read_plan_u16_le,
 };
 pub use crate::query::materialize::parallel::{
     materialize_read_plan_f32_le_into_parallel, materialize_read_plan_f32_le_parallel,

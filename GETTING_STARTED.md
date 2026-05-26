@@ -171,14 +171,15 @@ tet info data.tet --json | jq '.summary.datasets'
 
 ### Element dtypes (wire + execution)
 
-Today: **`f32`**, **`f64`**, **`i32`**, **`i64`** ([`ElementDtype`](src/utils/dtype.rs), [`DATASET_DTYPE_TAG_V1`](src/catalog/mod.rs)).
+Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (tag `5`), **`u16`** (`6`), **`i16`** (`7`) ([`ElementDtype`](src/utils/dtype.rs), [`DATASET_DTYPE_TAG_V1`](src/catalog/mod.rs)).
 
-- [ ] **Wire tags** — assign catalog dtype tags; document in [`docs/layout_v1.md`](docs/layout_v1.md); decide v1 extension vs layout v2 before implementation.
-- [ ] **Writers** — `RawArrayWrite` / streaming / append / session paths; `chunk_grid_plan` / tile element size.
-- [ ] **Convert** — HDF5 / NetCDF / Zarr import mapping (feature-gated where native libs differ).
-- [ ] **Query** — materialize, streaming fold, tier-A/B/C ops, spill paths, preview arrays; integer promotion rules for aggregates.
-- [ ] **SIMD / fast paths** — add bulk kernels where ROI is clear (e.g. `u8` may stay scalar-first).
-- [ ] **Tests** — roundtrip writers, convert snippets, query golden cases per new dtype.
+- [x] **`u8` / `u16` / `i16` wire tags** — catalog tags `5`–`7`; documented in [`docs/layout_v1.md`](docs/layout_v1.md).
+- [x] **Writers** — same byte-span API for all integer tags via `write_raw_array_file` / session paths.
+- [x] **Convert** — HDF5 signed/unsigned 8/16-bit + `Boolean`→`u8`; NetCDF `byte`/`short`/`ushort`; Zarr `int8`/`uint8`/`bool`→`u8`, `int16`/`uint16`.
+- [x] **Query** — materialize, streaming fold, tier-A/B/C, spill, dtype-matched previews (`u8_preview`, `u16_preview`, `i16_preview`).
+- [x] **Tests** — catalog roundtrip, query sum/preview, verify fixture gate per tag.
+- [ ] **More dtypes (`u32`, `f16`, …)** — repeat checklist when needed.
+- [ ] **SIMD / fast paths** — optional bulk kernels where ROI is clear (integer tags stay scalar-first today).
 
 ## Phase 9 — Query ops & interchange (later)
 
@@ -282,7 +283,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**
 10. **File health (Phase 8):** done — `tet verify` / `tet repair` + [`verify_fixtures`](src/tests/verify_fixtures.rs) on writer/convert outputs.
-11. **Dtypes (Phase 8, next):** first additional wire tag (e.g. `u8`) through write → query smoke.
+11. ~~**Dtypes (Phase 8):** additional wire tags through write → query smoke.~~ **Done** — `u8`/`u16`/`i16` (tags `5`–`7`); booleans import as `u8`; wider ints (`u32`, …) remain.
 12. **Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.
 13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
 14. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

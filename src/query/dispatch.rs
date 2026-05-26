@@ -17,7 +17,8 @@ use crate::query::materialize::{
         fold_read_plan_scalar_operation_int, materialize_read_plan_i32_le,
         materialize_read_plan_i64_le, spill_read_plan_int_le,
     },
-    materialize_read_plan_f32_le, materialize_read_plan_f64_le, parallel,
+    materialize_read_plan_f32_le, materialize_read_plan_f64_le, materialize_read_plan_i16_le,
+    materialize_read_plan_u8_le, materialize_read_plan_u16_le, parallel,
     preview_from_spill_export_file, spill_read_plan_f32_le, spill_read_plan_f64_le,
 };
 use crate::query::types::{ReadPlan, TetError};
@@ -108,6 +109,51 @@ pub(crate) fn materialize_for_execution(
                 bytes,
             ))
         }
+        ElementDtype::U8 => {
+            let (p, t, bytes) = if parallel {
+                parallel::materialize_read_plan_u8_le_parallel(mmap, plan, max_elements)?
+            } else {
+                materialize_read_plan_u8_le(mmap, plan, max_elements)?
+            };
+            Ok((
+                DecodePreviewBundle {
+                    u8: p,
+                    u8_truncated: t,
+                    ..DecodePreviewBundle::empty()
+                },
+                bytes,
+            ))
+        }
+        ElementDtype::U16 => {
+            let (p, t, bytes) = if parallel {
+                parallel::materialize_read_plan_u16_le_parallel(mmap, plan, max_elements)?
+            } else {
+                materialize_read_plan_u16_le(mmap, plan, max_elements)?
+            };
+            Ok((
+                DecodePreviewBundle {
+                    u16: p,
+                    u16_truncated: t,
+                    ..DecodePreviewBundle::empty()
+                },
+                bytes,
+            ))
+        }
+        ElementDtype::I16 => {
+            let (p, t, bytes) = if parallel {
+                parallel::materialize_read_plan_i16_le_parallel(mmap, plan, max_elements)?
+            } else {
+                materialize_read_plan_i16_le(mmap, plan, max_elements)?
+            };
+            Ok((
+                DecodePreviewBundle {
+                    i16: p,
+                    i16_truncated: t,
+                    ..DecodePreviewBundle::empty()
+                },
+                bytes,
+            ))
+        }
     }
 }
 
@@ -120,7 +166,11 @@ pub(crate) fn spill_full_selection(
     match dtype {
         ElementDtype::F32 => spill_read_plan_f32_le(mmap, plan, path),
         ElementDtype::F64 => spill_read_plan_f64_le(mmap, plan, path),
-        ElementDtype::I32 | ElementDtype::I64 => spill_read_plan_int_le(mmap, plan, path, dtype),
+        ElementDtype::I32
+        | ElementDtype::I64
+        | ElementDtype::U8
+        | ElementDtype::U16
+        | ElementDtype::I16 => spill_read_plan_int_le(mmap, plan, path, dtype),
     }
 }
 
@@ -167,7 +217,11 @@ pub(crate) fn scalar_fold(
             kind,
             policy,
         ),
-        ElementDtype::I32 | ElementDtype::I64 => {
+        ElementDtype::I32
+        | ElementDtype::I64
+        | ElementDtype::U8
+        | ElementDtype::U16
+        | ElementDtype::I16 => {
             fold_read_plan_scalar_operation_int(mmap, plan, max_preview, kind, dtype, policy)
         }
     }
@@ -189,7 +243,11 @@ pub(crate) fn partial_fold(
         ElementDtype::F64 => {
             fold_read_plan_partial_operation_f64(mmap, plan, max_preview, kind, axis_labels, policy)
         }
-        ElementDtype::I32 | ElementDtype::I64 => fold_read_plan_partial_operation_int(
+        ElementDtype::I32
+        | ElementDtype::I64
+        | ElementDtype::U8
+        | ElementDtype::U16
+        | ElementDtype::I16 => fold_read_plan_partial_operation_int(
             mmap,
             plan,
             max_preview,

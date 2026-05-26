@@ -4,7 +4,8 @@ use std::path::Path;
 
 use super::fixture::{
     le_row_major_2x3_f32_one_to_six, write_multichunk_2x3_f64_tiles,
-    write_multichunk_2x3_i32_tiles, write_multichunk_2x3_i64_tiles, write_multichunk_2x3_tiles,
+    write_multichunk_2x3_i16_tiles, write_multichunk_2x3_i32_tiles, write_multichunk_2x3_i64_tiles,
+    write_multichunk_2x3_tiles, write_multichunk_2x3_u8_tiles, write_multichunk_2x3_u16_tiles,
     write_multichunk_2x3_zstd,
 };
 use super::verify::assert_tet_verify_ok;
@@ -29,6 +30,18 @@ fn verify_writer_multichunk_all_dtypes() {
     let i64 = dir.path().join("i64.tet");
     write_multichunk_2x3_i64_tiles(&i64, "a");
     assert_tet_verify_ok(&i64);
+
+    let u8 = dir.path().join("u8.tet");
+    write_multichunk_2x3_u8_tiles(&u8, "a");
+    assert_tet_verify_ok(&u8);
+
+    let u16 = dir.path().join("u16.tet");
+    write_multichunk_2x3_u16_tiles(&u16, "a");
+    assert_tet_verify_ok(&u16);
+
+    let i16 = dir.path().join("i16.tet");
+    write_multichunk_2x3_i16_tiles(&i16, "a");
+    assert_tet_verify_ok(&i16);
 
     let zstd = dir.path().join("zstd.tet");
     write_multichunk_2x3_zstd(&zstd, "a", &le_row_major_2x3_f32_one_to_six());

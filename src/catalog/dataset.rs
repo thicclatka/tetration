@@ -96,7 +96,7 @@ pub(super) fn validate_tensor_geometry(
     }
     if !DATASET_DTYPE_TAG_V1.is_supported(dtype) {
         return Err(CatalogError::InvalidWriteSpec(
-            "only dataset dtype tags in DATASET_DTYPE_TAG_V1 (f32/f64/i32/i64) are supported",
+            "only dataset dtype tags in DATASET_DTYPE_TAG_V1 (f32/f64/i32/i64/u8/u16/i16) are supported",
         ));
     }
     let _ = super::tensor_bytes_from_shape(shape, dtype)

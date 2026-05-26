@@ -132,6 +132,81 @@ fn one_chunk_i32_roundtrip() {
 }
 
 #[test]
+fn one_chunk_u8_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grid_u8.tet");
+    let shape = SHAPE_2X3;
+    let chunk_shape = [2u64, 3];
+    let payload = fixture::le_row_major_2x3_u8_one_to_six();
+    write_one_chunk_raw_file(
+        &path,
+        &OneChunkRawWrite {
+            name: "counts",
+            dtype: DATASET_DTYPE_TAG_V1.u8,
+            shape: &shape,
+            chunk_shape: &chunk_shape,
+            payload: &payload,
+        },
+    )
+    .unwrap();
+    assert_one_chunk_roundtrip(&path, DATASET_DTYPE_TAG_V1.u8, "counts", &payload, &shape);
+}
+
+#[test]
+fn one_chunk_u16_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grid_u16.tet");
+    let shape = SHAPE_2X3;
+    let chunk_shape = [2u64, 3];
+    let payload = fixture::le_row_major_2x3_u16_one_to_six();
+    write_one_chunk_raw_file(
+        &path,
+        &OneChunkRawWrite {
+            name: "counts",
+            dtype: DATASET_DTYPE_TAG_V1.u16,
+            shape: &shape,
+            chunk_shape: &chunk_shape,
+            payload: &payload,
+        },
+    )
+    .unwrap();
+    assert_one_chunk_roundtrip(&path, DATASET_DTYPE_TAG_V1.u16, "counts", &payload, &shape);
+}
+
+#[test]
+fn multi_chunk_u16_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiles_u16.tet");
+    fixture::write_multichunk_2x3_u16_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets[0].dtype, DATASET_DTYPE_TAG_V1.u16);
+    assert_eq!(s.chunks.len(), 2);
+}
+
+#[test]
+fn multi_chunk_i16_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiles_i16.tet");
+    fixture::write_multichunk_2x3_i16_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets[0].dtype, DATASET_DTYPE_TAG_V1.i16);
+    assert_eq!(s.chunks.len(), 2);
+}
+
+#[test]
+fn multi_chunk_u8_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tiles_u8.tet");
+    fixture::write_multichunk_2x3_u8_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let s = read_tet_summary_v1(&mmap).unwrap();
+    assert_eq!(s.datasets[0].dtype, DATASET_DTYPE_TAG_V1.u8);
+    assert_eq!(s.chunks.len(), 2);
+}
+
+#[test]
 fn multi_chunk_i32_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tiles_i32.tet");

@@ -15,8 +15,13 @@ pub(crate) fn element_dtype_from_hdf5_descriptor(desc: &TypeDescriptor) -> Optio
     match desc {
         TypeDescriptor::Float(FloatSize::U4) => Some(ElementDtype::F32),
         TypeDescriptor::Float(FloatSize::U8) => Some(ElementDtype::F64),
+        TypeDescriptor::Boolean => Some(ElementDtype::U8),
+        TypeDescriptor::Integer(IntSize::U1) => Some(ElementDtype::U8),
+        TypeDescriptor::Integer(IntSize::U2) => Some(ElementDtype::I16),
         TypeDescriptor::Integer(IntSize::U4) => Some(ElementDtype::I32),
         TypeDescriptor::Integer(IntSize::U8) => Some(ElementDtype::I64),
+        TypeDescriptor::Unsigned(IntSize::U1) => Some(ElementDtype::U8),
+        TypeDescriptor::Unsigned(IntSize::U2) => Some(ElementDtype::U16),
         _ => None,
     }
 }

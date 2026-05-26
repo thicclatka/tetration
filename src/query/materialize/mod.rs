@@ -4,6 +4,10 @@ pub mod int;
 pub mod parallel;
 pub mod stats;
 
+pub use int::{
+    materialize_read_plan_i16_le, materialize_read_plan_u8_le, materialize_read_plan_u16_le,
+};
+
 use std::path::Path;
 
 use memmap2::Mmap;
@@ -343,10 +347,16 @@ pub(crate) struct DecodePreviewBundle {
     pub f64: Vec<f64>,
     pub i32: Vec<i32>,
     pub i64: Vec<i64>,
+    pub u8: Vec<u8>,
+    pub u16: Vec<u16>,
+    pub i16: Vec<i16>,
     pub f32_truncated: bool,
     pub f64_truncated: bool,
     pub i32_truncated: bool,
     pub i64_truncated: bool,
+    pub u8_truncated: bool,
+    pub u16_truncated: bool,
+    pub i16_truncated: bool,
 }
 
 impl DecodePreviewBundle {
@@ -362,6 +372,9 @@ impl DecodePreviewBundle {
             f64_truncated: truncated,
             i32_truncated: truncated,
             i64_truncated: truncated,
+            u8_truncated: truncated,
+            u16_truncated: truncated,
+            i16_truncated: truncated,
             ..Self::default()
         }
     }
@@ -385,6 +398,21 @@ pub(crate) enum MaterializedLogical {
     },
     I64 {
         backing: int::LogicalI64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U8 {
+        backing: int::LogicalU8Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U16 {
+        backing: int::LogicalU16Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    I16 {
+        backing: int::LogicalI16Backing,
         total_bytes_read_from_disk: u64,
         strategy: MemoryStrategy,
     },
@@ -446,6 +474,21 @@ pub(crate) fn materialize_logical_selection(
                 total_bytes_read_from_disk: bytes,
                 strategy: MemoryStrategy::TempSpillMaterialize,
             },
+            ElementDtype::U8 => MaterializedLogical::U8 {
+                backing: int::LogicalU8Backing::TempSpill(temp),
+                total_bytes_read_from_disk: bytes,
+                strategy: MemoryStrategy::TempSpillMaterialize,
+            },
+            ElementDtype::U16 => MaterializedLogical::U16 {
+                backing: int::LogicalU16Backing::TempSpill(temp),
+                total_bytes_read_from_disk: bytes,
+                strategy: MemoryStrategy::TempSpillMaterialize,
+            },
+            ElementDtype::I16 => MaterializedLogical::I16 {
+                backing: int::LogicalI16Backing::TempSpill(temp),
+                total_bytes_read_from_disk: bytes,
+                strategy: MemoryStrategy::TempSpillMaterialize,
+            },
         })
     } else {
         match dtype {
@@ -477,6 +520,30 @@ pub(crate) fn materialize_logical_selection(
                 let (vec, bytes) = int::materialize_into_vec_i64(mmap, plan)?;
                 Ok(MaterializedLogical::I64 {
                     backing: int::LogicalI64Backing::InMemory(vec),
+                    total_bytes_read_from_disk: bytes,
+                    strategy: MemoryStrategy::InMemoryMaterialize,
+                })
+            }
+            ElementDtype::U8 => {
+                let (vec, bytes) = int::materialize_into_vec_u8(mmap, plan)?;
+                Ok(MaterializedLogical::U8 {
+                    backing: int::LogicalU8Backing::InMemory(vec),
+                    total_bytes_read_from_disk: bytes,
+                    strategy: MemoryStrategy::InMemoryMaterialize,
+                })
+            }
+            ElementDtype::U16 => {
+                let (vec, bytes) = int::materialize_into_vec_u16(mmap, plan)?;
+                Ok(MaterializedLogical::U16 {
+                    backing: int::LogicalU16Backing::InMemory(vec),
+                    total_bytes_read_from_disk: bytes,
+                    strategy: MemoryStrategy::InMemoryMaterialize,
+                })
+            }
+            ElementDtype::I16 => {
+                let (vec, bytes) = int::materialize_into_vec_i16(mmap, plan)?;
+                Ok(MaterializedLogical::I16 {
+                    backing: int::LogicalI16Backing::InMemory(vec),
                     total_bytes_read_from_disk: bytes,
                     strategy: MemoryStrategy::InMemoryMaterialize,
                 })
@@ -525,6 +592,30 @@ pub(crate) fn preview_from_materialized(
             Ok(DecodePreviewBundle {
                 i64: p,
                 i64_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        MaterializedLogical::U8 { backing, .. } => {
+            let (p, t) = int::preview_from_materialized_u8(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle {
+                u8: p,
+                u8_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        MaterializedLogical::U16 { backing, .. } => {
+            let (p, t) = int::preview_from_materialized_u16(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle {
+                u16: p,
+                u16_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        MaterializedLogical::I16 { backing, .. } => {
+            let (p, t) = int::preview_from_materialized_i16(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle {
+                i16: p,
+                i16_truncated: t,
                 ..DecodePreviewBundle::empty()
             })
         }
@@ -643,6 +734,30 @@ pub(crate) fn preview_from_spill_export_file(
             Ok(DecodePreviewBundle {
                 i64: p,
                 i64_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        ElementDtype::U8 => {
+            let (p, t) = int::preview_from_spill_file_u8(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle {
+                u8: p,
+                u8_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        ElementDtype::U16 => {
+            let (p, t) = int::preview_from_spill_file_u16(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle {
+                u16: p,
+                u16_truncated: t,
+                ..DecodePreviewBundle::empty()
+            })
+        }
+        ElementDtype::I16 => {
+            let (p, t) = int::preview_from_spill_file_i16(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle {
+                i16: p,
+                i16_truncated: t,
                 ..DecodePreviewBundle::empty()
             })
         }

@@ -113,6 +113,51 @@ fn fill_i32_preview(raw: &[u8], preview: &mut [i32], global_offset_elems: usize)
     wrote
 }
 
+fn fill_u16_preview(raw: &[u8], preview: &mut [u16], global_offset_elems: usize) -> bool {
+    let vals: &[u16] = bytemuck::cast_slice(raw);
+    let mut wrote = false;
+    for (k, &v) in vals.iter().enumerate() {
+        let li = global_offset_elems + k;
+        if li < preview.len() {
+            preview[li] = v;
+            wrote = true;
+        } else {
+            break;
+        }
+    }
+    wrote
+}
+
+fn fill_i16_preview(raw: &[u8], preview: &mut [i16], global_offset_elems: usize) -> bool {
+    let vals: &[i16] = bytemuck::cast_slice(raw);
+    let mut wrote = false;
+    for (k, &v) in vals.iter().enumerate() {
+        let li = global_offset_elems + k;
+        if li < preview.len() {
+            preview[li] = v;
+            wrote = true;
+        } else {
+            break;
+        }
+    }
+    wrote
+}
+
+fn fill_u8_preview(raw: &[u8], preview: &mut [u8], global_offset_elems: usize) -> bool {
+    let vals: &[u8] = raw;
+    let mut wrote = false;
+    for (k, &v) in vals.iter().enumerate() {
+        let li = global_offset_elems + k;
+        if li < preview.len() {
+            preview[li] = v;
+            wrote = true;
+        } else {
+            break;
+        }
+    }
+    wrote
+}
+
 fn fill_i64_preview(raw: &[u8], preview: &mut [i64], global_offset_elems: usize) -> bool {
     let vals: &[i64] = bytemuck::cast_slice(raw);
     let mut wrote = false;
@@ -382,6 +427,142 @@ fn linear_fold_i32(
     ))
 }
 
+fn fold_window_u8(
+    acc: &mut ValueAccum,
+    window: &[u8],
+    kind: ReductionKind,
+    preview: &mut [u8],
+    global_offset_elems: usize,
+) -> bool {
+    if matches!(kind, ReductionKind::Count) {
+        acc.push_f32_le_bytes(window, kind);
+    } else {
+        for &v in window {
+            acc.push_f64(f64::from(v));
+        }
+    }
+    if preview.is_empty() {
+        false
+    } else {
+        fill_u8_preview(window, preview, global_offset_elems)
+    }
+}
+
+fn linear_fold_u8(
+    p: &LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![0u8; p.preview_cap];
+    let (acc, saw_preview) =
+        fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+            fold_window_u8(acc, window, p.kind, &mut preview, g)
+        })?;
+    require_nonempty(&acc)?;
+    require_int_preview(p.preview_cap, saw_preview || p.preview_cap == 0)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::U8(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
+fn fold_window_u16(
+    acc: &mut ValueAccum,
+    window: &[u8],
+    kind: ReductionKind,
+    preview: &mut [u16],
+    global_offset_elems: usize,
+) -> bool {
+    debug_assert_eq!(window.len() % 2, 0);
+    if matches!(kind, ReductionKind::Count) {
+        acc.push_f32_le_bytes(window, kind);
+    } else {
+        let vals: &[u16] = bytemuck::cast_slice(window);
+        for &v in vals {
+            acc.push_f64(f64::from(v));
+        }
+    }
+    if preview.is_empty() {
+        false
+    } else {
+        fill_u16_preview(window, preview, global_offset_elems)
+    }
+}
+
+fn fold_window_i16(
+    acc: &mut ValueAccum,
+    window: &[u8],
+    kind: ReductionKind,
+    preview: &mut [i16],
+    global_offset_elems: usize,
+) -> bool {
+    debug_assert_eq!(window.len() % 2, 0);
+    if matches!(kind, ReductionKind::Count) {
+        acc.push_f32_le_bytes(window, kind);
+    } else {
+        let vals: &[i16] = bytemuck::cast_slice(window);
+        for &v in vals {
+            acc.push_f64(f64::from(v));
+        }
+    }
+    if preview.is_empty() {
+        false
+    } else {
+        fill_i16_preview(window, preview, global_offset_elems)
+    }
+}
+
+fn linear_fold_u16(
+    p: &LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![0u16; p.preview_cap];
+    let (acc, saw_preview) =
+        fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+            fold_window_u16(acc, window, p.kind, &mut preview, g)
+        })?;
+    require_nonempty(&acc)?;
+    require_int_preview(p.preview_cap, saw_preview || p.preview_cap == 0)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::U16(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
+fn linear_fold_i16(
+    p: &LinearFoldParams<'_>,
+) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
+    let mut preview = vec![0i16; p.preview_cap];
+    let (acc, saw_preview) =
+        fold_span_source(p.mmap, p.tet_path, p.span, p.elem_size, |acc, window, g| {
+            fold_window_i16(acc, window, p.kind, &mut preview, g)
+        })?;
+    require_nonempty(&acc)?;
+    require_int_preview(p.preview_cap, saw_preview || p.preview_cap == 0)?;
+    Ok(build_fold_plan_outcome_typed(
+        FoldPreviewBuffer::I16(if p.max_preview == 0 {
+            Vec::new()
+        } else {
+            preview
+        }),
+        p.max_preview,
+        p.n,
+        p.total_bytes,
+        acc.finish_scalar(p.kind).into(),
+    ))
+}
+
 fn linear_fold_i64(
     p: &LinearFoldParams<'_>,
 ) -> Result<crate::query::fold::FoldPlanOutcome, TetError> {
@@ -434,5 +615,8 @@ pub(crate) fn fold_read_plan_scalar_linear(
         ElementDtype::F64 => linear_fold_f64(&p),
         ElementDtype::I32 => linear_fold_i32(&p),
         ElementDtype::I64 => linear_fold_i64(&p),
+        ElementDtype::U8 => linear_fold_u8(&p),
+        ElementDtype::U16 => linear_fold_u16(&p),
+        ElementDtype::I16 => linear_fold_i16(&p),
     }
 }

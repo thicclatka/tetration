@@ -6,14 +6,18 @@ use memmap2::{Mmap, MmapMut};
 
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
-use crate::utils::{i32_le, i64_le};
+use crate::utils::{i16_le, i32_le, i64_le, u8_le, u16_le};
 
 use super::parallel::{
-    materialize_scatter_fill_parallel_i32, materialize_scatter_fill_parallel_i64,
+    materialize_scatter_fill_parallel_i16, materialize_scatter_fill_parallel_i32,
+    materialize_scatter_fill_parallel_i64, materialize_scatter_fill_parallel_u8,
+    materialize_scatter_fill_parallel_u16,
 };
 use crate::query::decode::chunk_decode::{
-    scatter_chunk_into_plan_i32, scatter_chunk_into_plan_i64, visit_planned_chunk_i32_as_f64,
-    visit_planned_chunk_i64_as_f64,
+    scatter_chunk_into_plan_i16, scatter_chunk_into_plan_i32, scatter_chunk_into_plan_i64,
+    scatter_chunk_into_plan_u8, scatter_chunk_into_plan_u16, visit_planned_chunk_i16_as_f64,
+    visit_planned_chunk_i32_as_f64, visit_planned_chunk_i64_as_f64, visit_planned_chunk_u8_as_f64,
+    visit_planned_chunk_u16_as_f64,
 };
 use crate::query::dispatch::accumulate_chunk_read_bytes;
 use crate::query::engine::spill_policy::TempSpillFile;
@@ -312,7 +316,67 @@ define_int_materialize! {
     promote_spill |x| x as f64;
 }
 
-/// Spill a full logical `i32` or `i64` selection to `path` (dispatches by `dtype`).
+define_int_materialize! {
+    u8;
+    backing LogicalU8Backing;
+    le_mod u8_le;
+    scatter scatter_chunk_into_plan_u8;
+    scatter_seq scatter_fill_sequential_u8;
+    scatter_ty ScatterU8Fn;
+    scatter_par materialize_scatter_fill_parallel_u8;
+    core_fn materialize_read_plan_u8_le_core;
+    read_fn materialize_read_plan_u8_le;
+    spill_fn spill_read_plan_u8_le;
+    type_label "u8";
+    into_vec_fn materialize_into_vec_u8;
+    spill_file_fn preview_from_spill_file_u8;
+    preview_mat_fn preview_from_materialized_u8;
+    as_f64_fn materialized_logical_as_f64_u8;
+    promote_inmem |x| f64::from(x);
+    promote_spill |x| f64::from(x);
+}
+
+define_int_materialize! {
+    u16;
+    backing LogicalU16Backing;
+    le_mod u16_le;
+    scatter scatter_chunk_into_plan_u16;
+    scatter_seq scatter_fill_sequential_u16;
+    scatter_ty ScatterU16Fn;
+    scatter_par materialize_scatter_fill_parallel_u16;
+    core_fn materialize_read_plan_u16_le_core;
+    read_fn materialize_read_plan_u16_le;
+    spill_fn spill_read_plan_u16_le;
+    type_label "u16";
+    into_vec_fn materialize_into_vec_u16;
+    spill_file_fn preview_from_spill_file_u16;
+    preview_mat_fn preview_from_materialized_u16;
+    as_f64_fn materialized_logical_as_f64_u16;
+    promote_inmem |x| f64::from(x);
+    promote_spill |x| f64::from(x);
+}
+
+define_int_materialize! {
+    i16;
+    backing LogicalI16Backing;
+    le_mod i16_le;
+    scatter scatter_chunk_into_plan_i16;
+    scatter_seq scatter_fill_sequential_i16;
+    scatter_ty ScatterI16Fn;
+    scatter_par materialize_scatter_fill_parallel_i16;
+    core_fn materialize_read_plan_i16_le_core;
+    read_fn materialize_read_plan_i16_le;
+    spill_fn spill_read_plan_i16_le;
+    type_label "i16";
+    into_vec_fn materialize_into_vec_i16;
+    spill_file_fn preview_from_spill_file_i16;
+    preview_mat_fn preview_from_materialized_i16;
+    as_f64_fn materialized_logical_as_f64_i16;
+    promote_inmem |x| f64::from(x);
+    promote_spill |x| f64::from(x);
+}
+
+/// Spill a full logical integer selection to `path` (dispatches by `dtype`).
 ///
 /// # Errors
 ///
@@ -326,8 +390,11 @@ pub fn spill_read_plan_int_le(
     match dtype {
         ElementDtype::I32 => spill_read_plan_i32_le(mmap, plan, path),
         ElementDtype::I64 => spill_read_plan_i64_le(mmap, plan, path),
+        ElementDtype::U8 => spill_read_plan_u8_le(mmap, plan, path),
+        ElementDtype::U16 => spill_read_plan_u16_le(mmap, plan, path),
+        ElementDtype::I16 => spill_read_plan_i16_le(mmap, plan, path),
         _ => Err(TetError::Validation(
-            "spill_read_plan_int_le requires i32 or i64 dtype".into(),
+            "spill_read_plan_int_le requires an integer dtype (i32/i64/u8/u16/i16)".into(),
         )),
     }
 }
@@ -364,6 +431,9 @@ pub(crate) fn materialized_logical_as_f64(
         },
         MaterializedLogical::I32 { backing, .. } => materialized_logical_as_f64_i32(backing),
         MaterializedLogical::I64 { backing, .. } => materialized_logical_as_f64_i64(backing),
+        MaterializedLogical::U8 { backing, .. } => materialized_logical_as_f64_u8(backing),
+        MaterializedLogical::U16 { backing, .. } => materialized_logical_as_f64_u16(backing),
+        MaterializedLogical::I16 { backing, .. } => materialized_logical_as_f64_i16(backing),
     }
 }
 
@@ -371,6 +441,9 @@ pub(crate) fn materialized_logical_as_f64(
 pub(crate) enum IntVisit {
     I32,
     I64,
+    U8,
+    U16,
+    I16,
 }
 
 impl IntVisit {
@@ -387,6 +460,9 @@ impl IntVisit {
         match self {
             Self::I32 => visit_planned_chunk_i32_as_f64(mmap, plan, c, visit),
             Self::I64 => visit_planned_chunk_i64_as_f64(mmap, plan, c, visit),
+            Self::U8 => visit_planned_chunk_u8_as_f64(mmap, plan, c, visit),
+            Self::U16 => visit_planned_chunk_u16_as_f64(mmap, plan, c, visit),
+            Self::I16 => visit_planned_chunk_i16_as_f64(mmap, plan, c, visit),
         }
     }
 }
@@ -416,6 +492,51 @@ macro_rules! int_scalar_fold_outcome {
     ) => {
         build_fold_plan_outcome_typed(
             FoldPreviewBuffer::I64($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
+    };
+    (
+        u8: $preview:expr,
+        max_preview: $max_preview:expr,
+        n: $n:expr,
+        total: $total:expr,
+        operation: $operation:expr,
+    ) => {
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::U8($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
+    };
+    (
+        u16: $preview:expr,
+        max_preview: $max_preview:expr,
+        n: $n:expr,
+        total: $total:expr,
+        operation: $operation:expr,
+    ) => {
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::U16($preview),
+            $max_preview,
+            $n,
+            $total,
+            $operation,
+        )
+    };
+    (
+        i16: $preview:expr,
+        max_preview: $max_preview:expr,
+        n: $n:expr,
+        total: $total:expr,
+        operation: $operation:expr,
+    ) => {
+        build_fold_plan_outcome_typed(
+            FoldPreviewBuffer::I16($preview),
             $max_preview,
             $n,
             $total,
@@ -527,6 +648,159 @@ macro_rules! int_scalar_fold_run {
             operation: operation,
         ))
     }};
+    (
+        elem $elem:ty;
+        cast |$v:ident| $cast:expr;
+        outcome u8;
+        $mmap:ident;
+        $plan:ident;
+        $visit:expr;
+        $preview_cap:expr;
+        $max_preview:expr;
+        $n:expr;
+        $kind:ident;
+        $acc:ident;
+        $sequential_io:expr;
+        on_value: $on_value:expr,
+        finish => $finish:expr
+    ) => {{
+        let mut preview = vec![0 as $elem; $preview_cap];
+        let mut total_bytes_read_from_disk: u64 = 0;
+        let mut saw_preview = $preview_cap == 0;
+        for i in crate::query::fold::fold_policy::chunk_indices_for_fold($plan, $sequential_io) {
+            let c = &$plan.chunks[i];
+            let chunk_bytes = $visit.visit_chunk_as_f64($mmap, $plan, c, |li, v| {
+                $on_value(&mut $acc, li, v, $kind);
+                if li < $preview_cap {
+                    let $v = v;
+                    preview[li] = $cast;
+                    saw_preview = true;
+                }
+                Ok(())
+            })?;
+            accumulate_chunk_read_bytes(&mut total_bytes_read_from_disk, chunk_bytes)?;
+        }
+        if $acc.is_empty() {
+            return Err(TetError::Validation(
+                "operation requires at least one decoded value from the read plan".into(),
+            ));
+        }
+        if $preview_cap > 0 && !saw_preview {
+            return Err(TetError::Validation(
+                "materialized selection has unset preview elements".into(),
+            ));
+        }
+        let operation = $finish.into();
+        Ok(int_scalar_fold_outcome!(
+            u8: preview,
+            max_preview: $max_preview,
+            n: $n,
+            total: total_bytes_read_from_disk,
+            operation: operation,
+        ))
+    }};
+    (
+        elem $elem:ty;
+        cast |$v:ident| $cast:expr;
+        outcome u16;
+        $mmap:ident;
+        $plan:ident;
+        $visit:expr;
+        $preview_cap:expr;
+        $max_preview:expr;
+        $n:expr;
+        $kind:ident;
+        $acc:ident;
+        $sequential_io:expr;
+        on_value: $on_value:expr,
+        finish => $finish:expr
+    ) => {{
+        let mut preview = vec![0 as $elem; $preview_cap];
+        let mut total_bytes_read_from_disk: u64 = 0;
+        let mut saw_preview = $preview_cap == 0;
+        for i in crate::query::fold::fold_policy::chunk_indices_for_fold($plan, $sequential_io) {
+            let c = &$plan.chunks[i];
+            let chunk_bytes = $visit.visit_chunk_as_f64($mmap, $plan, c, |li, v| {
+                $on_value(&mut $acc, li, v, $kind);
+                if li < $preview_cap {
+                    let $v = v;
+                    preview[li] = $cast;
+                    saw_preview = true;
+                }
+                Ok(())
+            })?;
+            accumulate_chunk_read_bytes(&mut total_bytes_read_from_disk, chunk_bytes)?;
+        }
+        if $acc.is_empty() {
+            return Err(TetError::Validation(
+                "operation requires at least one decoded value from the read plan".into(),
+            ));
+        }
+        if $preview_cap > 0 && !saw_preview {
+            return Err(TetError::Validation(
+                "materialized selection has unset preview elements".into(),
+            ));
+        }
+        let operation = $finish.into();
+        Ok(int_scalar_fold_outcome!(
+            u16: preview,
+            max_preview: $max_preview,
+            n: $n,
+            total: total_bytes_read_from_disk,
+            operation: operation,
+        ))
+    }};
+    (
+        elem $elem:ty;
+        cast |$v:ident| $cast:expr;
+        outcome i16;
+        $mmap:ident;
+        $plan:ident;
+        $visit:expr;
+        $preview_cap:expr;
+        $max_preview:expr;
+        $n:expr;
+        $kind:ident;
+        $acc:ident;
+        $sequential_io:expr;
+        on_value: $on_value:expr,
+        finish => $finish:expr
+    ) => {{
+        let mut preview = vec![0 as $elem; $preview_cap];
+        let mut total_bytes_read_from_disk: u64 = 0;
+        let mut saw_preview = $preview_cap == 0;
+        for i in crate::query::fold::fold_policy::chunk_indices_for_fold($plan, $sequential_io) {
+            let c = &$plan.chunks[i];
+            let chunk_bytes = $visit.visit_chunk_as_f64($mmap, $plan, c, |li, v| {
+                $on_value(&mut $acc, li, v, $kind);
+                if li < $preview_cap {
+                    let $v = v;
+                    preview[li] = $cast;
+                    saw_preview = true;
+                }
+                Ok(())
+            })?;
+            accumulate_chunk_read_bytes(&mut total_bytes_read_from_disk, chunk_bytes)?;
+        }
+        if $acc.is_empty() {
+            return Err(TetError::Validation(
+                "operation requires at least one decoded value from the read plan".into(),
+            ));
+        }
+        if $preview_cap > 0 && !saw_preview {
+            return Err(TetError::Validation(
+                "materialized selection has unset preview elements".into(),
+            ));
+        }
+        let operation = $finish.into();
+        Ok(int_scalar_fold_outcome!(
+            i16: preview,
+            max_preview: $max_preview,
+            n: $n,
+            total: total_bytes_read_from_disk,
+            operation: operation,
+        ))
+    }};
 }
 
 /// Shared inputs for sequential integer scalar fold (`i32` / `i64` promoted to `f64`).
@@ -595,6 +869,69 @@ fn int_scalar_fold_arg(ctx: &IntScalarFoldCtx<'_>) -> Result<FoldPlanOutcome, Te
                 finish => acc.finish_scalar(kind, n)
             )
         }
+        IntVisit::U8 => {
+            let mut acc = ArgIndexAccum::default();
+            int_scalar_fold_run!(
+                elem u8;
+                cast |v| v as u8;
+                outcome u8;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
+                    acc.push_f64(li as u64, v, kind);
+                },
+                finish => acc.finish_scalar(kind, n)
+            )
+        }
+        IntVisit::U16 => {
+            let mut acc = ArgIndexAccum::default();
+            int_scalar_fold_run!(
+                elem u16;
+                cast |v| v as u16;
+                outcome u16;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
+                    acc.push_f64(li as u64, v, kind);
+                },
+                finish => acc.finish_scalar(kind, n)
+            )
+        }
+        IntVisit::I16 => {
+            let mut acc = ArgIndexAccum::default();
+            int_scalar_fold_run!(
+                elem i16;
+                cast |v| v as i16;
+                outcome i16;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ArgIndexAccum, li, v, kind| {
+                    acc.push_f64(li as u64, v, kind);
+                },
+                finish => acc.finish_scalar(kind, n)
+            )
+        }
     }
 }
 
@@ -648,6 +985,63 @@ fn int_scalar_fold_value(ctx: &IntScalarFoldCtx<'_>) -> Result<FoldPlanOutcome, 
                 finish => acc.finish_scalar(kind)
             )
         }
+        IntVisit::U8 => {
+            let mut acc = ValueAccum::default();
+            int_scalar_fold_run!(
+                elem u8;
+                cast |v| v as u8;
+                outcome u8;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+                finish => acc.finish_scalar(kind)
+            )
+        }
+        IntVisit::U16 => {
+            let mut acc = ValueAccum::default();
+            int_scalar_fold_run!(
+                elem u16;
+                cast |v| v as u16;
+                outcome u16;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+                finish => acc.finish_scalar(kind)
+            )
+        }
+        IntVisit::I16 => {
+            let mut acc = ValueAccum::default();
+            int_scalar_fold_run!(
+                elem i16;
+                cast |v| v as i16;
+                outcome i16;
+                mmap;
+                plan;
+                visit;
+                preview_cap;
+                max_preview;
+                n;
+                kind;
+                acc;
+                sequential_io;
+                on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+                finish => acc.finish_scalar(kind)
+            )
+        }
     }
 }
 
@@ -662,9 +1056,12 @@ pub(crate) fn fold_read_plan_scalar_operation_int(
     let visit = match dtype {
         ElementDtype::I32 => IntVisit::I32,
         ElementDtype::I64 => IntVisit::I64,
+        ElementDtype::U8 => IntVisit::U8,
+        ElementDtype::U16 => IntVisit::U16,
+        ElementDtype::I16 => IntVisit::I16,
         _ => {
             return Err(TetError::Validation(
-                "integer fold requires i32 or i64 dtype".into(),
+                "integer fold requires i32, i64, u8, u16, or i16 dtype".into(),
             ));
         }
     };

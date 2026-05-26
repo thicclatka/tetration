@@ -111,3 +111,36 @@ define_le_pod_module! {
     count_fn: i64_count;
     type_name: "i64";
 }
+
+define_le_pod_module! {
+    #[allow(clippy::int_plus_one, dead_code)]
+    pub(crate) mod u8_le;
+    ty u8;
+    elem_size: 1;
+    read_fn: read_u8_le_at;
+    cast_fn: try_cast_u8_le;
+    count_fn: u8_count;
+    type_name: "u8";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod u16_le;
+    ty u16;
+    elem_size: 2;
+    read_fn: read_u16_le_at;
+    cast_fn: try_cast_u16_le;
+    count_fn: u16_count;
+    type_name: "u16";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod i16_le;
+    ty i16;
+    elem_size: 2;
+    read_fn: read_i16_le_at;
+    cast_fn: try_cast_i16_le;
+    count_fn: i16_count;
+    type_name: "i16";
+}
