@@ -419,10 +419,10 @@ mod u8_arch {
                 let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
                 let lo16 = _mm_unpacklo_epi8(v, zero);
                 let hi16 = _mm_unpackhi_epi8(v, zero);
-                let lo32 = _mm_unpacklo_epi16(lo16, zero);
-                let hi32 = _mm_unpacklo_epi16(hi16, zero);
-                accum_epi32_pd(&mut sum, &mut sumsq, lo32);
-                accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpacklo_epi16(lo16, zero));
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpackhi_epi16(lo16, zero));
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpacklo_epi16(hi16, zero));
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpackhi_epi16(hi16, zero));
             }
             i += 16;
         }
@@ -692,12 +692,8 @@ mod u16_arch {
             unsafe {
                 let zero = _mm_setzero_si128();
                 let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-                let lo16 = _mm_unpacklo_epi16(v, zero);
-                let hi16 = _mm_unpackhi_epi16(v, zero);
-                let lo32 = _mm_unpacklo_epi16(lo16, zero);
-                let hi32 = _mm_unpacklo_epi16(hi16, zero);
-                accum_epi32_pd(&mut sum, &mut sumsq, lo32);
-                accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpacklo_epi16(v, zero));
+                accum_epi32_pd(&mut sum, &mut sumsq, _mm_unpackhi_epi16(v, zero));
             }
             i += 8;
         }
