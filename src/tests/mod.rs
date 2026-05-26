@@ -18,3 +18,4 @@ mod session;
 mod utils;
 mod variance_simd;
 mod verify;
+mod verify_fixtures;

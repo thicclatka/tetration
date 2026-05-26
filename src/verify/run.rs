@@ -8,7 +8,7 @@ use super::chunks::{
     check_chunk_dataset_ids, check_chunk_decode, check_duplicate_payload_offsets,
     check_payload_order,
 };
-use super::footer::{check_dataset_count, check_footer};
+use super::footer::{check_dataset_count, check_footer, check_footer_metadata_limits};
 use super::report::{TetVerifyReport, VerifySummary, ok_finding};
 
 /// Verify a mapped `.tet` byte slice.
@@ -89,6 +89,21 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>) -> TetVerifyReport {
             .finalize();
         }
     }
+
+    let meta_finding = check_footer_metadata_limits(&summary);
+    if !meta_finding.ok {
+        findings.push(meta_finding);
+        return TetVerifyReport {
+            ok: false,
+            path: path_s,
+            file_len,
+            findings,
+            recommendations: Vec::new(),
+            summary: None,
+        }
+        .finalize();
+    }
+    findings.push(meta_finding);
 
     let has_metadata = !summary.metadata.datasets.is_empty() || summary.metadata.file.is_some();
     let history_footer =

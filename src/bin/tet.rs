@@ -107,7 +107,7 @@ fn run(cli: Cli) -> Result<(), String> {
             json,
             dry_run,
             apply,
-        } => run_repair(RepairRunOpts {
+        } => run_repair(&RepairRunOpts {
             path,
             json,
             dry_run,

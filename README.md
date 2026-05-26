@@ -108,11 +108,11 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 
 ### `tet verify`
 
-| Flag        | Effect                                      |
-| ----------- | ------------------------------------------- |
-| _(default)_ | Human-readable check list + summary         |
+| Flag        | Effect                                                |
+| ----------- | ----------------------------------------------------- |
+| _(default)_ | Human-readable check list + summary                   |
 | `--json`    | Pretty JSON [`TetVerifyReport`](src/verify/report.rs) |
-| `-q`        | One line (`status=ok` / `failed`)           |
+| `-q`        | One line (`status=ok` / `failed`)                     |
 
 Exit code **1** when verification fails (CI-friendly).
 
@@ -183,4 +183,4 @@ use tetration::prelude::*;
 // or: tetration::layout::mmap_file_read, tetration::query::{parse_query_json, …}
 ```
 
-Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`. **Phase 8 next:** `tet verify` and additional dtypes — [GETTING_STARTED.md — Phase 8](GETTING_STARTED.md#phase-8--dtypes--file-health-next).
+Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`. **Phase 8 next:** additional dtypes (`u8`, …) — file health (`tet verify` / `tet repair`) is in place; see [GETTING_STARTED.md — Phase 8](GETTING_STARTED.md#phase-8--dtypes--file-health-in-progress).

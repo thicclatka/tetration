@@ -17,11 +17,11 @@ pub(crate) struct RepairRunOpts {
     pub apply: Vec<String>,
 }
 
-pub(crate) fn run_repair(opts: RepairRunOpts) -> Result<(), String> {
-    if opts.apply.is_empty() {
-        let verify = verify_tet_file(&opts.path).map_err(cli_error)?;
-        let plan = repair_plan(&opts.path, &verify);
-        let out = if opts.json {
+pub(crate) fn run_repair(opts_ref: &RepairRunOpts) -> Result<(), String> {
+    if opts_ref.apply.is_empty() {
+        let verify = verify_tet_file(&opts_ref.path).map_err(cli_error)?;
+        let plan = repair_plan(&opts_ref.path, &verify);
+        let out = if opts_ref.json {
             format_plan_json(&plan).map_err(cli_error)?
         } else {
             format_plan_text(&plan)
@@ -31,13 +31,13 @@ pub(crate) fn run_repair(opts: RepairRunOpts) -> Result<(), String> {
     }
 
     let repair_opts = RepairOptions {
-        dry_run: opts.dry_run,
-        apply: opts.apply.clone(),
+        dry_run: opts_ref.dry_run,
+        apply: opts_ref.apply.clone(),
         plan_codes: Vec::new(),
     };
-    let report = repair_tet_file(&opts.path, &repair_opts).map_err(cli_error)?;
+    let report = repair_tet_file(&opts_ref.path, &repair_opts).map_err(cli_error)?;
 
-    let out = if opts.json {
+    let out = if opts_ref.json {
         format_repair_json(&report).map_err(cli_error)?
     } else {
         format_repair_text(&report)

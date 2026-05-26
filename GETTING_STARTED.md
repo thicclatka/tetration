@@ -156,20 +156,18 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Session / writer API** — [`TetWriterSession`](src/catalog/session.rs) queues attrs / `dim_names` / `coords`, optional [`push_history_event`](src/catalog/session.rs) (default `write` + path on commit when empty); footer flush on `commit` / `commit_with_fill`.
 - [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
-## Phase 8 — Dtypes & file health (next)
+## Phase 8 — Dtypes & file health (in progress)
 
-**Goal:** **`tet verify`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
+**Goal:** **`tet verify`** / **`tet repair`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
 
-### File health / verification (do first)
+### File health / verification
 
-Baseline today: [`validate_chunk_payloads`](src/catalog/index.rs) when building a summary ([`read_tet_summary_v1`](src/catalog/mod.rs)); no dedicated CLI.
-
-- [x] **`tet verify <path.tet>`** — findings + recommendations; `--json` / `-q`; [`verify_tet_file`](src/verify/mod.rs).
-- [x] **Library API** — [`tetration::verify`](src/verify/mod.rs): layout parse, chunk decode integrity (≤128 chunks deep), footer validation.
-- [ ] **Index vs payloads** — walk all chunk entries: offsets, `stored_byte_len`, codec, in-bounds payloads; optional sequential-order check.
-- [ ] **Footer** — `THST` bounds, `metadata` / `history` JSON validation against [`MetadataLimitsV1`](src/catalog/metadata.rs); spilled `metadata_ref` regions.
-- [ ] **Optional deep checks** — spot-decode random raw/zstd tiles; catalog/tensor byte-length consistency per dataset.
-- [ ] **CI** — run verify on fixture `.tet` files after write/convert integration tests.
+- [x] **`tet verify <path.tet>`** — findings + recommendations; `--json` / `-q` / `--repair`; [`verify_tet_file`](src/verify/mod.rs).
+- [x] **`tet repair <path.tet>`** — plan by default; `--apply <code>` (`footer_invalid` today); [`tetration::repair`](src/repair/mod.rs).
+- [x] **Library API** — [`tetration::verify`](src/verify/mod.rs): layout parse, chunk index/payload checks, decode integrity (≤128 chunks deep), footer + [`MetadataLimitsV1`](src/catalog/metadata.rs) on resolved metadata (incl. spill).
+- [x] **Index vs payloads** — in-bounds payloads (parse + decode walk), duplicate offsets, optional contiguous-order warning.
+- [x] **CI / tests** — [`src/tests/verify_fixtures.rs`](src/tests/verify_fixtures.rs); `assert_tet_verify_ok` after convert helpers in [`src/tests/convert.rs`](src/tests/convert.rs) (`cargo test --all-features`).
+- [ ] **Optional deep checks** — full-file decode (today capped at 128 chunks); per-dataset catalog/tensor byte-length cross-check.
 
 ### Element dtypes (wire + execution)
 
@@ -283,8 +281,8 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 7. ~~**Rust embedder workflows (Phase 7):** examples + session API.~~ **Done**
 8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**
-10. **File health (Phase 8):** `tet verify` + library report over fixtures.
-11. **Dtypes (Phase 8):** first additional wire tag (e.g. `u8`) through write → query smoke.
+10. **File health (Phase 8):** done — `tet verify` / `tet repair` + [`verify_fixtures`](src/tests/verify_fixtures.rs) on writer/convert outputs.
+11. **Dtypes (Phase 8, next):** first additional wire tag (e.g. `u8`) through write → query smoke.
 12. **Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.
 13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
 14. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

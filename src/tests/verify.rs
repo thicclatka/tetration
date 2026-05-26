@@ -1,5 +1,6 @@
 //! `tet verify` / [`verify_tet_file`] integration tests.
 
+use std::path::Path;
 use std::process::Command;
 
 use crate::catalog::{FooterBlobV1, TetMetadataV1, write_footer_blob};
@@ -7,6 +8,17 @@ use crate::verify::{format_verify_quiet, format_verify_text, verify_tet_bytes, v
 
 use super::fixture::index_patch::{self, ENTRY_PAYLOAD_OFFSET};
 use super::fixture::write_multichunk_2x3_tiles;
+
+/// Assert [`verify_tet_file`] passes (used after writer/convert tests — CI gate).
+pub(crate) fn assert_tet_verify_ok(path: &Path) {
+    let report = verify_tet_file(path).unwrap();
+    assert!(
+        report.ok,
+        "verify failed for {}: {:?}",
+        path.display(),
+        report.findings
+    );
+}
 
 fn tet_verify_command(tet_path: &std::path::Path) -> Command {
     let path_arg = tet_path.to_str().expect("utf-8 path");
