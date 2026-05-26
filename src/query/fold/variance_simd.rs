@@ -388,17 +388,20 @@ mod u8_arch {
 
     #[inline]
     pub(super) unsafe fn accum_epi32_pd(sum: &mut f64, sumsq: &mut f64, reg: __m128i) {
-        let lo_pd = _mm_cvtepi32_pd(reg);
-        let hi_pd = _mm_cvtepi32_pd(_mm_shuffle_epi32(reg, 0xEE));
-        let mut lo_arr = [0.0f64; 2];
-        let mut hi_arr = [0.0f64; 2];
-        _mm_storeu_pd(lo_arr.as_mut_ptr(), lo_pd);
-        _mm_storeu_pd(hi_arr.as_mut_ptr(), hi_pd);
-        sum[0] += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
-        sumsq[0] += lo_arr[0] * lo_arr[0]
-            + lo_arr[1] * lo_arr[1]
-            + hi_arr[0] * hi_arr[0]
-            + hi_arr[1] * hi_arr[1];
+        // SAFETY: caller enables SSE2 via `#[target_feature]`.
+        unsafe {
+            let lo_pd = _mm_cvtepi32_pd(reg);
+            let hi_pd = _mm_cvtepi32_pd(_mm_shuffle_epi32(reg, 0xEE));
+            let mut lo_arr = [0.0f64; 2];
+            let mut hi_arr = [0.0f64; 2];
+            _mm_storeu_pd(lo_arr.as_mut_ptr(), lo_pd);
+            _mm_storeu_pd(hi_arr.as_mut_ptr(), hi_pd);
+            *sum += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
+            *sumsq += lo_arr[0] * lo_arr[0]
+                + lo_arr[1] * lo_arr[1]
+                + hi_arr[0] * hi_arr[0]
+                + hi_arr[1] * hi_arr[1];
+        }
     }
 
     #[target_feature(enable = "sse2")]
@@ -407,17 +410,20 @@ mod u8_arch {
         let len = vals.len();
         let mut sum = 0.0f64;
         let mut sumsq = 0.0f64;
-        let zero = _mm_setzero_si128();
         let mut i = 0usize;
         let simd_end = len - (len % 16);
         while i < simd_end {
-            let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-            let lo16 = _mm_unpacklo_epi8(v, zero);
-            let hi16 = _mm_unpackhi_epi8(v, zero);
-            let lo32 = _mm_unpacklo_epi16(lo16, zero);
-            let hi32 = _mm_unpacklo_epi16(hi16, zero);
-            accum_epi32_pd(&mut sum, &mut sumsq, lo32);
-            accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            unsafe {
+                let zero = _mm_setzero_si128();
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo16 = _mm_unpacklo_epi8(v, zero);
+                let hi16 = _mm_unpackhi_epi8(v, zero);
+                let lo32 = _mm_unpacklo_epi16(lo16, zero);
+                let hi32 = _mm_unpacklo_epi16(hi16, zero);
+                accum_epi32_pd(&mut sum, &mut sumsq, lo32);
+                accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+            }
             i += 16;
         }
         while i < len {
@@ -494,11 +500,14 @@ mod i64_arch {
         let mut i = 0usize;
         let simd_end = len - (len % 2);
         while i < simd_end {
-            let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-            let lo = _mm_cvtsi128_si64(v) as f64;
-            let hi = _mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)) as f64;
-            sum += lo + hi;
-            sumsq += lo * lo + hi * hi;
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            unsafe {
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo = _mm_cvtsi128_si64(v) as f64;
+                let hi = _mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)) as f64;
+                sum += lo + hi;
+                sumsq += lo * lo + hi * hi;
+            }
             i += 2;
         }
         while i < len {
@@ -551,13 +560,16 @@ mod u32_arch {
         let mut i = 0usize;
         let simd_end = len - (len % 4);
         while i < simd_end {
-            let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-            let lo = _mm_cvtepu32_pd(v);
-            let hi = _mm_cvtepu32_pd(_mm_shuffle_epi32(v, 0xEE));
-            let mut lo_arr = [0.0f64; 2];
-            let mut hi_arr = [0.0f64; 2];
-            _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
-            _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
+            let (lo_arr, hi_arr) = unsafe {
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo = _mm_cvtepu32_pd(v);
+                let hi = _mm_cvtepu32_pd(_mm_shuffle_epi32(v, 0xEE));
+                let mut lo_arr = [0.0f64; 2];
+                let mut hi_arr = [0.0f64; 2];
+                _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
+                _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
+                (lo_arr, hi_arr)
+            };
             sum += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
             sumsq += lo_arr[0] * lo_arr[0]
                 + lo_arr[1] * lo_arr[1]
@@ -615,11 +627,14 @@ mod u64_arch {
         let mut i = 0usize;
         let simd_end = len - (len % 2);
         while i < simd_end {
-            let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-            let lo = _mm_cvtsi128_si64(v) as f64;
-            let hi = _mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)) as f64;
-            sum += lo + hi;
-            sumsq += lo * lo + hi * hi;
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            unsafe {
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo = _mm_cvtsi128_si64(v) as f64;
+                let hi = _mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)) as f64;
+                sum += lo + hi;
+                sumsq += lo * lo + hi * hi;
+            }
             i += 2;
         }
         while i < len {
@@ -670,17 +685,20 @@ mod u16_arch {
         let len = vals.len();
         let mut sum = 0.0f64;
         let mut sumsq = 0.0f64;
-        let zero = _mm_setzero_si128();
         let mut i = 0usize;
         let simd_end = len - (len % 8);
         while i < simd_end {
-            let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-            let lo16 = _mm_unpacklo_epi16(v, zero);
-            let hi16 = _mm_unpackhi_epi16(v, zero);
-            let lo32 = _mm_unpacklo_epi16(lo16, zero);
-            let hi32 = _mm_unpacklo_epi16(hi16, zero);
-            accum_epi32_pd(&mut sum, &mut sumsq, lo32);
-            accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            unsafe {
+                let zero = _mm_setzero_si128();
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo16 = _mm_unpacklo_epi16(v, zero);
+                let hi16 = _mm_unpackhi_epi16(v, zero);
+                let lo32 = _mm_unpacklo_epi16(lo16, zero);
+                let hi32 = _mm_unpacklo_epi16(hi16, zero);
+                accum_epi32_pd(&mut sum, &mut sumsq, lo32);
+                accum_epi32_pd(&mut sum, &mut sumsq, hi32);
+            }
             i += 8;
         }
         while i < len {
