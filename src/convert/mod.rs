@@ -165,7 +165,7 @@ pub struct ConvertReport {
     pub dataset_count: usize,
     pub dataset_names: Vec<String>,
     pub datasets: Vec<ConvertDatasetSummary>,
-    /// History row written to the `.tet` footer: `(op, source, unix_timestamp)`.
+    /// History row written to the `.tet` footer (`HistoryEvent`: `op`, `source`, `at`, …).
     pub history: Vec<crate::catalog::HistoryEvent>,
     /// Wall-clock seconds for the full convert (plan + stream write + history footer).
     pub elapsed_secs: f64,

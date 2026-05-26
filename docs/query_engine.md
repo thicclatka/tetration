@@ -307,7 +307,7 @@ Future metadata ([`layout_v1.md — axis metadata`](layout_v1.md#axis-metadata-p
 ### Dimension names (axis names)
 
 - **One string per axis** — the name of the dimension, not each slot along it.
-- **Query use (Phase 8):** resolve `"mean": "time"` → internal axis `0` before planning; same reductions as today.
+- **Query use (Phase 9):** resolve `"mean": "time"` → internal axis `0` before planning; same reductions as today.
 - **Size:** O(`ndim`) — fits in dataset attrs or file header.
 
 ### Coordinate labels (index values)
@@ -460,8 +460,8 @@ These match the product vision but belong **beside** the reduction enum:
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                                  |
 | **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                 |
-| **Named axis labels**                     | **Dimension names** in metadata → resolve `"time"` to axis index before reductions (Phase 8).                                                       |
-| **Coordinate labels / filter-by-value**   | Per-index coords in metadata; slice resolver; optional lookup index (Phase 7 storage + Phase 8+ query).                                             |
+| **Named axis labels**                     | **Dimension names** in metadata → resolve `"time"` to axis index before reductions (Phase 9).                                                       |
+| **Coordinate labels / filter-by-value**   | Per-index coords in metadata; slice resolver; optional lookup index (Phase 7 storage + Phase 9 query).                                              |
 | **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                   |
 | **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                  |
 | **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                     |

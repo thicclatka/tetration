@@ -157,7 +157,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). Additional dtypes (`u8`, …) and **`tet verify`** are Phase 9; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **`tet verify`** and additional dtypes (`u8`, …) are Phase 8; named axes and richer query ops are Phase 9; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
 
 ## Library use
 
@@ -171,4 +171,4 @@ use tetration::prelude::*;
 // or: tetration::layout::mmap_file_read, tetration::query::{parse_query_json, …}
 ```
 
-Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`. **Phase 7 next:** on-disk file/dataset metadata — [GETTING_STARTED.md — Phase 7](GETTING_STARTED.md#phase-7--metadata--history).
+Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`. **Phase 8 next:** `tet verify` and additional dtypes — [GETTING_STARTED.md — Phase 8](GETTING_STARTED.md#phase-8--dtypes--file-health-next).

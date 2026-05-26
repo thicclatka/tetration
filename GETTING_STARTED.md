@@ -156,9 +156,35 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Session / writer API** — [`TetWriterSession`](src/catalog/session.rs) queues attrs / `dim_names` / `coords`, optional [`push_history_event`](src/catalog/session.rs) (default `write` + path on commit when empty); footer flush on `commit` / `commit_with_fill`.
 - [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
-## Phase 8 — Query ops & interchange (later)
+## Phase 8 — Dtypes & file health (next)
 
-**Goal:** extend tier A–C **`operation`** and export paths when the result is still a **reduction, QC stat, or interchange artifact** — without blocking Phases 6–7.
+**Goal:** **`tet verify`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
+
+### File health / verification (do first)
+
+Baseline today: [`validate_chunk_payloads`](src/catalog/index.rs) when building a summary ([`read_tet_summary_v1`](src/catalog/mod.rs)); no dedicated CLI.
+
+- [ ] **`tet verify <path.tet>`** — human-readable report (exit non-zero on failure); `--json` for automation.
+- [ ] **Library API** — e.g. `verify_tet_file` returning structured errors (superblock, catalog, index spans, footer).
+- [ ] **Index vs payloads** — walk all chunk entries: offsets, `stored_byte_len`, codec, in-bounds payloads; optional sequential-order check.
+- [ ] **Footer** — `THST` bounds, `metadata` / `history` JSON validation against [`MetadataLimitsV1`](src/catalog/metadata.rs); spilled `metadata_ref` regions.
+- [ ] **Optional deep checks** — spot-decode random raw/zstd tiles; catalog/tensor byte-length consistency per dataset.
+- [ ] **CI** — run verify on fixture `.tet` files after write/convert integration tests.
+
+### Element dtypes (wire + execution)
+
+Today: **`f32`**, **`f64`**, **`i32`**, **`i64`** ([`ElementDtype`](src/utils/dtype.rs), [`DATASET_DTYPE_TAG_V1`](src/catalog/mod.rs)).
+
+- [ ] **Wire tags** — assign catalog dtype tags; document in [`docs/layout_v1.md`](docs/layout_v1.md); decide v1 extension vs layout v2 before implementation.
+- [ ] **Writers** — `RawArrayWrite` / streaming / append / session paths; `chunk_grid_plan` / tile element size.
+- [ ] **Convert** — HDF5 / NetCDF / Zarr import mapping (feature-gated where native libs differ).
+- [ ] **Query** — materialize, streaming fold, tier-A/B/C ops, spill paths, preview arrays; integer promotion rules for aggregates.
+- [ ] **SIMD / fast paths** — add bulk kernels where ROI is clear (e.g. `u8` may stay scalar-first).
+- [ ] **Tests** — roundtrip writers, convert snippets, query golden cases per new dtype.
+
+## Phase 9 — Query ops & interchange (later)
+
+**Goal:** extend tier A–C **`operation`** and export paths when the result is still a **reduction, QC stat, or interchange artifact** — builds on Phase 7 metadata and Phase 8 dtype/verify baseline.
 
 ### Stats lane
 
@@ -172,7 +198,7 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 ### Interchange & format
 
 - [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
-- [ ] **Layout / codec evolution (beyond Phase 9)** — v2 only when v1 cannot be extended (filters, dedicated metadata regions, breaking layout changes).
+- [ ] **Layout / codec evolution (beyond Phase 8)** — v2 only when v1 cannot be extended (filters, dedicated metadata regions, breaking layout changes).
 
 ### Out of scope for JSON `operation`
 
@@ -183,32 +209,6 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 - [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when in-core and `chunk_count > 1` ([`parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [x] **Out-of-core linear scan** — sequential byte-stream fold when logical size exceeds available RAM headroom and payloads are contiguous raw ([`linear_scan.rs`](src/query/fold/linear_scan.rs), [PR #7](https://github.com/thicclatka/tetration/pull/7)).
-
-## Phase 9 — Dtypes & file health (later)
-
-**Goal:** extend **supported element dtypes** on the v1 wire (e.g. **`u8`**, **`u16`**, **`u32`**, **`u64`**, optional **`f16`**) with end-to-end writer, convert, and query support; add explicit **file health verification** for ops, embedders, and CI. Distinct from Phase 7 metadata and Phase 8 query semantics — this is catalog + execution + integrity tooling.
-
-### Element dtypes (wire + execution)
-
-Today: **`f32`**, **`f64`**, **`i32`**, **`i64`** ([`ElementDtype`](src/utils/dtype.rs), [`DATASET_DTYPE_TAG_V1`](src/catalog/mod.rs)).
-
-- [ ] **Wire tags** — assign catalog dtype tags; document in [`docs/layout_v1.md`](docs/layout_v1.md); decide v1 extension vs layout v2 before implementation.
-- [ ] **Writers** — `RawArrayWrite` / streaming / append / session paths; `chunk_grid_plan` / tile element size.
-- [ ] **Convert** — HDF5 / NetCDF / Zarr import mapping (feature-gated where native libs differ).
-- [ ] **Query** — materialize, streaming fold, tier-A/B/C ops, spill paths, preview arrays; integer promotion rules for aggregates.
-- [ ] **SIMD / fast paths** — add bulk kernels where ROI is clear (e.g. `u8` may stay scalar-first).
-- [ ] **Tests** — roundtrip writers, convert snippets, query golden cases per new dtype.
-
-### File health / verification
-
-Baseline today: [`validate_chunk_payloads`](src/catalog/index.rs) when building a summary ([`read_tet_summary_v1`](src/catalog/mod.rs)); no dedicated CLI.
-
-- [ ] **`tet verify <path.tet>`** — human-readable report (exit non-zero on failure); `--json` for automation.
-- [ ] **Library API** — e.g. `verify_tet_file` returning structured errors (superblock, catalog, index spans, footer).
-- [ ] **Index vs payloads** — walk all chunk entries: offsets, `stored_byte_len`, codec, in-bounds payloads; optional sequential-order check.
-- [ ] **Footer** — `THST` bounds, `metadata` / `history` JSON validation against [`MetadataLimitsV1`](src/catalog/metadata.rs).
-- [ ] **Optional deep checks** — spot-decode random raw/zstd tiles; catalog/tensor byte-length consistency per dataset.
-- [ ] **CI** — run verify on fixture `.tet` files after write/convert integration tests.
 
 ## Phase 10 — GPU (later)
 
@@ -280,10 +280,11 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 4. ~~**Adaptive out-of-core fold:** linear scan + SIMD bulk tier-A/B when data oversubscribes RAM.~~ **Done** — [PR #7](https://github.com/thicclatka/tetration/pull/7); see [`fold_policy.rs`](src/query/fold/fold_policy.rs), [`linear_scan.rs`](src/query/fold/linear_scan.rs).
 5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
 6. **Query front-end spike (Phase 6+):** optional TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
-7. **Rust embedder workflows (Phase 7):** crate `examples/` + docs.rs — create a `.tet`, append a dataset, run query execute in-process (no `tet` spawn).
-8. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
-9. **History events v2 (Phase 7):** structured transform event + session flush API.
-10. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.
-11. **File health (Phase 9):** `tet verify` + library report over fixtures.
-12. **Dtypes (Phase 9):** first additional wire tag (e.g. `u8`) through write → query smoke.
-13. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+7. ~~**Rust embedder workflows (Phase 7):** examples + session API.~~ **Done**
+8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
+9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**
+10. **File health (Phase 8):** `tet verify` + library report over fixtures.
+11. **Dtypes (Phase 8):** first additional wire tag (e.g. `u8`) through write → query smoke.
+12. **Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.
+13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
+14. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

@@ -82,7 +82,7 @@ Each record is:
 
 Records are concatenated in catalog order; `dataset_id` in the chunk index is the **0-based index** into this list (`0` = first record).
 
-**Additional dtypes (`u8`, `u16`, …):** not on the v1 wire today. Planned under [Phase 9 — Dtypes & file health](../GETTING_STARTED.md#phase-9--dtypes--file-health-later) (tag assignment, writers, convert, query execution). Layout v2 is reserved for changes that cannot extend v1.
+**Additional dtypes (`u8`, `u16`, …):** not on the v1 wire today. Planned under [Phase 8 — Dtypes & file health](../GETTING_STARTED.md#phase-8--dtypes--file-health-next) (tag assignment, writers, convert, query execution). Layout v2 is reserved for changes that cannot extend v1.
 
 ### Axis metadata (Phase 7 baseline)
 
@@ -95,7 +95,7 @@ v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis name
 
 Do **not** conflate them:
 
-- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON (Phase 8) instead of `"mean": 0`.
+- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON (Phase 9) instead of `"mean": 0`.
 - **Coordinate label** — “index 42 along **time** is **2024-03-15**” → enables slice/filter by value, alignment across datasets, and (with extra ops) group-by keys.
 
 **Analogues:** NetCDF dimension name vs coordinate variable; pandas `Index.name` vs `Index` values; xarray `dims` vs `coords`.
@@ -201,13 +201,13 @@ See also [`query_engine.md`](query_engine.md) for how the query engine materiali
 
 When superblock **`flags & 1`**, the file may end with a self-describing footer **after** all chunk payloads:
 
-| Region (suffix at EOF) | Size     | Notes                                                                 |
-| ---------------------- | -------- | --------------------------------------------------------------------- |
-| `history_json`         | variable | UTF-8 JSON object: `{"history":[…], "metadata":{…}}` (optional keys). See below. |
+| Region (suffix at EOF) | Size     | Notes                                                                                                                                                                                        |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `history_json`         | variable | UTF-8 JSON object: `{"history":[…], "metadata":{…}}` (optional keys). See below.                                                                                                             |
 | `metadata_spill`       | variable | Optional raw UTF-8 JSON for `metadata` when inline `history_json` would exceed **64 KiB**; referenced by `metadata_ref` in `history_json`. Lies after chunk payloads, before `history_json`. |
-| `history_json_len`     | 8        | `u64` LE byte length of `history_json`.                               |
-| `history_version`      | 4        | `u32` LE; must be **1**.                                              |
-| magic                  | 4        | ASCII **`THST`**.                                                     |
+| `history_json_len`     | 8        | `u64` LE byte length of `history_json`.                                                                                                                                                      |
+| `history_version`      | 4        | `u32` LE; must be **1**.                                                                                                                                                                     |
+| magic                  | 4        | ASCII **`THST`**.                                                                                                                                                                            |
 
 Chunk payload validation uses **`file_len − footer_suffix`** (footer JSON + tail + optional `metadata_spill`). Readers without history support ignore the flag and treat the full file length as payload bounds only when the flag is **0**. `tet info` / [`read_tet_summary_v1`](../src/catalog/mod.rs) surface parsed `history` and resolved `metadata`.
 
