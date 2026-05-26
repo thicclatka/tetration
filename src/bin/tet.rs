@@ -13,8 +13,12 @@ mod info;
 mod qhist;
 #[path = "tet/query.rs"]
 mod query;
+#[path = "tet/repair.rs"]
+mod repair;
 #[path = "tet/util.rs"]
 mod util;
+#[path = "tet/verify.rs"]
+mod verify;
 
 use std::process::ExitCode;
 
@@ -26,7 +30,9 @@ use convert::run_convert;
 use info::{InfoRunOpts, run_info};
 use qhist::run_qhist;
 use query::{QueryRunOpts, run_query};
+use repair::{RepairRunOpts, run_repair};
 use util::{cli_error, read_query_payload, resolve_stdout};
+use verify::{VerifyRunOpts, run_verify};
 
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
@@ -82,6 +88,31 @@ fn run(cli: Cli) -> Result<(), String> {
             })
         }
         Commands::Qhist(args) => run_qhist(args.cmd, args.clear),
+        Commands::Verify {
+            path,
+            json,
+            quiet,
+            repair,
+        } => {
+            let opts = VerifyRunOpts {
+                path,
+                json,
+                quiet,
+                repair,
+            };
+            run_verify(&opts)
+        }
+        Commands::Repair {
+            path,
+            json,
+            dry_run,
+            apply,
+        } => run_repair(RepairRunOpts {
+            path,
+            json,
+            dry_run,
+            apply,
+        }),
         Commands::Convert {
             input,
             output,

@@ -94,6 +94,34 @@ pub enum Commands {
         #[arg(long, requires = "execute", requires = "tet")]
         spill_allow: Vec<PathBuf>,
     },
+    /// Verify a `.tet` file (layout, catalog, chunk index, payloads, footer).
+    Verify {
+        /// Path to `.tet` file.
+        path: PathBuf,
+        /// Pretty JSON report (automation / CI).
+        #[arg(long)]
+        json: bool,
+        /// One-line summary on stdout.
+        #[arg(short = 'q', long, conflicts_with = "json")]
+        quiet: bool,
+        /// After verify, apply safe in-place repairs (see `tet repair`).
+        #[arg(long)]
+        repair: bool,
+    },
+    /// Plan or apply in-place repairs (default: plan from verify recommendations).
+    Repair {
+        /// Path to `.tet` file.
+        path: PathBuf,
+        /// Pretty JSON (plan or repair report).
+        #[arg(long)]
+        json: bool,
+        /// Recommendation codes to apply (repeatable).
+        #[arg(long = "apply", value_name = "CODE")]
+        apply: Vec<String>,
+        /// Show what would change without writing the file (with `--apply`).
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Convert HDF5 / `NetCDF` / Zarr v3 directory store into `.tet` (format from input extension or sniff).
     Convert {
         /// Source array file (`.h5`/`.hdf5`/`.hdf`/`.he2`/`.he5`, `.nc`/`.netcdf`/`.nc4`/`.nc3`/`.cdf`, Zarr v3 directory with root `zarr.json`, or recognizable signature).

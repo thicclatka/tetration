@@ -164,8 +164,8 @@ tet info data.tet --json | jq '.summary.datasets'
 
 Baseline today: [`validate_chunk_payloads`](src/catalog/index.rs) when building a summary ([`read_tet_summary_v1`](src/catalog/mod.rs)); no dedicated CLI.
 
-- [ ] **`tet verify <path.tet>`** — human-readable report (exit non-zero on failure); `--json` for automation.
-- [ ] **Library API** — e.g. `verify_tet_file` returning structured errors (superblock, catalog, index spans, footer).
+- [x] **`tet verify <path.tet>`** — findings + recommendations; `--json` / `-q`; [`verify_tet_file`](src/verify/mod.rs).
+- [x] **Library API** — [`tetration::verify`](src/verify/mod.rs): layout parse, chunk decode integrity (≤128 chunks deep), footer validation.
 - [ ] **Index vs payloads** — walk all chunk entries: offsets, `stored_byte_len`, codec, in-bounds payloads; optional sequential-order check.
 - [ ] **Footer** — `THST` bounds, `metadata` / `history` JSON validation against [`MetadataLimitsV1`](src/catalog/metadata.rs); spilled `metadata_ref` regions.
 - [ ] **Optional deep checks** — spot-decode random raw/zstd tiles; catalog/tensor byte-length consistency per dataset.

@@ -1,0 +1,119 @@
+//! `tet verify` / [`verify_tet_file`] integration tests.
+
+use std::process::Command;
+
+use crate::catalog::{FooterBlobV1, TetMetadataV1, write_footer_blob};
+use crate::verify::{format_verify_quiet, format_verify_text, verify_tet_bytes, verify_tet_file};
+
+use super::fixture::index_patch::{self, ENTRY_PAYLOAD_OFFSET};
+use super::fixture::write_multichunk_2x3_tiles;
+
+fn tet_verify_command(tet_path: &std::path::Path) -> Command {
+    let path_arg = tet_path.to_str().expect("utf-8 path");
+    if let Ok(exe) = std::env::var("CARGO_BIN_EXE_tet") {
+        let mut cmd = Command::new(exe);
+        cmd.args(["verify", path_arg]);
+        return cmd;
+    }
+    let mut cmd = Command::new(env!("CARGO"));
+    cmd.args(["run", "--quiet", "--bin", "tet", "--", "verify", path_arg]);
+    cmd
+}
+
+#[test]
+fn verify_ok_on_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ok.tet");
+    write_multichunk_2x3_tiles(&path, "temperature");
+
+    let report = verify_tet_file(&path).unwrap();
+    assert!(report.ok, "{:?}", report.findings);
+    assert!(
+        report
+            .summary
+            .as_ref()
+            .is_some_and(|s| s.dataset_count == 1)
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.check == "chunk_decode" && f.ok)
+    );
+
+    let text = format_verify_text(&report);
+    assert!(text.contains("status: ok"));
+}
+
+#[test]
+fn verify_quiet_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("q.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let data = std::fs::read(&path).unwrap();
+    let report = verify_tet_bytes(&data, Some(&path));
+    let line = format_verify_quiet(&report);
+    assert!(line.contains("status=ok"));
+}
+
+#[test]
+fn verify_fails_on_bad_payload_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    index_patch::patch_first_index_entry_u64(&path, ENTRY_PAYLOAD_OFFSET, u64::MAX);
+
+    let report = verify_tet_file(&path).unwrap();
+    assert!(!report.ok);
+    assert!(
+        report.findings.iter().any(|f| !f.ok),
+        "{:?}",
+        report.findings
+    );
+    assert!(!report.recommendations.is_empty());
+    assert!(
+        report.recommendations.iter().all(|r| {
+            r.fix.as_ref().is_none_or(|f| {
+                f.command
+                    .as_deref()
+                    .is_none_or(|c| !c.contains("tet repair"))
+            })
+        }),
+        "non-repairable issues should not get tet repair commands"
+    );
+}
+
+#[test]
+fn verify_ok_with_footer_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("footer.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1::default()),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+
+    let report = verify_tet_file(&path).unwrap();
+    assert!(report.ok);
+    assert!(report.summary.as_ref().is_some_and(|s| s.history_footer));
+}
+
+#[test]
+fn tet_verify_binary_smoke() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("smoke.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let out = tet_verify_command(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("status: ok"));
+}

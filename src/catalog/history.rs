@@ -507,8 +507,7 @@ pub fn payload_file_len(data: &[u8], flags: u32) -> Result<u64, CatalogError> {
     let spill_len = serde_json::from_slice::<FooterBlobWire>(&data[json_start..json_end])
         .ok()
         .and_then(|w| w.metadata_ref)
-        .map(|r| usize::try_from(r.len).unwrap_or(usize::MAX))
-        .unwrap_or(0);
+        .map_or(0, |r| usize::try_from(r.len).unwrap_or(usize::MAX));
     let suffix = footer
         .checked_add(spill_len)
         .ok_or(CatalogError::InvalidWriteSpec("footer spill overflow"))?;

@@ -17,7 +17,7 @@
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
 - **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import** — `tet convert` from HDF5, NetCDF, Zarr v3 directory stores.
-- **CLI** — `tet info`, `tet query`, `tet qhist`, `tet convert`.
+- **CLI** — `tet info`, `tet verify`, `tet query`, `tet qhist`, `tet convert`.
 
 Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`**.
 
@@ -68,6 +68,7 @@ export PATH="$PWD/target/release:$PATH"   # or: alias tet="$PWD/target/release/t
 tet convert volume.h5 volume.tet          # HDF5 / NetCDF / Zarr v3 → .tet
 
 tet info volume.tet
+tet verify volume.tet
 tet query '{"dataset":"<name>","mean":[]}' -t volume.tet -x -q   # <name> from info output
 ```
 
@@ -88,6 +89,7 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 | Command                                        | Alias  | Role                                                       |
 | ---------------------------------------------- | ------ | ---------------------------------------------------------- |
 | [`tet info`](#tet-info) `<path.tet>`           | —      | Summarize a file (default: dataset table)                  |
+| [`tet verify`](#tet-verify) `<path.tet>`       | —      | Layout health check (exit 1 on failure); `--json` / `-q`   |
 | [`tet query`](#tet-query) `[QUERY]`            | `q`    | Validate JSON; optional catalog + execute against `-t`     |
 | [`tet qhist`](#tet-qhist) `[list\|run]`        | `hist` | Recent queries (platform cache; **not** the `.tet` footer) |
 | [`tet convert`](#tet-convert) `<in> <out.tet>` | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                           |
@@ -103,6 +105,16 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 | `--layout` / `--execution` / `--datasets` / `--chunks` / `--history` | One section each (`--history` = convert footer; not `qhist`)      |
 | `-n`, `--limit N`                                                    | Max chunk rows with `--chunks` or `--all` (default 32; `0` = all) |
 | `--dataset`, `--grep`                                                | Case-insensitive filters on dataset name (and dtype for `--grep`) |
+
+### `tet verify`
+
+| Flag        | Effect                                      |
+| ----------- | ------------------------------------------- |
+| _(default)_ | Human-readable check list + summary         |
+| `--json`    | Pretty JSON [`TetVerifyReport`](src/verify/report.rs) |
+| `-q`        | One line (`status=ok` / `failed`)           |
+
+Exit code **1** when verification fails (CI-friendly).
 
 ### `tet query`
 

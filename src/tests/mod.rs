@@ -13,6 +13,8 @@ mod layout_roundtrip;
 mod metadata;
 mod query;
 mod reduction;
+mod repair;
 mod session;
 mod utils;
 mod variance_simd;
+mod verify;

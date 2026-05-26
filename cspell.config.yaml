@@ -14,6 +14,7 @@ words:
   - ddof
   - DTYPE
   - elems
+  - Embedder
   - embedders
   - hyperslab
   - hyperslabs
@@ -23,6 +24,7 @@ words:
   - maturin
   - mdformat
   - memcpy
+  - metas
   - metno
   - movehl
   - multichunk

@@ -202,10 +202,10 @@ fn take_commit_prepared(datasets: Vec<SessionDataset>) -> Vec<CommitPrepared> {
 }
 
 /// In-memory rows from [`CommitPrepared`] as [`RawArrayWrite`] refs (raw codec).
-fn memory_raw_writes<'a>(
-    prepared: &'a [CommitPrepared],
+fn memory_raw_writes(
+    prepared: &[CommitPrepared],
     file_execution: Option<FileExecutionSettingsV1>,
-) -> Vec<RawArrayWrite<'a>> {
+) -> Vec<RawArrayWrite<'_>> {
     prepared
         .iter()
         .filter_map(|d| {
@@ -223,11 +223,11 @@ fn memory_raw_writes<'a>(
 }
 
 /// [`ArrayWriteMeta`] rows; `streaming_only` skips in-memory datasets.
-fn commit_array_metas<'a>(
-    prepared: &'a [CommitPrepared],
+fn commit_array_metas(
+    prepared: &[CommitPrepared],
     file_execution: Option<FileExecutionSettingsV1>,
     streaming_only: bool,
-) -> Vec<ArrayWriteMeta<'a>> {
+) -> Vec<ArrayWriteMeta<'_>> {
     prepared
         .iter()
         .filter(|d| !streaming_only || d.data.is_none())

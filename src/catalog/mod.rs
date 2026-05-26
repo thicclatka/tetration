@@ -36,8 +36,8 @@ pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
 pub(crate) use history::rewrite_footer_bytes_for_test;
 pub use history::{
     FooterBlobV1, HistoryEvent, HistoryEventV1, HistoryFooterWireV1, MetadataBlobRefV1,
-    append_convert_history, append_history_events, read_footer_blob, read_metadata,
-    unix_timestamp_now, write_footer_blob,
+    append_convert_history, append_history_events, payload_file_len, read_footer_blob,
+    read_metadata, unix_timestamp_now, write_footer_blob,
 };
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
 pub use metadata::{
@@ -52,6 +52,13 @@ pub use stream_write::{
 };
 pub use tile::{chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided};
 pub use write::{write_multi_raw_array_file, write_one_chunk_raw_file, write_raw_array_file};
+
+/// Verify APIs moved to [`crate::verify`]; re-exported for compatibility.
+pub use crate::verify::{
+    TetVerifyReport, VerifyFinding, VerifyFixHint, VerifyRecommendation, VerifySeverity,
+    VerifySummary, format_verify_json, format_verify_quiet, format_verify_text, verify_tet_bytes,
+    verify_tet_file,
+};
 
 /// v1 chunk payload codec wire tags (`u32` values written per chunk in the index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
