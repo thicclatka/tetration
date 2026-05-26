@@ -4,7 +4,9 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::catalog::{FooterBlobV1, TetMetadataV1, write_footer_blob};
-use crate::verify::{format_verify_quiet, format_verify_text, verify_tet_bytes, verify_tet_file};
+use crate::verify::{
+    VerifyOptions, format_verify_quiet, format_verify_text, verify_tet_bytes, verify_tet_file,
+};
 
 use super::fixture::index_patch::{self, ENTRY_PAYLOAD_OFFSET};
 use super::fixture::write_multichunk_2x3_tiles;
@@ -52,6 +54,12 @@ fn verify_ok_on_fixture() {
             .iter()
             .any(|f| f.check == "chunk_decode" && f.ok)
     );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.check == "dataset_tensor_bytes" && f.ok)
+    );
 
     let text = format_verify_text(&report);
     assert!(text.contains("status: ok"));
@@ -63,7 +71,7 @@ fn verify_quiet_line() {
     let path = dir.path().join("q.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let data = std::fs::read(&path).unwrap();
-    let report = verify_tet_bytes(&data, Some(&path));
+    let report = verify_tet_bytes(&data, Some(&path), VerifyOptions::default());
     let line = format_verify_quiet(&report);
     assert!(line.contains("status=ok"));
 }
@@ -92,6 +100,47 @@ fn verify_fails_on_bad_payload_offset() {
             })
         }),
         "non-repairable issues should not get tet repair commands"
+    );
+}
+
+#[test]
+fn verify_fails_on_tile_raw_byte_len_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("raw.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    index_patch::patch_first_index_entry_raw_and_stored(&path, 4, 4);
+
+    let report = verify_tet_file(&path).unwrap();
+    assert!(!report.ok);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.check == "dataset_tensor_bytes" && !f.ok),
+        "{:?}",
+        report.findings
+    );
+}
+
+#[test]
+fn verify_deep_decode_option_on_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("deep.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let data = std::fs::read(&path).unwrap();
+    let report = verify_tet_bytes(
+        &data,
+        Some(&path),
+        VerifyOptions {
+            deep_decode: true,
+        },
+    );
+    assert!(report.ok);
+    assert!(
+        report
+            .summary
+            .as_ref()
+            .is_some_and(|s| s.deep_chunk_decode)
     );
 }
 

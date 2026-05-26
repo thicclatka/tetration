@@ -156,9 +156,11 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Session / writer API** — [`TetWriterSession`](src/catalog/session.rs) queues attrs / `dim_names` / `coords`, optional [`push_history_event`](src/catalog/session.rs) (default `write` + path on commit when empty); footer flush on `commit` / `commit_with_fill`.
 - [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
-## Phase 8 — Dtypes & file health (in progress)
+## Phase 8 — Dtypes & file health (done)
 
 **Goal:** **`tet verify`** / **`tet repair`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
+
+**Baseline (May 2026):** file health + wire tags `1`–`7` (`f32`–`i16`); booleans import as **`u8`**. Follow-ups (`u32`, `f16`, integer SIMD) are optional stretch, not blocking Phase 9.
 
 ### File health / verification
 
@@ -167,7 +169,8 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Library API** — [`tetration::verify`](src/verify/mod.rs): layout parse, chunk index/payload checks, decode integrity (≤128 chunks deep), footer + [`MetadataLimitsV1`](src/catalog/metadata.rs) on resolved metadata (incl. spill).
 - [x] **Index vs payloads** — in-bounds payloads (parse + decode walk), duplicate offsets, optional contiguous-order warning.
 - [x] **CI / tests** — [`src/tests/verify_fixtures.rs`](src/tests/verify_fixtures.rs); `assert_tet_verify_ok` after convert helpers in [`src/tests/convert.rs`](src/tests/convert.rs) (`cargo test --all-features`).
-- [ ] **Optional deep checks** — full-file decode (today capped at 128 chunks); per-dataset catalog/tensor byte-length cross-check.
+- [x] **Deep decode** — `tet verify --deep` / [`VerifyOptions::deep_decode`](src/verify/options.rs) decodes every chunk; default samples first [`DEEP_DECODE_MAX_CHUNKS`](src/verify/chunks.rs) (128) on larger files.
+- [x] **Dataset tensor bytes** — per-dataset chunk grid count + per-tile `raw_byte_len` + sum vs logical tensor size ([`check_dataset_tensor_bytes`](src/verify/datasets.rs)).
 
 ### Element dtypes (wire + execution)
 
@@ -178,7 +181,7 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (tag `5`), **`u16`**
 - [x] **Convert** — HDF5 signed/unsigned 8/16-bit + `Boolean`→`u8`; NetCDF `byte`/`short`/`ushort`; Zarr `int8`/`uint8`/`bool`→`u8`, `int16`/`uint16`.
 - [x] **Query** — materialize, streaming fold, tier-A/B/C, spill, dtype-matched previews (`u8_preview`, `u16_preview`, `i16_preview`).
 - [x] **Tests** — catalog roundtrip, query sum/preview, verify fixture gate per tag.
-- [ ] **More dtypes (`u32`, `f16`, …)** — repeat checklist when needed.
+- [ ] **More dtypes (`u32`, `f16`, …)** — optional stretch; repeat the wire-tag checklist when needed.
 - [ ] **SIMD / fast paths** — optional bulk kernels where ROI is clear (integer tags stay scalar-first today).
 
 ## Phase 9 — Query ops & interchange (later)
@@ -282,8 +285,8 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 7. ~~**Rust embedder workflows (Phase 7):** examples + session API.~~ **Done**
 8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**
-10. **File health (Phase 8):** done — `tet verify` / `tet repair` + [`verify_fixtures`](src/tests/verify_fixtures.rs) on writer/convert outputs.
-11. ~~**Dtypes (Phase 8):** additional wire tags through write → query smoke.~~ **Done** — `u8`/`u16`/`i16` (tags `5`–`7`); booleans import as `u8`; wider ints (`u32`, …) remain.
+10. ~~**File health (Phase 8):** `tet verify` / `tet repair` + verify fixtures.~~ **Done** — includes `--deep` decode and dataset tensor byte cross-check.
+11. ~~**Dtypes (Phase 8):** additional wire tags through write → query smoke.~~ **Done** — `u8`/`u16`/`i16` (tags `5`–`7`); booleans import as `u8`.
 12. **Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.
 13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
 14. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

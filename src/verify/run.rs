@@ -8,12 +8,18 @@ use super::chunks::{
     check_chunk_dataset_ids, check_chunk_decode, check_duplicate_payload_offsets,
     check_payload_order,
 };
+use super::datasets::check_dataset_tensor_bytes;
 use super::footer::{check_dataset_count, check_footer, check_footer_metadata_limits};
+use super::options::VerifyOptions;
 use super::report::{TetVerifyReport, VerifySummary, ok_finding};
 
 /// Verify a mapped `.tet` byte slice.
 #[must_use]
-pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>) -> TetVerifyReport {
+pub fn verify_tet_bytes(
+    data: &[u8],
+    path: Option<&Path>,
+    opts: VerifyOptions,
+) -> TetVerifyReport {
     let file_len = u64::try_from(data.len()).unwrap_or(u64::MAX);
     let path_s = path.map(|p| p.display().to_string());
 
@@ -49,6 +55,22 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>) -> TetVerifyReport {
     }
     findings.push(ok_finding("chunk_dataset_ids", None));
 
+    findings.extend(check_dataset_tensor_bytes(
+        &summary.datasets,
+        &summary.chunks,
+    ));
+    if findings.iter().any(|f| f.check == "dataset_tensor_bytes" && !f.ok) {
+        return TetVerifyReport {
+            ok: false,
+            path: path_s,
+            file_len,
+            findings,
+            recommendations: Vec::new(),
+            summary: None,
+        }
+        .finalize();
+    }
+
     if let Some(f) = check_duplicate_payload_offsets(&summary.chunks) {
         findings.push(f);
     }
@@ -57,7 +79,8 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>) -> TetVerifyReport {
         findings.push(f);
     }
 
-    let (decode_findings, deep_decode) = check_chunk_decode(data, &summary.chunks);
+    let (decode_findings, deep_decode) =
+        check_chunk_decode(data, &summary.chunks, opts.deep_decode);
     findings.extend(decode_findings);
 
     if let Some(f) = check_dataset_count(&summary) {
@@ -134,6 +157,18 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>) -> TetVerifyReport {
 ///
 /// Returns [`CatalogError::Io`] when the file cannot be read.
 pub fn verify_tet_file(path: &Path) -> Result<TetVerifyReport, CatalogError> {
+    verify_tet_file_with_options(path, VerifyOptions::default())
+}
+
+/// Verify with explicit [`VerifyOptions`] (e.g. [`VerifyOptions::deep_decode`]).
+///
+/// # Errors
+///
+/// Returns [`CatalogError::Io`] when the file cannot be read.
+pub fn verify_tet_file_with_options(
+    path: &Path,
+    opts: VerifyOptions,
+) -> Result<TetVerifyReport, CatalogError> {
     let data = std::fs::read(path)?;
-    Ok(verify_tet_bytes(&data, Some(path)))
+    Ok(verify_tet_bytes(&data, Some(path), opts))
 }

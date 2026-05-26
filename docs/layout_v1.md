@@ -82,7 +82,7 @@ Each record is:
 
 Records are concatenated in catalog order; `dataset_id` in the chunk index is the **0-based index** into this list (`0` = first record).
 
-**Additional dtypes (`u32`, `f16`, …):** beyond the integer tags above, planned under [Phase 8 — Dtypes & file health](../GETTING_STARTED.md#phase-8--dtypes--file-health-in-progress). Layout v2 is reserved for changes that cannot extend v1. **Booleans** are not a separate wire tag: import maps HDF5 `Boolean`, Zarr `bool`, and similar to **`u8`** (0/1).
+**Additional dtypes (`u32`, `f16`, …):** optional stretch beyond tags `1`–`7` (see [GETTING_STARTED.md](../GETTING_STARTED.md#phase-8--dtypes--file-health-done)). Layout v2 is reserved for changes that cannot extend v1. **Booleans** are not a separate wire tag: import maps HDF5 `Boolean`, Zarr `bool`, and similar to **`u8`** (0/1).
 
 ### Axis metadata (Phase 7 baseline)
 

@@ -93,12 +93,14 @@ fn run(cli: Cli) -> Result<(), String> {
             json,
             quiet,
             repair,
+            deep,
         } => {
             let opts = VerifyRunOpts {
                 path,
                 json,
                 quiet,
                 repair,
+                deep,
             };
             run_verify(&opts)
         }

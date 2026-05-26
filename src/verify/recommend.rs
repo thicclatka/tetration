@@ -98,7 +98,7 @@ fn recommendation_for_finding(f: &VerifyFinding) -> Option<VerifyRecommendation>
             code: "run_deep_verify".to_owned(),
             message: "Not all chunks were decode-checked (large file).".to_owned(),
             fix: Some(VerifyFixHint {
-                summary: "Re-run with deep decode when a library API adds that mode, or spot-check with query execute."
+                summary: "Re-run with `tet verify --deep` or VerifyOptions { deep_decode: true }."
                     .to_owned(),
                 command: None,
             }),

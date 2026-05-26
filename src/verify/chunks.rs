@@ -60,16 +60,17 @@ pub(crate) fn check_duplicate_payload_offsets(
 pub(crate) fn check_chunk_decode(
     data: &[u8],
     chunks: &[ChunkIndexEntryV1],
+    deep_decode: bool,
 ) -> (Vec<VerifyFinding>, bool) {
     let mut findings = Vec::new();
-    let deep = chunks.len() <= DEEP_DECODE_MAX_CHUNKS;
+    let deep = deep_decode || chunks.len() <= DEEP_DECODE_MAX_CHUNKS;
     let to_check: Vec<usize> = if deep {
         (0..chunks.len()).collect()
     } else {
         findings.push(warn_finding(
             "chunk_decode_skipped",
             format!(
-                "decode-check skipped for chunks {}..{} (limit {DEEP_DECODE_MAX_CHUNKS}); structural checks only",
+                "decode-check skipped for chunks {}..{} (limit {DEEP_DECODE_MAX_CHUNKS}); re-run with --deep or VerifyOptions::deep_decode",
                 DEEP_DECODE_MAX_CHUNKS,
                 chunks.len()
             ),
