@@ -22,8 +22,7 @@ pub(crate) fn run_verify(opts: &VerifyRunOpts) -> Result<(), String> {
     let verify_opts = VerifyOptions {
         deep_decode: opts.deep,
     };
-    let mut report =
-        verify_tet_file_with_options(&opts.path, verify_opts).map_err(cli_error)?;
+    let mut report = verify_tet_file_with_options(&opts.path, verify_opts).map_err(cli_error)?;
     if opts.repair && !report.ok {
         let repair_report =
             repair_from_verify_report(&opts.path, &report, false).map_err(cli_error)?;

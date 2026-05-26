@@ -15,11 +15,7 @@ use super::report::{TetVerifyReport, VerifySummary, ok_finding};
 
 /// Verify a mapped `.tet` byte slice.
 #[must_use]
-pub fn verify_tet_bytes(
-    data: &[u8],
-    path: Option<&Path>,
-    opts: VerifyOptions,
-) -> TetVerifyReport {
+pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>, opts: VerifyOptions) -> TetVerifyReport {
     let file_len = u64::try_from(data.len()).unwrap_or(u64::MAX);
     let path_s = path.map(|p| p.display().to_string());
 
@@ -59,7 +55,10 @@ pub fn verify_tet_bytes(
         &summary.datasets,
         &summary.chunks,
     ));
-    if findings.iter().any(|f| f.check == "dataset_tensor_bytes" && !f.ok) {
+    if findings
+        .iter()
+        .any(|f| f.check == "dataset_tensor_bytes" && !f.ok)
+    {
         return TetVerifyReport {
             ok: false,
             path: path_s,

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use memmap2::{Mmap, MmapMut};
+use memmap2::MmapMut;
 
 use crate::query::types::{ReadPlan, TetError};
 
@@ -11,8 +11,7 @@ use super::super::validate::validate_full_read_plan_buffer;
 fn check_materialized_complete_option<T>(out: &[Option<T>]) -> Result<(), TetError> {
     if out.iter().any(Option::is_none) {
         return Err(TetError::Validation(
-            "materialized selection has unset elements (chunk payloads vs selection mismatch)"
-                .into(),
+            super::super::shared::UNSET_MATERIALIZED_MSG.into(),
         ));
     }
     Ok(())
@@ -86,36 +85,4 @@ where
         .flush()
         .map_err(|e| TetError::Validation(format!("spill mmap flush failed: {e}")))?;
     Ok(total)
-}
-
-pub(crate) fn preview_from_backing_in_memory<T: Copy>(
-    v: &[T],
-    logical_len: usize,
-    max: usize,
-) -> (Vec<T>, bool) {
-    let cap = max.min(logical_len);
-    if cap == 0 {
-        return (Vec::new(), logical_len > 0);
-    }
-    (v[..cap].to_vec(), logical_len > max)
-}
-
-pub(crate) fn preview_from_spill_file_pod<T: bytemuck::Pod + Copy>(
-    path: &Path,
-    cap: usize,
-    logical_len: usize,
-) -> Result<(Vec<T>, bool), TetError> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| TetError::Validation(format!("temp spill read failed: {e}")))?;
-    let mmap = unsafe {
-        Mmap::map(&file)
-            .map_err(|e| TetError::Validation(format!("temp spill mmap failed: {e}")))?
-    };
-    let slice: &[T] = bytemuck::cast_slice(&mmap);
-    if slice.len() < cap {
-        return Err(TetError::Validation(
-            "temp spill shorter than logical selection".into(),
-        ));
-    }
-    Ok((slice[..cap].to_vec(), logical_len > cap))
 }

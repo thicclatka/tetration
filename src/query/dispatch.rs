@@ -55,14 +55,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_f32_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    f32: p,
-                    f32_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::f32_preview(p, t), bytes))
         }
         ElementDtype::F64 => {
             let (p, t, bytes) = if parallel {
@@ -70,14 +63,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_f64_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    f64: p,
-                    f64_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::f64_preview(p, t), bytes))
         }
         ElementDtype::I32 => {
             let (p, t, bytes) = if parallel {
@@ -85,14 +71,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_i32_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    i32: p,
-                    i32_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::i32_preview(p, t), bytes))
         }
         ElementDtype::I64 => {
             let (p, t, bytes) = if parallel {
@@ -100,14 +79,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_i64_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    i64: p,
-                    i64_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::i64_preview(p, t), bytes))
         }
         ElementDtype::U8 => {
             let (p, t, bytes) = if parallel {
@@ -115,14 +87,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_u8_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    u8: p,
-                    u8_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::u8_preview(p, t), bytes))
         }
         ElementDtype::U16 => {
             let (p, t, bytes) = if parallel {
@@ -130,14 +95,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_u16_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    u16: p,
-                    u16_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::u16_preview(p, t), bytes))
         }
         ElementDtype::I16 => {
             let (p, t, bytes) = if parallel {
@@ -145,14 +103,7 @@ pub(crate) fn materialize_for_execution(
             } else {
                 materialize_read_plan_i16_le(mmap, plan, max_elements)?
             };
-            Ok((
-                DecodePreviewBundle {
-                    i16: p,
-                    i16_truncated: t,
-                    ..DecodePreviewBundle::empty()
-                },
-                bytes,
-            ))
+            Ok((DecodePreviewBundle::i16_preview(p, t), bytes))
         }
     }
 }

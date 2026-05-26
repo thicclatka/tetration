@@ -7,17 +7,16 @@ mod macros;
 
 use std::path::Path;
 
-use memmap2::Mmap;
-
 use crate::query::decode::chunk_decode::{
     scatter_chunk_into_plan_i16, scatter_chunk_into_plan_i32, scatter_chunk_into_plan_i64,
     scatter_chunk_into_plan_u8, scatter_chunk_into_plan_u16,
 };
-use crate::query::dispatch::accumulate_chunk_read_bytes;
-use crate::query::engine::spill_policy::TempSpillFile;
-use crate::query::types::{ReadPlan, TetError};
-use crate::utils::dtype::ElementDtype;
-use crate::utils::{i16_le, i32_le, i64_le, u8_le, u16_le};
+use crate::query::{
+    dispatch::accumulate_chunk_read_bytes,
+    engine::spill_policy::TempSpillFile,
+    types::{ReadPlan, TetError},
+};
+use crate::utils::{dtype::ElementDtype, i16_le, i32_le, i64_le, u8_le, u16_le};
 
 use super::parallel::{
     materialize_scatter_fill_parallel_i16, materialize_scatter_fill_parallel_i32,
@@ -26,10 +25,7 @@ use super::parallel::{
 };
 use super::validate::validate_read_plan_geometry;
 
-use core::{
-    materialize_read_plan_int_le_core, preview_from_backing_in_memory, preview_from_spill_file_pod,
-    spill_read_plan_int_le_impl,
-};
+use core::{materialize_read_plan_int_le_core, spill_read_plan_int_le_impl};
 
 pub(crate) use fold::IntVisit;
 pub(crate) use fold::fold_read_plan_scalar_operation_int;
@@ -154,13 +150,5 @@ pub fn spill_read_plan_int_le(
         _ => Err(TetError::Validation(
             "spill_read_plan_int_le requires an integer dtype (i32/i64/u8/u16/i16)".into(),
         )),
-    }
-}
-
-fn mmap_spill(path: &Path) -> Result<Mmap, TetError> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| TetError::Validation(format!("temp spill read failed: {e}")))?;
-    unsafe {
-        Mmap::map(&file).map_err(|e| TetError::Validation(format!("temp spill mmap failed: {e}")))
     }
 }

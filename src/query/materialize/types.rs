@@ -51,4 +51,67 @@ impl DecodePreviewBundle {
             ..Self::default()
         }
     }
+
+    #[must_use]
+    pub(crate) fn f32_preview(values: Vec<f32>, truncated: bool) -> Self {
+        Self {
+            f32: values,
+            f32_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn f64_preview(values: Vec<f64>, truncated: bool) -> Self {
+        Self {
+            f64: values,
+            f64_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn i32_preview(values: Vec<i32>, truncated: bool) -> Self {
+        Self {
+            i32: values,
+            i32_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn i64_preview(values: Vec<i64>, truncated: bool) -> Self {
+        Self {
+            i64: values,
+            i64_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn u8_preview(values: Vec<u8>, truncated: bool) -> Self {
+        Self {
+            u8: values,
+            u8_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn u16_preview(values: Vec<u16>, truncated: bool) -> Self {
+        Self {
+            u16: values,
+            u16_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn i16_preview(values: Vec<i16>, truncated: bool) -> Self {
+        Self {
+            i16: values,
+            i16_truncated: truncated,
+            ..Self::empty()
+        }
+    }
 }

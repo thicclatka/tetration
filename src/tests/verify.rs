@@ -8,8 +8,10 @@ use crate::verify::{
     VerifyOptions, format_verify_quiet, format_verify_text, verify_tet_bytes, verify_tet_file,
 };
 
-use super::fixture::index_patch::{self, ENTRY_PAYLOAD_OFFSET};
-use super::fixture::write_multichunk_2x3_tiles;
+use super::fixture::{
+    index_patch::{self, ENTRY_PAYLOAD_OFFSET},
+    write_multichunk_2x3_tiles,
+};
 
 /// Assert [`verify_tet_file`] passes (used after writer/convert tests — CI gate).
 pub(crate) fn assert_tet_verify_ok(path: &Path) {
@@ -128,20 +130,9 @@ fn verify_deep_decode_option_on_fixture() {
     let path = dir.path().join("deep.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let data = std::fs::read(&path).unwrap();
-    let report = verify_tet_bytes(
-        &data,
-        Some(&path),
-        VerifyOptions {
-            deep_decode: true,
-        },
-    );
+    let report = verify_tet_bytes(&data, Some(&path), VerifyOptions { deep_decode: true });
     assert!(report.ok);
-    assert!(
-        report
-            .summary
-            .as_ref()
-            .is_some_and(|s| s.deep_chunk_decode)
-    );
+    assert!(report.summary.as_ref().is_some_and(|s| s.deep_chunk_decode));
 }
 
 #[test]

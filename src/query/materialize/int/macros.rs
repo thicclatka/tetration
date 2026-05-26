@@ -77,11 +77,10 @@ macro_rules! define_int_materialize {
         /// Same validation failures as [`$read_fn`], plus logical element count or spill byte length
         /// overflow, or I/O or mmap errors on `path`.
         pub fn $spill_fn(mmap: &[u8], plan: &ReadPlan, path: &Path) -> Result<u64, TetError> {
-            let n = plan.logical_f32_element_count;
-            let byte_len = u64::try_from(n)
-                .map_err(|_| TetError::Validation("logical element count overflow".into()))?;
-            let byte_len = $le_mod::bytes_from_elem_count(byte_len)
-                .ok_or_else(|| TetError::Validation("spill byte length overflow".into()))?;
+            let byte_len = $crate::query::materialize::shared::spill_byte_len_from_elem_count(
+                plan.logical_f32_element_count,
+                $le_mod::bytes_from_elem_count,
+            )?;
             spill_read_plan_int_le_impl(mmap, plan, path, byte_len, $scatter_seq)
         }
 
@@ -105,7 +104,7 @@ macro_rules! define_int_materialize {
             cap: usize,
             logical_len: usize,
         ) -> Result<(Vec<$elem>, bool), TetError> {
-            preview_from_spill_file_pod(path, cap, logical_len)
+            $crate::query::materialize::shared::preview_from_spill_file_pod(path, cap, logical_len)
         }
 
         pub(crate) fn $preview_mat_fn(
@@ -114,7 +113,13 @@ macro_rules! define_int_materialize {
             max: usize,
         ) -> Result<(Vec<$elem>, bool), TetError> {
             match backing {
-                $backing::InMemory(v) => Ok(preview_from_backing_in_memory(v, logical_len, max)),
+                $backing::InMemory(v) => Ok(
+                    $crate::query::materialize::shared::preview_from_backing_in_memory(
+                        v,
+                        logical_len,
+                        max,
+                    ),
+                ),
                 $backing::TempSpill(temp) => {
                     $spill_file_fn(temp.path(), max.min(logical_len), logical_len)
                 }
@@ -125,7 +130,7 @@ macro_rules! define_int_materialize {
             match backing {
                 $backing::InMemory(v) => Ok(v.iter().map(|&$v| $promote_inmem).collect()),
                 $backing::TempSpill(temp) => {
-                    let mmap = mmap_spill(temp.path())?;
+                    let mmap = $crate::query::materialize::shared::mmap_spill(temp.path())?;
                     Ok(bytemuck::cast_slice::<u8, $elem>(&mmap)
                         .iter()
                         .map(|&$s| $promote_spill)
