@@ -182,7 +182,7 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (tag `5`), **`u16`**
 - [x] **Query** — materialize, streaming fold, tier-A/B/C, spill, dtype-matched previews (`u8_preview`, `u16_preview`, `i16_preview`).
 - [x] **Tests** — catalog roundtrip, query sum/preview, verify fixture gate per tag.
 - [x] **More dtypes (`u32`, `f16`, `u64`)** — wire tags `8`/`9`/`10`; query materialize/fold, convert (Zarr `float16`/`uint32`/`uint64`, HDF5 unsigned `U4`/`U8`), verify fixtures.
-- [x] **Integer SIMD (bulk sum/var/min-max)** — [`variance_simd.rs`](src/query/fold/variance_simd.rs): `f32`/`f16` (via `f32` chunks), `i32` (SSE2/NEON), `u8`/`u16` (SSE2 unpack), `u32` (SSE4.1), `i64`/`u64` (SSE2 pairs); slab [`push_*_le_bytes`](src/query/fold/reduction.rs) + [`linear_scan.rs`](src/query/fold/linear_scan.rs) for all wire integer/float tags on tier-A/B ops.
+- [x] **Integer SIMD (bulk sum/var/min-max)** — [`variance_simd.rs`](src/query/fold/variance_simd.rs): `f32`/`f16` (via `f32` chunks), `i32` (SSE2/NEON), `u8`/`u16` (SSE2 unpack), `u32`/`i64`/`u64` (SSE2 pairs); slab [`push_*_le_bytes`](src/query/fold/reduction.rs) + [`linear_scan.rs`](src/query/fold/linear_scan.rs) for all wire integer/float tags on tier-A/B ops.
 
 ## Phase 9 — Query ops & interchange (later)
 

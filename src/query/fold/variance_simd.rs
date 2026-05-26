@@ -551,8 +551,17 @@ pub(crate) fn scalar_u32_sum_sumsq(vals: &[u32]) -> (f64, f64) {
 mod u32_arch {
     use std::arch::x86_64::*;
 
-    #[target_feature(enable = "sse4.1")]
-    pub(super) unsafe fn u32_sum_sumsq_sse41(vals: &[u32]) -> (f64, f64) {
+    #[inline]
+    unsafe fn accum_u32_pair(sum: &mut f64, sumsq: &mut f64, pair: u64) {
+        let x0 = (pair & 0xFFFF_FFFF) as f64;
+        let x1 = (pair >> 32) as f64;
+        *sum += x0 + x1;
+        *sumsq += x0 * x0 + x1 * x1;
+    }
+
+    /// SSE2-only: `_mm_cvtepu32_pd` is AVX-512VL and SIGILLs on typical CI hosts.
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn u32_sum_sumsq_sse2(vals: &[u32]) -> (f64, f64) {
         let ptr = vals.as_ptr();
         let len = vals.len();
         let mut sum = 0.0f64;
@@ -560,21 +569,16 @@ mod u32_arch {
         let mut i = 0usize;
         let simd_end = len - (len % 4);
         while i < simd_end {
-            let (lo_arr, hi_arr) = unsafe {
+            // SAFETY: `i` is chunk-aligned; caller ensures `vals.len()` matches the slice.
+            unsafe {
                 let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
-                let lo = _mm_cvtepu32_pd(v);
-                let hi = _mm_cvtepu32_pd(_mm_shuffle_epi32(v, 0xEE));
-                let mut lo_arr = [0.0f64; 2];
-                let mut hi_arr = [0.0f64; 2];
-                _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
-                _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
-                (lo_arr, hi_arr)
-            };
-            sum += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
-            sumsq += lo_arr[0] * lo_arr[0]
-                + lo_arr[1] * lo_arr[1]
-                + hi_arr[0] * hi_arr[0]
-                + hi_arr[1] * hi_arr[1];
+                accum_u32_pair(&mut sum, &mut sumsq, _mm_cvtsi128_si64(v) as u64);
+                accum_u32_pair(
+                    &mut sum,
+                    &mut sumsq,
+                    _mm_cvtsi128_si64(_mm_unpackhi_epi64(v, v)) as u64,
+                );
+            }
             i += 4;
         }
         while i < len {
@@ -595,8 +599,8 @@ pub(crate) fn u32_sum_sumsq(vals: &[u32]) -> (f64, f64) {
     }
     #[cfg(target_arch = "x86_64")]
     {
-        if std::arch::is_x86_feature_detected!("sse4.1") {
-            return unsafe { u32_arch::u32_sum_sumsq_sse41(vals) };
+        if std::arch::is_x86_feature_detected!("sse2") {
+            return unsafe { u32_arch::u32_sum_sumsq_sse2(vals) };
         }
     }
     scalar_u32_sum_sumsq(vals)
