@@ -16,12 +16,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = TetWriterSession::create(&path);
     session.metadata.tool = Some("tetration-example".to_owned());
     session.push_history_event("write", "session_write");
-    session.push_dataset(TetDatasetWrite::f32_row_major(
+    let mut ds = TetDatasetWrite::f32_row_major(
         "temperature",
         &SHAPE,
         &CHUNK_SHAPE,
         f32_tensor_one_to_six(),
-    )?)?;
+    )?;
+    ds.attrs.insert("units".to_owned(), "K".to_owned());
+    session.push_dataset(ds)?;
 
     let path = session.commit()?;
     println!("committed {}", path.display());

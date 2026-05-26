@@ -144,9 +144,9 @@ tet info data.tet --json | jq '.summary.datasets'
 
 - [x] **Rust embedder examples** — `create_and_query`, `inspect_catalog`, `session_write`; run with `cargo run --example …`.
 - [x] **Rust embedder session API (baseline)** — [`TetWriterSession`](src/catalog/session.rs) / [`TetFile`](src/catalog/session.rs), [`execute_query_document`](src/query/execute.rs) / [`execute_query_json`](src/query/execute.rs), [`FileMetadataDraft`](src/catalog/session.rs) (in-memory until wire spec); [`prelude`](src/lib.rs) re-exports; tests in `src/tests/session.rs`.
-- [ ] **Rust embedder create + use (wire)** — append datasets to existing files, persist `FileMetadataDraft`, streaming session over `write_multi_raw_array_streaming`.
-- [ ] **File header metadata** — structured file-level blob (tool + library versions, creation time, optional git commit / hostname); spec in `layout_v1.md`, surfaced in `tet info`.
-- [ ] **Dataset attributes** — per-dataset key/value metadata (units, `long_name`, CF-style attrs, arbitrary JSON-safe strings); read in catalog summary; writers set on create/convert.
+- [ ] **Rust embedder create + use (wire)** — append datasets to existing files; streaming session over `write_multi_raw_array_streaming`.
+- [x] **File header metadata (footer JSON)** — `metadata.file` in `THST` footer (`tool`, `library_version`, `created_at`); [`TetWriterSession::metadata`](src/catalog/session.rs); `tet info` text + `--json`.
+- [x] **Dataset attributes (footer JSON)** — `metadata.datasets[name].attrs` + optional `dim_names`; session flush; [`read_tet_summary_v1`](src/catalog/mod.rs) / `tet info` roundtrip.
 - [ ] **Axis metadata** — **dimension names** (one string per axis, e.g. `time`, `lat`, `lon`) vs **coordinate labels** (one value per index along an axis); see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
 - [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
 - [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 10 bindings wrap the same API).

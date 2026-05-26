@@ -119,6 +119,6 @@ Public API lives under **`tetration::catalog`**, **`tetration::convert`**, **`te
 - **`tet convert`:** richer HDF5/NetCDF metadata (attrs, non-CF edge cases); no other Zarr codecs beyond raw bytes and zstd.
 - **CLI / query UX (Phase 6+):** optional TOML/line-oriented query front-end, optional query `preview` stdout table; **`qhist run --plan`** on saved op rows (needs plan-only path without op gate).
 - **Bindings (Phase 10):** separate Python repo, PyPI rename, pins published `tetration`; convert via `h5py` / `netCDF4` / `zarr` extras — later.
-- **Metadata (Phase 7):** history footer + provenance; **`catalog::session`** (`TetWriterSession`, `TetFile`), **`query::execute_query_*`**, examples `create_and_query` / `inspect_catalog` / `session_write`; **next:** on-disk header/dataset attrs, append + streaming session.
+- **Metadata (Phase 7):** `THST` footer `metadata` JSON (file + dataset attrs/dim_names); **`catalog::session`**, **`query::execute_query_*`**, examples; **next:** append/streaming session, coordinate labels, convert attr import.
 
 When behavior changes, keep **README.md**, **`GETTING_STARTED.md`**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, and this file aligned. New cross-cutting helpers → **`src/utils/`**; query mmap logic → **`src/query/`** (`decode/`, `materialize/`, … — not a flat `engine/` tree).

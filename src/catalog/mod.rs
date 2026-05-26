@@ -6,6 +6,7 @@ mod dataset;
 pub mod execution;
 mod history;
 mod index;
+pub mod metadata;
 pub mod session;
 mod stream_write;
 pub mod tile;
@@ -22,9 +23,13 @@ use crate::utils::wire;
 
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
 pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
-pub use history::{HistoryEventV1, append_convert_history, append_history_events, unix_timestamp_now};
-pub use session::{FileMetadataDraft, TetDatasetWrite, TetFile, TetWriterSession};
+pub use history::{
+    FooterBlobV1, HistoryEventV1, HistoryFooterWireV1, append_convert_history,
+    append_history_events, read_footer_blob, read_metadata, unix_timestamp_now, write_footer_blob,
+};
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
+pub use metadata::{DatasetMetadataV1, FileMetadataV1, MetadataLimitsV1, TetMetadataV1};
+pub use session::{FileMetadataDraft, TetDatasetWrite, TetFile, TetWriterSession};
 pub use stream_write::{
     ArrayWriteMeta, StreamTileJob, StreamWriteProgress, total_chunk_count_for_meta,
     validate_array_write_meta, write_multi_raw_array_streaming,
@@ -210,6 +215,8 @@ pub struct TetFileSummaryV1 {
     pub file_execution: FileExecutionSettingsV1,
     /// Optional provenance/history footer (`[["convert","h5"|"nc","<unix_secs>"], …]`).
     pub history: Vec<HistoryEventV1>,
+    /// Optional `metadata` object from the same `THST` footer JSON.
+    pub metadata: TetMetadataV1,
 }
 
 /// Catalog read, index validation, codec, and writer failures.
@@ -278,6 +285,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
             chunks: Vec::new(),
             file_execution: FileExecutionSettingsV1::default_engine(),
             history: history::read_history(data, flags)?,
+            metadata: history::read_metadata(data, flags)?,
         });
     }
 
@@ -349,6 +357,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
     let payload_len = history::payload_file_len(data, sb.flags)?;
     index::validate_chunk_payloads(&chunks, payload_len)?;
     let history = history::read_history(data, sb.flags)?;
+    let metadata = history::read_metadata(data, sb.flags)?;
 
     Ok(TetFileSummaryV1 {
         superblock: sb,
@@ -356,6 +365,7 @@ pub fn read_tet_summary_v1(data: &[u8]) -> Result<TetFileSummaryV1, CatalogError
         chunks,
         file_execution,
         history,
+        metadata,
     })
 }
 

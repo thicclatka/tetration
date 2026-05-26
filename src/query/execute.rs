@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use crate::query::engine::plan_query_with_tet_mmap_ex;
 use crate::query::engine::spill_policy::SpillPathAllowlist;
-use crate::query::engine::{plan_query_with_tet_mmap_ex};
 use crate::query::types::{QueryDocument, QueryResponse, TetError};
 
 /// Options for [`execute_query_document`].
@@ -33,9 +33,7 @@ impl ExecuteQueryOptions {
     /// Plan + catalog only (same as `tet query` without `-x`).
     #[must_use]
     pub const fn plan_only() -> Self {
-        Self {
-            preview_max: None,
-        }
+        Self { preview_max: None }
     }
 }
 
@@ -56,13 +54,7 @@ pub fn execute_query_json(
 ) -> Result<QueryResponse, TetError> {
     let doc = crate::query::parse_query_json(json)?;
     crate::query::validate_query(&doc)?;
-    execute_query_document(
-        &doc,
-        tet_path,
-        mmap,
-        options,
-        spill_allowlist,
-    )
+    execute_query_document(&doc, tet_path, mmap, options, spill_allowlist)
 }
 
 /// Run a validated [`QueryDocument`] against `mmap` (path echoed as `tet_file` when set).

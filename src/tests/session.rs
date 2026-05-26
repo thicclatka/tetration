@@ -25,12 +25,14 @@ fn writer_session_commit_and_query() {
     let mut session = TetWriterSession::create(&path);
     session.metadata.tool = Some("tetration-test".to_owned());
     session.push_history_event("write", "rust");
-    session
-        .push_dataset(
-            TetDatasetWrite::f32_row_major("temperature", &SHAPE, &CHUNK_SHAPE, f32_one_to_six())
-                .unwrap(),
-        )
-        .unwrap();
+    let mut ds =
+        TetDatasetWrite::f32_row_major("temperature", &SHAPE, &CHUNK_SHAPE, f32_one_to_six())
+            .unwrap();
+    ds.attrs.insert("units".to_owned(), "1".to_owned());
+    ds.attrs
+        .insert("long_name".to_owned(), "demo temperature".to_owned());
+    ds.dim_names = Some(vec!["row".to_owned(), "col".to_owned()]);
+    session.push_dataset(ds).unwrap();
 
     let out = session.commit().unwrap();
     assert_eq!(out, path);
@@ -39,6 +41,20 @@ fn writer_session_commit_and_query() {
     assert_eq!(summary.datasets.len(), 1);
     assert_eq!(summary.history.len(), 1);
     assert_eq!(summary.history[0].0, "write");
+    assert_eq!(
+        summary
+            .metadata
+            .file
+            .as_ref()
+            .and_then(|f| f.tool.as_deref()),
+        Some("tetration-test")
+    );
+    let ds_meta = summary.metadata.datasets.get("temperature").unwrap();
+    assert_eq!(ds_meta.attrs.get("units").map(String::as_str), Some("1"));
+    assert_eq!(
+        ds_meta.dim_names,
+        Some(vec!["row".to_owned(), "col".to_owned()])
+    );
 
     let file = TetFile::open(&path).unwrap();
     let doc = parse_query_json(r#"{"dataset":"temperature","mean":[]}"#).unwrap();

@@ -45,7 +45,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ExecuteQueryOptions::execute_no_preview(),
         None,
     )?;
-    println!("{}", format_query_response(&response, QueryOutputFormat::Quiet)?);
+    println!(
+        "{}",
+        format_query_response(&response, QueryOutputFormat::Quiet)?
+    );
 
     Ok(())
 }

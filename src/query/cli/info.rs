@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::catalog::{
     CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, DatasetRecordV1,
-    FileExecutionSettingsV1, HistoryEventV1, TetFileSummaryV1,
+    FileExecutionSettingsV1, HistoryEventV1, TetFileSummaryV1, TetMetadataV1,
 };
 use crate::layout::SuperblockV1;
 
@@ -202,9 +202,14 @@ pub fn format_info_text(
     }
     if sections.datasets {
         out.push('\n');
+        if let Some(file_meta) = &filtered.metadata.file {
+            out.push_str(&format_file_metadata_section(file_meta));
+            out.push('\n');
+        }
         out.push_str(&format_datasets_table(
             &filtered.datasets,
             &filtered.chunks,
+            &filtered.metadata,
             filter,
         ));
     }
@@ -251,12 +256,34 @@ fn filtered_summary(
             Some(ch)
         })
         .collect();
+    let metadata = filter_metadata_for_datasets(&summary.metadata, &datasets);
     TetFileSummaryV1 {
         superblock: summary.superblock.clone(),
         datasets,
         chunks,
         file_execution: summary.file_execution,
         history: summary.history.clone(),
+        metadata,
+    }
+}
+
+fn filter_metadata_for_datasets(
+    meta: &TetMetadataV1,
+    datasets: &[DatasetRecordV1],
+) -> TetMetadataV1 {
+    let names: std::collections::HashSet<&str> = datasets.iter().map(|d| d.name.as_str()).collect();
+    let datasets: std::collections::BTreeMap<_, _> = meta
+        .datasets
+        .iter()
+        .filter(|(k, _)| names.contains(k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if meta.file.is_none() && datasets.is_empty() {
+        return TetMetadataV1::default();
+    }
+    TetMetadataV1 {
+        file: meta.file.clone(),
+        datasets,
     }
 }
 
@@ -293,9 +320,25 @@ fn format_execution_section(ex: FileExecutionSettingsV1) -> String {
     out
 }
 
+fn format_file_metadata_section(file: &crate::catalog::FileMetadataV1) -> String {
+    let mut out = String::new();
+    out.push_str("file metadata:\n");
+    if let Some(tool) = &file.tool {
+        let _ = writeln!(out, "  tool: {tool}");
+    }
+    if let Some(ver) = &file.library_version {
+        let _ = writeln!(out, "  library_version: {ver}");
+    }
+    if let Some(at) = &file.created_at {
+        let _ = writeln!(out, "  created_at: {at}");
+    }
+    out
+}
+
 fn format_datasets_table(
     datasets: &[DatasetRecordV1],
     chunks: &[ChunkIndexEntryV1],
+    metadata: &TetMetadataV1,
     filter: Option<&InfoListFilter>,
 ) -> String {
     let mut out = String::new();
@@ -325,6 +368,14 @@ fn format_datasets_table(
             shape_label(&ds.chunk_shape),
             n_chunks
         );
+        if let Some(ds_meta) = metadata.datasets.get(&ds.name) {
+            if let Some(dim_names) = &ds_meta.dim_names {
+                let _ = writeln!(out, "       dim_names: {}", dim_names.join(", "));
+            }
+            for (k, v) in &ds_meta.attrs {
+                let _ = writeln!(out, "       {k}: {v}");
+            }
+        }
     }
     out
 }

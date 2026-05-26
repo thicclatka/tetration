@@ -7,8 +7,8 @@ mod decode;
 mod dispatch;
 mod document;
 mod document_wire;
-mod execute;
 pub(crate) mod engine;
+mod execute;
 pub(crate) mod fold;
 pub(crate) mod materialize;
 mod plan;
@@ -25,7 +25,6 @@ pub use cli::{
     list_cli_query_history, parse_history_execute_filter,
 };
 pub use document::{QueryLimits, parse_query_json, validate_query};
-pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 #[doc(hidden)]
 pub use engine::TempSpillFile;
 pub use engine::{
@@ -37,6 +36,7 @@ pub use engine::{
     plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, planned_chunk_mmap_slices,
     spill_read_plan_f32_le, spill_read_plan_i32_le, spill_read_plan_i64_le,
 };
+pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 pub use types::{
     AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionHints, Operation,
     OutputHint, OutputHints, PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryResponse,

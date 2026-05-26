@@ -201,7 +201,7 @@ When superblock **`flags & 1`**, the file may end with a self-describing footer 
 
 | Region (suffix at EOF) | Size     | Notes                                                                 |
 | ---------------------- | -------- | --------------------------------------------------------------------- |
-| `history_json`         | variable | UTF-8 JSON object: `{"history":[["convert","h5","<unix_secs>"], …]}`. |
+| `history_json`         | variable | UTF-8 JSON object: `{"history":[["convert","h5","<unix_secs>"], …], "metadata":{…}}` (optional `metadata` key, Phase 7). |
 | `history_json_len`     | 8        | `u64` LE byte length of `history_json`.                               |
 | `history_version`      | 4        | `u32` LE; must be **1**.                                              |
 | magic                  | 4        | ASCII **`THST`**.                                                     |

@@ -10,6 +10,7 @@ mod convert;
 mod fixture;
 mod fold;
 mod layout_roundtrip;
+mod metadata;
 mod query;
 mod reduction;
 mod session;
