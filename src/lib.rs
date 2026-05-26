@@ -16,7 +16,8 @@ pub mod query;
 /// Common embedder imports: query document types, parse/validate/plan, mmap open.
 pub mod prelude {
     pub use crate::catalog::{
-        FileMetadataDraft, TetDatasetWrite, TetFile, TetWriterSession, read_tet_summary_v1,
+        FileMetadataDraft, StreamTileJob, TetDatasetStreamSpec, TetDatasetWrite, TetFile,
+        TetWriterSession, read_tet_summary_v1,
     };
     pub use crate::layout::{MAGIC, mmap_file_read};
     pub use crate::query::{

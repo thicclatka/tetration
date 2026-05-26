@@ -1,7 +1,8 @@
 //! Embedder-oriented create / open helpers (Phase 7).
 //!
 //! [`TetWriterSession`] buffers datasets and optional history rows, then writes one `.tet` on
-//! [`TetWriterSession::commit`]. [`TetFile`] keeps the backing file open for mmap query execution.
+//! [`TetWriterSession::commit`] (in-memory tensors) or [`TetWriterSession::commit_with_fill`]
+//! (streaming tiles). [`TetFile`] keeps the backing file open for mmap query execution.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -10,14 +11,17 @@ use std::path::{Path, PathBuf};
 use memmap2::Mmap;
 
 use crate::layout::{self, SuperblockV1, mmap_file_read};
+use crate::utils::dtype::ElementDtype;
 
 use super::dataset::RawArrayWrite;
 use super::execution::FileExecutionSettingsV1;
 use super::history::{self, FooterBlobV1, HistoryEventV1, write_footer_blob};
 use super::metadata::{DatasetMetadataV1, FileMetadataV1, TetMetadataV1};
+use super::stream_write::{ArrayWriteMeta, StreamTileJob, write_multi_raw_array_streaming};
+use super::tile;
 use super::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, DatasetRecordV1, TetFileSummaryV1,
-    read_tet_summary_v1, write_multi_raw_array_file,
+    read_tet_summary_v1, validate_array_write_meta, write_multi_raw_array_file,
 };
 
 /// In-memory dataset queued for [`TetWriterSession::commit`].
@@ -71,25 +75,101 @@ impl TetDatasetWrite {
     }
 }
 
-/// Draft file-level metadata; mapped into [`FileMetadataV1`] on [`TetWriterSession::commit`].
+/// Streaming dataset spec: geometry + footer metadata only (tile bytes supplied at commit).
+#[derive(Debug, Clone)]
+pub struct TetDatasetStreamSpec {
+    pub name: String,
+    pub dtype: u32,
+    pub shape: Vec<u64>,
+    pub chunk_shape: Vec<u64>,
+    pub attrs: BTreeMap<String, String>,
+    pub dim_names: Option<Vec<String>>,
+}
+
+impl TetDatasetStreamSpec {
+    /// Row-major `f32` grid with raw chunk codec (**0**); validate shape/chunk grid only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError`] when `shape` / `chunk_shape` are inconsistent.
+    pub fn f32_row_major(
+        name: impl Into<String>,
+        shape: &[u64],
+        chunk_shape: &[u64],
+    ) -> Result<Self, CatalogError> {
+        let name = name.into();
+        let meta = ArrayWriteMeta {
+            name: &name,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            shape,
+            chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        };
+        validate_array_write_meta(&meta)?;
+        Ok(Self {
+            name,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            shape: shape.to_vec(),
+            chunk_shape: chunk_shape.to_vec(),
+            attrs: BTreeMap::new(),
+            dim_names: None,
+        })
+    }
+}
+
+/// Draft file-level metadata; mapped into [`FileMetadataV1`] on commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileMetadataDraft {
     pub tool: Option<String>,
     pub library_version: Option<String>,
 }
 
-/// Buffered writer: queue datasets and history, flush on [`Self::commit`].
+#[derive(Debug, Clone)]
+enum SessionDataset {
+    InMemory(TetDatasetWrite),
+    Streaming(TetDatasetStreamSpec),
+}
+
+impl SessionDataset {
+    fn name(&self) -> &str {
+        match self {
+            Self::InMemory(d) => &d.name,
+            Self::Streaming(d) => &d.name,
+        }
+    }
+
+    fn attrs(&self) -> &BTreeMap<String, String> {
+        match self {
+            Self::InMemory(d) => &d.attrs,
+            Self::Streaming(d) => &d.attrs,
+        }
+    }
+
+    fn dim_names(&self) -> &Option<Vec<String>> {
+        match self {
+            Self::InMemory(d) => &d.dim_names,
+            Self::Streaming(d) => &d.dim_names,
+        }
+    }
+
+    fn is_streaming(&self) -> bool {
+        matches!(self, Self::Streaming(_))
+    }
+}
+
+/// Buffered writer: queue datasets and history, flush on commit.
 #[derive(Debug, Clone)]
 pub struct TetWriterSession {
     path: PathBuf,
-    datasets: Vec<TetDatasetWrite>,
+    datasets: Vec<SessionDataset>,
     history: Vec<HistoryEventV1>,
     file_execution: Option<FileExecutionSettingsV1>,
     pub metadata: FileMetadataDraft,
 }
 
 impl TetWriterSession {
-    /// New session targeting `path` (file is created on [`Self::commit`], truncating any prior file).
+    /// New session targeting `path` (file is created on commit, truncating any prior file).
     #[must_use]
     pub fn create(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -118,7 +198,7 @@ impl TetWriterSession {
         self
     }
 
-    /// Queue a dataset (validated immediately).
+    /// Queue an in-memory dataset (validated immediately).
     ///
     /// # Errors
     ///
@@ -135,7 +215,29 @@ impl TetWriterSession {
             file_execution: None,
         };
         super::dataset::validate_raw_array_write(&spec)?;
-        self.datasets.push(dataset);
+        self.datasets.push(SessionDataset::InMemory(dataset));
+        Ok(())
+    }
+
+    /// Queue a streaming dataset (geometry validated; tile bytes supplied in [`Self::commit_with_fill`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError`] when the write spec is invalid.
+    pub fn push_dataset_streaming(
+        &mut self,
+        spec: TetDatasetStreamSpec,
+    ) -> Result<(), CatalogError> {
+        let meta = ArrayWriteMeta {
+            name: &spec.name,
+            dtype: spec.dtype,
+            shape: &spec.shape,
+            chunk_shape: &spec.chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        };
+        validate_array_write_meta(&meta)?;
+        self.datasets.push(SessionDataset::Streaming(spec));
         Ok(())
     }
 
@@ -143,6 +245,10 @@ impl TetWriterSession {
     pub fn push_history_event(&mut self, op: impl Into<String>, source: impl Into<String>) {
         self.history
             .push((op.into(), source.into(), history::unix_timestamp_now()));
+    }
+
+    fn has_streaming(&self) -> bool {
+        self.datasets.iter().any(SessionDataset::is_streaming)
     }
 
     fn build_footer_metadata(&self) -> Result<Option<TetMetadataV1>, CatalogError> {
@@ -160,12 +266,12 @@ impl TetWriterSession {
             });
         }
         for ds in &self.datasets {
-            if ds.attrs.is_empty() && ds.dim_names.is_none() {
+            if ds.attrs().is_empty() && ds.dim_names().is_none() {
                 continue;
             }
-            let entry = meta.dataset_mut(&ds.name);
-            entry.attrs = ds.attrs.clone();
-            entry.dim_names.clone_from(&ds.dim_names)
+            let entry = meta.dataset_mut(ds.name());
+            entry.attrs = ds.attrs().clone();
+            entry.dim_names.clone_from(ds.dim_names());
         }
         if meta.file.is_none() && meta.datasets.is_empty() {
             return Ok(None);
@@ -174,41 +280,164 @@ impl TetWriterSession {
         Ok(Some(meta))
     }
 
-    /// Write the `.tet` and optional `THST` footer (history + metadata); returns the output path.
+    fn flush_footer(&self, metadata: Option<TetMetadataV1>) -> Result<(), CatalogError> {
+        if !self.history.is_empty() || metadata.is_some() {
+            write_footer_blob(
+                &self.path,
+                &FooterBlobV1 {
+                    history: self.history.clone(),
+                    metadata,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Write the `.tet` when every queued dataset is in-memory.
+    ///
+    /// Streaming datasets require [`Self::commit_with_fill`].
     ///
     /// # Errors
     ///
-    /// Returns [`CatalogError`] when no datasets were queued, layout validation fails, or I/O fails.
+    /// Returns [`CatalogError`] when no datasets were queued, a streaming dataset is present,
+    /// layout validation fails, or I/O fails.
     pub fn commit(self) -> Result<PathBuf, CatalogError> {
         if self.datasets.is_empty() {
             return Err(CatalogError::InvalidWriteSpec(
                 "TetWriterSession: at least one dataset is required",
             ));
         }
+        if self.has_streaming() {
+            return Err(CatalogError::InvalidWriteSpec(
+                "TetWriterSession: streaming datasets require commit_with_fill",
+            ));
+        }
         let specs: Vec<RawArrayWrite<'_>> = self
             .datasets
             .iter()
-            .map(|d| RawArrayWrite {
+            .map(|d| {
+                let d = match d {
+                    SessionDataset::InMemory(w) => w,
+                    SessionDataset::Streaming(_) => unreachable!(),
+                };
+                RawArrayWrite {
+                    name: &d.name,
+                    dtype: d.dtype,
+                    shape: &d.shape,
+                    chunk_shape: &d.chunk_shape,
+                    chunk_codec: d.chunk_codec,
+                    data: &d.data,
+                    file_execution: self.file_execution,
+                }
+            })
+            .collect();
+        write_multi_raw_array_file(&self.path, &specs)?;
+        self.flush_footer(self.build_footer_metadata()?)?;
+        Ok(self.path)
+    }
+
+    /// Write the `.tet`, filling streaming tiles via `fill` (raw codec only).
+    ///
+    /// In-memory datasets are sliced automatically; `fill` is invoked only for
+    /// [`TetDatasetStreamSpec`] entries. When every dataset is in-memory, behaves like
+    /// [`Self::commit`] and ignores `fill`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError`] when no datasets were queued, layout validation fails, `fill`
+    /// fails, or I/O fails.
+    pub fn commit_with_fill<F>(
+        mut self,
+        parallel_jobs: usize,
+        fill: F,
+    ) -> Result<PathBuf, CatalogError>
+    where
+        F: Fn(&StreamTileJob<'_>, &mut [u8]) -> Result<(), CatalogError> + Sync + Send,
+    {
+        if self.datasets.is_empty() {
+            return Err(CatalogError::InvalidWriteSpec(
+                "TetWriterSession: at least one dataset is required",
+            ));
+        }
+        if !self.has_streaming() {
+            return self.commit();
+        }
+
+        let footer_metadata = self.build_footer_metadata()?;
+
+        struct Prepared {
+            name: String,
+            dtype: u32,
+            shape: Vec<u64>,
+            chunk_shape: Vec<u64>,
+            data: Option<Vec<u8>>,
+        }
+
+        let file_execution = self.file_execution;
+        let mut prepared: Vec<Prepared> = Vec::with_capacity(self.datasets.len());
+        for ds in std::mem::take(&mut self.datasets) {
+            match ds {
+                SessionDataset::InMemory(w) => prepared.push(Prepared {
+                    name: w.name,
+                    dtype: w.dtype,
+                    shape: w.shape,
+                    chunk_shape: w.chunk_shape,
+                    data: Some(w.data),
+                }),
+                SessionDataset::Streaming(s) => prepared.push(Prepared {
+                    name: s.name,
+                    dtype: s.dtype,
+                    shape: s.shape,
+                    chunk_shape: s.chunk_shape,
+                    data: None,
+                }),
+            }
+        }
+
+        let metas: Vec<ArrayWriteMeta<'_>> = prepared
+            .iter()
+            .map(|d| ArrayWriteMeta {
                 name: &d.name,
                 dtype: d.dtype,
                 shape: &d.shape,
                 chunk_shape: &d.chunk_shape,
-                chunk_codec: d.chunk_codec,
-                data: &d.data,
-                file_execution: self.file_execution,
+                chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+                file_execution,
             })
             .collect();
-        write_multi_raw_array_file(&self.path, &specs)?;
-        let metadata = self.build_footer_metadata()?;
-        if !self.history.is_empty() || metadata.is_some() {
-            write_footer_blob(
-                &self.path,
-                &FooterBlobV1 {
-                    history: self.history,
-                    metadata,
-                },
-            )?;
-        }
+
+        write_multi_raw_array_streaming(
+            &self.path,
+            &metas,
+            parallel_jobs,
+            |job, buf| {
+                let ds = &prepared[job.dataset_id];
+                if let Some(data) = &ds.data {
+                    let elem = ElementDtype::try_from_wire_tag(ds.dtype).ok_or(
+                        CatalogError::InvalidWriteSpec("unsupported dataset dtype tag"),
+                    )?;
+                    let tile = tile::extract_tile_row_major(
+                        data,
+                        &ds.shape,
+                        &ds.chunk_shape,
+                        &job.chunk_coord[..job.ndim],
+                        job.ndim,
+                        elem.elem_size(),
+                    )?;
+                    if tile.len() != buf.len() {
+                        return Err(CatalogError::InvalidWriteSpec(
+                            "in-memory tile length mismatch for chunk",
+                        ));
+                    }
+                    buf.copy_from_slice(&tile);
+                    Ok(())
+                } else {
+                    fill(job, buf)
+                }
+            },
+            None,
+        )?;
+        self.flush_footer(footer_metadata)?;
         Ok(self.path)
     }
 }

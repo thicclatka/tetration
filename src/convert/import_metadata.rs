@@ -81,11 +81,14 @@ pub(crate) fn hdf5_dataset_attrs(ds: &hdf5_metno::Dataset) -> BTreeMap<String, S
 
 #[cfg(feature = "tetration-hdf5")]
 fn hdf5_attr_string(ds: &hdf5_metno::Dataset, name: &str) -> Option<String> {
-    use hdf5_metno::types::VarLenUnicode;
+    use hdf5_metno::types::{VarLenAscii, VarLenUnicode};
 
     let attr = ds.attr(name).ok()?;
     let reader = attr.as_reader();
     if let Ok(s) = reader.read_scalar::<VarLenUnicode>() {
+        return non_empty_string(s.as_str().to_owned());
+    }
+    if let Ok(s) = reader.read_scalar::<VarLenAscii>() {
         return non_empty_string(s.as_str().to_owned());
     }
     if let Ok(f) = reader.read_scalar::<f32>() {

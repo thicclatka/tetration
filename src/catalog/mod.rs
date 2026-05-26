@@ -29,7 +29,9 @@ pub use history::{
 };
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
 pub use metadata::{DatasetMetadataV1, FileMetadataV1, MetadataLimitsV1, TetMetadataV1};
-pub use session::{FileMetadataDraft, TetDatasetWrite, TetFile, TetWriterSession};
+pub use session::{
+    FileMetadataDraft, TetDatasetStreamSpec, TetDatasetWrite, TetFile, TetWriterSession,
+};
 pub use stream_write::{
     ArrayWriteMeta, StreamTileJob, StreamWriteProgress, total_chunk_count_for_meta,
     validate_array_write_meta, write_multi_raw_array_streaming,

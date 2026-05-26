@@ -39,6 +39,10 @@ path = "examples/inspect_catalog.rs"
 name = "session_write"
 path = "examples/session_write.rs"
 
+[[example]]
+name = "streaming_write"
+path = "examples/streaming_write.rs"
+
 [dependencies]
 bytemuck = "1.25.0"
 clap = { version = "4.5.51", features = ["derive"] }
