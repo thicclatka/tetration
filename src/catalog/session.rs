@@ -13,7 +13,7 @@ use memmap2::Mmap;
 use super::dataset::RawArrayWrite;
 use super::execution::FileExecutionSettingsV1;
 use super::history::{self, FooterBlobV1, HistoryEventV1, write_footer_blob};
-use super::metadata::{DatasetMetadataV1, FileMetadataV1, TetMetadataV1};
+use super::metadata::{CoordAxisV1, DatasetMetadataV1, FileMetadataV1, TetMetadataV1};
 use super::stream_write::{ArrayWriteMeta, StreamTileJob, write_multi_raw_array_streaming};
 use super::tile;
 use super::{
@@ -34,8 +34,10 @@ pub struct TetDatasetWrite {
     pub data: Vec<u8>,
     /// CF-style string attributes persisted in the footer `metadata` object.
     pub attrs: BTreeMap<String, String>,
-    /// Optional dimension names (`ndim` strings). Axis label maps (`coords`) are import-only today.
+    /// Optional dimension names (`ndim` strings).
     pub dim_names: Option<Vec<String>>,
+    /// Optional per-axis index labels (axis name → label list).
+    pub coords: Option<BTreeMap<String, CoordAxisV1>>,
 }
 
 impl TetDatasetWrite {
@@ -70,6 +72,7 @@ impl TetDatasetWrite {
             data,
             attrs: BTreeMap::new(),
             dim_names: None,
+            coords: None,
         })
     }
 }
@@ -83,6 +86,7 @@ pub struct TetDatasetStreamSpec {
     pub chunk_shape: Vec<u64>,
     pub attrs: BTreeMap<String, String>,
     pub dim_names: Option<Vec<String>>,
+    pub coords: Option<BTreeMap<String, CoordAxisV1>>,
 }
 
 impl TetDatasetStreamSpec {
@@ -113,6 +117,7 @@ impl TetDatasetStreamSpec {
             chunk_shape: chunk_shape.to_vec(),
             attrs: BTreeMap::new(),
             dim_names: None,
+            coords: None,
         })
     }
 }
@@ -149,6 +154,13 @@ impl SessionDataset {
         match self {
             Self::InMemory(d) => d.dim_names.as_ref(),
             Self::Streaming(d) => d.dim_names.as_ref(),
+        }
+    }
+
+    fn coords(&self) -> Option<&BTreeMap<String, CoordAxisV1>> {
+        match self {
+            Self::InMemory(d) => d.coords.as_ref(),
+            Self::Streaming(d) => d.coords.as_ref(),
         }
     }
 
@@ -388,14 +400,8 @@ impl TetWriterSession {
         &mut self,
         spec: TetDatasetStreamSpec,
     ) -> Result<(), CatalogError> {
-        let meta = ArrayWriteMeta {
-            name: &spec.name,
-            dtype: spec.dtype,
-            shape: &spec.shape,
-            chunk_shape: &spec.chunk_shape,
-            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-            file_execution: None,
-        };
+        let meta =
+            ArrayWriteMeta::row_major(&spec.name, spec.dtype, &spec.shape, &spec.chunk_shape, None);
         validate_array_write_meta(&meta)?;
         self.ensure_unique_dataset_name(&spec.name)?;
         self.datasets.push(SessionDataset::Streaming(spec));
@@ -436,17 +442,24 @@ impl TetWriterSession {
             });
         }
         for ds in &self.datasets {
-            if DatasetMetadataV1::import_is_empty(ds.attrs(), ds.dim_names(), None) {
+            if DatasetMetadataV1::import_is_empty(ds.attrs(), ds.dim_names(), ds.coords()) {
                 continue;
             }
             meta.dataset_mut(ds.name())
-                .apply_import(ds.attrs(), ds.dim_names(), None);
+                .apply_import(ds.attrs(), ds.dim_names(), ds.coords());
         }
         if meta.file.is_none() && meta.datasets.is_empty() {
             return Ok(None);
         }
         meta.validate()?;
         Ok(Some(meta))
+    }
+
+    fn ensure_default_history(&mut self) {
+        if self.history.is_empty() {
+            let source = self.path.display().to_string();
+            self.push_history_event("write", source);
+        }
     }
 
     fn flush_footer(&self, metadata: Option<TetMetadataV1>) -> Result<(), CatalogError> {
@@ -470,7 +483,8 @@ impl TetWriterSession {
     ///
     /// Returns [`CatalogError`] when no datasets were queued, a streaming dataset is present,
     /// layout validation fails, or I/O fails.
-    pub fn commit(self) -> Result<PathBuf, CatalogError> {
+    pub fn commit(mut self) -> Result<PathBuf, CatalogError> {
+        self.ensure_default_history();
         if self.datasets.is_empty() {
             return Err(CatalogError::InvalidWriteSpec(
                 "TetWriterSession: at least one dataset is required",
@@ -538,6 +552,7 @@ impl TetWriterSession {
             return self.commit();
         }
 
+        self.ensure_default_history();
         let footer_metadata = self.build_footer_metadata()?;
         let file_execution = self.file_execution;
         let prepared = take_commit_prepared(std::mem::take(&mut self.datasets));

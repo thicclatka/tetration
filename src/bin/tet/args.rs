@@ -18,7 +18,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Summarize a `.tet` file (default: dataset table). Use `--json` for full dump.
+    /// Summarize a `.tet` file (default: dataset table; footer attrs under rows when present).
+    /// Use `--json` for full dump; `--metadata` for coordinate label previews.
     Info {
         /// Path to `.tet` file.
         path: PathBuf,
@@ -52,9 +53,12 @@ pub enum Commands {
         /// Case-insensitive substring on dataset name.
         #[arg(long)]
         dataset: Option<String>,
-        /// Case-insensitive substring on dataset name or dtype.
+        /// Case-insensitive substring on dataset name, dtype, or footer metadata.
         #[arg(long)]
         grep: Option<String>,
+        /// Verbose footer metadata under dataset rows (coordinate label previews).
+        #[arg(long)]
+        metadata: bool,
     },
     /// Run a JSON query (plan, execute, or both).
     ///

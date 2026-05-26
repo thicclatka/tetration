@@ -5,10 +5,13 @@ use std::{
     process::Command,
 };
 
-use crate::catalog::read_tet_summary_v1;
+use crate::catalog::{
+    DatasetMetadataV1, FooterBlobV1, TetMetadataV1, read_tet_summary_v1, write_footer_blob,
+};
 use crate::layout::mmap_file_read;
 use crate::query::{
-    InfoListFilter, InfoViewSections, format_info_json, format_info_quiet, format_info_text,
+    InfoListFilter, InfoMetadataDisplay, InfoViewSections, format_info_json, format_info_quiet,
+    format_info_text,
 };
 
 use super::fixture::write_multichunk_2x3_tiles;
@@ -49,11 +52,100 @@ fn info_default_table_lists_datasets() {
         None,
         InfoViewSections::default_table(),
         32,
+        InfoMetadataDisplay::WhenPresent,
     );
     assert!(text.contains("datasets:"));
     assert!(text.contains("a"));
     assert!(text.contains("f32"));
     assert!(!text.contains("\"superblock\""));
+}
+
+#[test]
+fn info_default_shows_footer_metadata_under_dataset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meta.tet");
+    write_multichunk_2x3_tiles(&path, "temperature");
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1 {
+                file: None,
+                datasets: [(
+                    "temperature".to_owned(),
+                    DatasetMetadataV1 {
+                        attrs: [("units".to_owned(), "K".to_owned())].into_iter().collect(),
+                        dim_names: Some(vec!["y".to_owned(), "x".to_owned()]),
+                        coords: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }),
+        },
+    )
+    .unwrap();
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    let text = format_info_text(
+        Some(&path),
+        mmap.len() as u64,
+        &summary,
+        None,
+        InfoViewSections::default_table(),
+        32,
+        InfoMetadataDisplay::WhenPresent,
+    );
+    assert!(text.contains("dim_names: y, x"));
+    assert!(text.contains("units: K"));
+}
+
+#[test]
+fn info_grep_matches_footer_attrs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("grep_meta.tet");
+    write_multichunk_2x3_tiles(&path, "temperature");
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1 {
+                file: None,
+                datasets: [(
+                    "temperature".to_owned(),
+                    DatasetMetadataV1 {
+                        attrs: [("units".to_owned(), "Kelvin".to_owned())]
+                            .into_iter()
+                            .collect(),
+                        dim_names: None,
+                        coords: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            }),
+        },
+    )
+    .unwrap();
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
+    let filter = InfoListFilter {
+        dataset: None,
+        grep: Some("kelvin".to_owned()),
+    };
+    let text = format_info_text(
+        Some(&path),
+        mmap.len() as u64,
+        &summary,
+        Some(&filter),
+        InfoViewSections::default_table(),
+        32,
+        InfoMetadataDisplay::WhenPresent,
+    );
+    assert!(text.contains("temperature"));
+    assert!(text.contains("units: Kelvin"));
 }
 
 #[test]
@@ -87,6 +179,7 @@ fn info_grep_filters_datasets() {
         Some(&filter),
         InfoViewSections::default_table(),
         32,
+        InfoMetadataDisplay::WhenPresent,
     );
     assert!(text.contains("temperature"));
     assert!(text.contains("filter: grep~temp"));

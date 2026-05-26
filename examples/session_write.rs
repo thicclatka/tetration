@@ -4,7 +4,9 @@
 //! cargo run --example session_write
 //! ```
 
-use tetration::catalog::{TetDatasetWrite, TetFile, TetWriterSession};
+use std::collections::BTreeMap;
+
+use tetration::catalog::{CoordAxisV1, TetDatasetWrite, TetFile, TetWriterSession};
 use tetration::prelude::*;
 
 const SHAPE: [u64; 2] = [2, 3];
@@ -23,6 +25,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         f32_tensor_one_to_six(),
     )?;
     ds.attrs.insert("units".to_owned(), "K".to_owned());
+    ds.dim_names = Some(vec!["row".to_owned(), "col".to_owned()]);
+    let mut coords = BTreeMap::new();
+    coords.insert(
+        "row".to_owned(),
+        CoordAxisV1 {
+            labels: vec!["r0".to_owned(), "r1".to_owned()],
+        },
+    );
+    ds.coords = Some(coords);
     session.push_dataset(ds)?;
 
     let path = session.commit()?;

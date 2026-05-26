@@ -1,7 +1,10 @@
 //! Phase 7 embedder session + execute helpers.
 
+use std::collections::BTreeMap;
+
 use crate::catalog::{
-    TetDatasetStreamSpec, TetDatasetWrite, TetFile, TetWriterSession, read_tet_summary_v1,
+    CoordAxisV1, TetDatasetStreamSpec, TetDatasetWrite, TetFile, TetWriterSession,
+    read_tet_summary_v1,
 };
 use crate::query::{
     ExecuteQueryOptions, QueryOutputFormat, execute_query_document, format_query_response,
@@ -34,6 +37,14 @@ fn writer_session_commit_and_query() {
     ds.attrs
         .insert("long_name".to_owned(), "demo temperature".to_owned());
     ds.dim_names = Some(vec!["row".to_owned(), "col".to_owned()]);
+    let mut coords = BTreeMap::new();
+    coords.insert(
+        "row".to_owned(),
+        CoordAxisV1 {
+            labels: vec!["r0".to_owned(), "r1".to_owned()],
+        },
+    );
+    ds.coords = Some(coords);
     session.push_dataset(ds).unwrap();
 
     let out = session.commit().unwrap();
@@ -57,6 +68,8 @@ fn writer_session_commit_and_query() {
         ds_meta.dim_names,
         Some(vec!["row".to_owned(), "col".to_owned()])
     );
+    let row_coords = ds_meta.coords.as_ref().unwrap().get("row").unwrap();
+    assert_eq!(row_coords.labels, ["r0", "r1"]);
 
     let file = TetFile::open(&path).unwrap();
     let doc = parse_query_json(r#"{"dataset":"temperature","mean":[]}"#).unwrap();
@@ -71,6 +84,23 @@ fn writer_session_commit_and_query() {
     .unwrap();
     let line = format_query_response(&response, QueryOutputFormat::Quiet).unwrap();
     assert!(line.contains("mean=3.5"), "{line}");
+}
+
+#[test]
+fn writer_session_default_history_on_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auto_history.tet");
+    let mut session = TetWriterSession::create(&path);
+    session
+        .push_dataset(
+            TetDatasetWrite::f32_row_major("x", &SHAPE, &CHUNK_SHAPE, f32_one_to_six()).unwrap(),
+        )
+        .unwrap();
+    session.commit().unwrap();
+    let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history[0].0, "write");
+    assert_eq!(summary.history[0].1, path.display().to_string());
 }
 
 #[test]
@@ -156,7 +186,9 @@ fn writer_session_append_second_dataset() {
 
     let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(summary.datasets.len(), 2);
-    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history.len(), 2);
+    assert_eq!(summary.history[0].0, "write");
+    assert_eq!(summary.history[1].0, "append");
     assert_eq!(
         summary.metadata.datasets["humidity"]
             .attrs
