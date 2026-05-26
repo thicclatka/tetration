@@ -36,10 +36,12 @@ words:
   - rkyv
   - rustdoc
   - storeu
+  - subslices
   - sumsq
   - TETR
   - Tetration
   - thiserror
+  - THST
   - TIDX
   - trunc
   - vaddvq

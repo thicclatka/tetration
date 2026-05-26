@@ -236,10 +236,7 @@ fn fold_window_i64(
     if matches!(kind, ReductionKind::Count) {
         acc.push_f64_le_bytes(window, kind);
     } else {
-        let vals: &[i64] = bytemuck::cast_slice(window);
-        for &v in vals {
-            acc.push_f64(v as f64);
-        }
+        acc.push_i64_le_bytes(window, kind);
     }
     if preview.is_empty() {
         false
@@ -477,10 +474,7 @@ fn fold_window_u16(
     if matches!(kind, ReductionKind::Count) {
         acc.push_f32_le_bytes(window, kind);
     } else {
-        let vals: &[u16] = bytemuck::cast_slice(window);
-        for &v in vals {
-            acc.push_f64(f64::from(v));
-        }
+        acc.push_u16_le_bytes(window, kind);
     }
     if preview.is_empty() {
         false
@@ -500,10 +494,7 @@ fn fold_window_i16(
     if matches!(kind, ReductionKind::Count) {
         acc.push_f32_le_bytes(window, kind);
     } else {
-        let vals: &[i16] = bytemuck::cast_slice(window);
-        for &v in vals {
-            acc.push_f64(f64::from(v));
-        }
+        acc.push_i16_le_bytes(window, kind);
     }
     if preview.is_empty() {
         false
@@ -653,10 +644,7 @@ fn fold_window_u32(
     if matches!(kind, ReductionKind::Count) {
         acc.push_f32_le_bytes(window, kind);
     } else {
-        let vals: &[u32] = bytemuck::cast_slice(window);
-        for &v in vals {
-            acc.push_f64(f64::from(v));
-        }
+        acc.push_u32_le_bytes(window, kind);
     }
     if preview.is_empty() {
         false
@@ -714,10 +702,7 @@ fn fold_window_u64(
     if matches!(kind, ReductionKind::Count) {
         acc.push_f64_le_bytes(window, kind);
     } else {
-        let vals: &[u64] = bytemuck::cast_slice(window);
-        for &v in vals {
-            acc.push_f64(v as f64);
-        }
+        acc.push_u64_le_bytes(window, kind);
     }
     if preview.is_empty() {
         false
