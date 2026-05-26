@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::query::fold::{
     FoldPlanOutcome,
     fold_policy::FoldIoPolicy,
-    partial_fold::{
+    partial::{
         fold_read_plan_partial_operation, fold_read_plan_partial_operation_f64,
         fold_read_plan_partial_operation_int,
     },

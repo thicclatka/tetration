@@ -9,7 +9,7 @@ use super::merge::{
 use super::preview::{write_disjoint_preview_f32, write_disjoint_preview_f64};
 use super::workers::with_fold_workers;
 use crate::query::decode;
-use crate::query::fold::{partial_fold, partial_geometry, reduction, shared};
+use crate::query::fold::{partial, partial_geometry, reduction, shared};
 use crate::query::types::{OperationPreviewFields, ReadPlan, TetError};
 
 #[derive(Copy, Clone)]
@@ -136,12 +136,7 @@ fn parallel_partial_arg(
             .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
     }
     Ok(PartialParallelWork {
-        operation: partial_fold::partial_arg_fields(
-            ctx.kind,
-            ctx.n,
-            &ctx.layout.out_shape,
-            &merged,
-        ),
+        operation: partial::partial_arg_fields(ctx.kind, ctx.n, &ctx.layout.out_shape, &merged),
         total_bytes,
         saw_any,
     })
@@ -188,7 +183,7 @@ fn parallel_partial_value(
     }
     let reduced: Vec<f64> = merged.iter().map(|c| c.finish_f64(ctx.kind)).collect();
     Ok(PartialParallelWork {
-        operation: partial_fold::partial_fields(
+        operation: partial::partial_fields(
             ctx.kind,
             ctx.n,
             &ctx.layout.out_shape,

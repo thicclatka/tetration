@@ -1,8 +1,8 @@
 //! Merge per-chunk parallel fold accumulators.
 
+use crate::query::dispatch;
 use crate::query::fold::{partial_geometry, reduction};
 use crate::query::types::{OperationPreviewFields, TetError};
-use crate::query::{decode, dispatch};
 
 pub(crate) struct ScalarChunkWork {
     pub bytes: u64,
@@ -78,13 +78,4 @@ pub(crate) fn merge_partial_arg_cells(
     }
 }
 
-pub(crate) fn reduced_cell_index(
-    li: usize,
-    shape: &[u64],
-    layout: &partial_geometry::PartialAxisLayout,
-) -> Result<(usize, u64), TetError> {
-    let coords = decode::indexing::coords_from_linear_row_major(li, shape)?;
-    let oi = partial_geometry::reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-    let fi = partial_geometry::fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
-    Ok((oi, fi))
-}
+pub(crate) use partial_geometry::reduced_cell_index;
