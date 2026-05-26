@@ -2,6 +2,7 @@
 //!
 //! See `docs/layout_v1.md` for byte layout after the 32-byte superblock.
 
+mod append;
 mod dataset;
 pub mod execution;
 mod history;
@@ -21,6 +22,9 @@ use thiserror::Error;
 use crate::layout::{self, SuperblockV1};
 use crate::utils::wire;
 
+pub use append::{
+    append_multi_mixed, append_multi_raw_array_file, append_multi_raw_array_streaming,
+};
 pub use dataset::{DatasetRecordV1, RawArrayWrite};
 pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
 pub use history::{
@@ -28,7 +32,9 @@ pub use history::{
     append_history_events, read_footer_blob, read_metadata, unix_timestamp_now, write_footer_blob,
 };
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
-pub use metadata::{DatasetMetadataV1, FileMetadataV1, MetadataLimitsV1, TetMetadataV1};
+pub use metadata::{
+    CoordAxisV1, DatasetMetadataV1, FileMetadataV1, MetadataLimitsV1, TetMetadataV1,
+};
 pub use session::{
     FileMetadataDraft, TetDatasetStreamSpec, TetDatasetWrite, TetFile, TetWriterSession,
 };

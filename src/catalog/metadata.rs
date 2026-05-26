@@ -19,6 +19,10 @@ pub struct MetadataLimitsV1 {
     pub attr_string_bytes: usize,
     /// Max axis dimension names (`ndim` strings).
     pub dim_names: usize,
+    /// Max coordinate axes per dataset in `coords`.
+    pub coord_axes: usize,
+    /// Max index labels per coordinate axis (inline storage).
+    pub coord_labels_per_axis: usize,
 }
 
 impl MetadataLimitsV1 {
@@ -29,7 +33,16 @@ impl MetadataLimitsV1 {
         dataset_attrs: 64,
         attr_string_bytes: 1024,
         dim_names: 8,
+        coord_axes: 8,
+        coord_labels_per_axis: 64,
     };
+}
+
+/// Inline coordinate index labels for one axis (Phase 7 baseline).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CoordAxisV1 {
+    pub labels: Vec<String>,
 }
 
 /// File-level metadata (tool, library version, creation time).
@@ -52,6 +65,8 @@ pub struct DatasetMetadataV1 {
     pub attrs: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dim_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coords: Option<BTreeMap<String, CoordAxisV1>>,
 }
 
 /// Footer `metadata` object: file header fields + per-dataset map.
@@ -122,6 +137,24 @@ impl TetMetadataV1 {
                 }
                 for d in dim_names {
                     validate_attr_string(d, "metadata dim_name", limits.attr_string_bytes)?;
+                }
+            }
+            if let Some(coords) = &ds.coords {
+                if coords.len() > limits.coord_axes {
+                    return Err(CatalogError::InvalidWriteSpec(
+                        "metadata coords exceeds coord_axes limit",
+                    ));
+                }
+                for (axis, c) in coords {
+                    validate_attr_string(axis, "metadata coord axis name", limits.attr_string_bytes)?;
+                    if c.labels.len() > limits.coord_labels_per_axis {
+                        return Err(CatalogError::InvalidWriteSpec(
+                            "metadata coord labels exceeds coord_labels_per_axis limit",
+                        ));
+                    }
+                    for label in &c.labels {
+                        validate_attr_string(label, "metadata coord label", limits.attr_string_bytes)?;
+                    }
                 }
             }
         }

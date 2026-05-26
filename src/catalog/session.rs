@@ -4,7 +4,7 @@
 //! [`TetWriterSession::commit`] (in-memory tensors) or [`TetWriterSession::commit_with_fill`]
 //! (streaming tiles). [`TetFile`] keeps the backing file open for mmap query execution.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,8 @@ use super::stream_write::{ArrayWriteMeta, StreamTileJob, write_multi_raw_array_s
 use super::tile;
 use super::{
     CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, DatasetRecordV1, TetFileSummaryV1,
-    read_tet_summary_v1, validate_array_write_meta, write_multi_raw_array_file,
+    append_multi_mixed, append_multi_raw_array_file, read_tet_summary_v1,
+    validate_array_write_meta, write_multi_raw_array_file,
 };
 
 /// In-memory dataset queued for [`TetWriterSession::commit`].
@@ -158,10 +159,18 @@ impl SessionDataset {
     }
 }
 
+#[derive(Debug, Clone)]
+enum SessionMode {
+    Create,
+    Append { existing_names: HashSet<String> },
+}
+
 /// Buffered writer: queue datasets and history, flush on commit.
 #[derive(Debug, Clone)]
 pub struct TetWriterSession {
     path: PathBuf,
+    mode: SessionMode,
+    base_metadata: TetMetadataV1,
     datasets: Vec<SessionDataset>,
     history: Vec<HistoryEventV1>,
     file_execution: Option<FileExecutionSettingsV1>,
@@ -174,11 +183,50 @@ impl TetWriterSession {
     pub fn create(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
+            mode: SessionMode::Create,
+            base_metadata: TetMetadataV1::default(),
             datasets: Vec::new(),
             history: Vec::new(),
             file_execution: None,
             metadata: FileMetadataDraft::default(),
         }
+    }
+
+    /// Open an existing `.tet` and queue additional datasets (merged footer metadata/history on commit).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CatalogError`] when the file cannot be read or parsed.
+    pub fn open_append(path: impl Into<PathBuf>) -> Result<Self, CatalogError> {
+        let path = path.into();
+        let data = std::fs::read(&path)?;
+        let summary = read_tet_summary_v1(&data)?;
+        let existing_names: HashSet<String> =
+            summary.datasets.iter().map(|d| d.name.clone()).collect();
+        let tool = summary.metadata.file.as_ref().and_then(|f| f.tool.clone());
+        let library_version = summary
+            .metadata
+            .file
+            .as_ref()
+            .and_then(|f| f.library_version.clone());
+        Ok(Self {
+            path,
+            mode: SessionMode::Append { existing_names },
+            base_metadata: summary.metadata,
+            datasets: Vec::new(),
+            history: summary.history,
+            file_execution: Some(summary.file_execution),
+            metadata: FileMetadataDraft {
+                tool,
+                library_version,
+            },
+        })
+    }
+
+    /// Whether this session appends to an existing file ([`Self::open_append`]).
+    #[must_use]
+    pub fn is_append(&self) -> bool {
+        matches!(self.mode, SessionMode::Append { .. })
     }
 
     #[must_use]
@@ -215,7 +263,24 @@ impl TetWriterSession {
             file_execution: None,
         };
         super::dataset::validate_raw_array_write(&spec)?;
+        self.ensure_unique_dataset_name(&dataset.name)?;
         self.datasets.push(SessionDataset::InMemory(dataset));
+        Ok(())
+    }
+
+    fn ensure_unique_dataset_name(&self, name: &str) -> Result<(), CatalogError> {
+        if let SessionMode::Append { existing_names } = &self.mode
+            && existing_names.contains(name)
+        {
+            return Err(CatalogError::InvalidWriteSpec(
+                "dataset name already exists in file",
+            ));
+        }
+        if self.datasets.iter().any(|d| d.name() == name) {
+            return Err(CatalogError::InvalidWriteSpec(
+                "dataset name already queued in session",
+            ));
+        }
         Ok(())
     }
 
@@ -237,6 +302,7 @@ impl TetWriterSession {
             file_execution: None,
         };
         validate_array_write_meta(&meta)?;
+        self.ensure_unique_dataset_name(&spec.name)?;
         self.datasets.push(SessionDataset::Streaming(spec));
         Ok(())
     }
@@ -252,17 +318,26 @@ impl TetWriterSession {
     }
 
     fn build_footer_metadata(&self) -> Result<Option<TetMetadataV1>, CatalogError> {
-        let mut meta = TetMetadataV1::default();
+        let mut meta = self.base_metadata.clone();
         let has_file = self.metadata.tool.is_some() || self.metadata.library_version.is_some();
         if has_file {
+            let prior = meta.file.take();
             meta.file = Some(FileMetadataV1 {
-                tool: self.metadata.tool.clone(),
+                tool: self
+                    .metadata
+                    .tool
+                    .clone()
+                    .or_else(|| prior.as_ref().and_then(|f| f.tool.clone())),
                 library_version: self
                     .metadata
                     .library_version
                     .clone()
+                    .or_else(|| prior.as_ref().and_then(|f| f.library_version.clone()))
                     .or_else(|| Some(env!("CARGO_PKG_VERSION").to_owned())),
-                created_at: Some(history::unix_timestamp_now()),
+                created_at: prior
+                    .as_ref()
+                    .and_then(|f| f.created_at.clone())
+                    .or_else(|| Some(history::unix_timestamp_now())),
             });
         }
         for ds in &self.datasets {
@@ -331,8 +406,14 @@ impl TetWriterSession {
                 }
             })
             .collect();
-        write_multi_raw_array_file(&self.path, &specs)?;
-        self.flush_footer(self.build_footer_metadata()?)?;
+        let footer_metadata = self.build_footer_metadata()?;
+        match self.mode {
+            SessionMode::Create => write_multi_raw_array_file(&self.path, &specs)?,
+            SessionMode::Append { .. } => {
+                append_multi_raw_array_file(&self.path, &specs)?;
+            }
+        }
+        self.flush_footer(footer_metadata)?;
         Ok(self.path)
     }
 
@@ -394,8 +475,22 @@ impl TetWriterSession {
             }
         }
 
-        let metas: Vec<ArrayWriteMeta<'_>> = prepared
+        let memory_specs: Vec<RawArrayWrite<'_>> = prepared
             .iter()
+            .filter(|d| d.data.is_some())
+            .map(|d| RawArrayWrite {
+                name: &d.name,
+                dtype: d.dtype,
+                shape: &d.shape,
+                chunk_shape: &d.chunk_shape,
+                chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+                data: d.data.as_ref().expect("in-memory row"),
+                file_execution,
+            })
+            .collect();
+        let stream_metas: Vec<ArrayWriteMeta<'_>> = prepared
+            .iter()
+            .filter(|d| d.data.is_none())
             .map(|d| ArrayWriteMeta {
                 name: &d.name,
                 dtype: d.dtype,
@@ -406,37 +501,60 @@ impl TetWriterSession {
             })
             .collect();
 
-        write_multi_raw_array_streaming(
-            &self.path,
-            &metas,
-            parallel_jobs,
-            |job, buf| {
-                let ds = &prepared[job.dataset_id];
-                if let Some(data) = &ds.data {
-                    let elem = ElementDtype::try_from_wire_tag(ds.dtype).ok_or(
-                        CatalogError::InvalidWriteSpec("unsupported dataset dtype tag"),
-                    )?;
-                    let tile = tile::extract_tile_row_major(
-                        data,
-                        &ds.shape,
-                        &ds.chunk_shape,
-                        &job.chunk_coord[..job.ndim],
-                        job.ndim,
-                        elem.elem_size(),
-                    )?;
-                    if tile.len() != buf.len() {
-                        return Err(CatalogError::InvalidWriteSpec(
-                            "in-memory tile length mismatch for chunk",
-                        ));
-                    }
-                    buf.copy_from_slice(&tile);
-                    Ok(())
-                } else {
-                    fill(job, buf)
+        let fill_tile = |job: &StreamTileJob<'_>, buf: &mut [u8]| {
+            let ds = prepared.iter().find(|p| p.name == job.dataset_name).ok_or(
+                CatalogError::InvalidWriteSpec("unknown dataset in tile job"),
+            )?;
+            if let Some(data) = &ds.data {
+                let elem = ElementDtype::try_from_wire_tag(ds.dtype).ok_or(
+                    CatalogError::InvalidWriteSpec("unsupported dataset dtype tag"),
+                )?;
+                let tile = tile::extract_tile_row_major(
+                    data,
+                    &ds.shape,
+                    &ds.chunk_shape,
+                    &job.chunk_coord[..job.ndim],
+                    job.ndim,
+                    elem.elem_size(),
+                )?;
+                if tile.len() != buf.len() {
+                    return Err(CatalogError::InvalidWriteSpec(
+                        "in-memory tile length mismatch for chunk",
+                    ));
                 }
-            },
-            None,
-        )?;
+                buf.copy_from_slice(&tile);
+                Ok(())
+            } else {
+                fill(job, buf)
+            }
+        };
+
+        match self.mode {
+            SessionMode::Create => {
+                let metas: Vec<ArrayWriteMeta<'_>> = prepared
+                    .iter()
+                    .map(|d| ArrayWriteMeta {
+                        name: &d.name,
+                        dtype: d.dtype,
+                        shape: &d.shape,
+                        chunk_shape: &d.chunk_shape,
+                        chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+                        file_execution,
+                    })
+                    .collect();
+                write_multi_raw_array_streaming(
+                    &self.path,
+                    &metas,
+                    parallel_jobs,
+                    fill_tile,
+                    None,
+                )?;
+            }
+            SessionMode::Append { .. } => {
+                append_multi_mixed(&self.path, &memory_specs, &stream_metas, fill_tile)?;
+                let _ = parallel_jobs;
+            }
+        }
         self.flush_footer(footer_metadata)?;
         Ok(self.path)
     }

@@ -9,7 +9,7 @@ use hdf5_metno::types::{FloatSize, IntSize, TypeDescriptor};
 use crate::utils::dtype::ElementDtype;
 
 use super::cf::cf_from_hdf5;
-use super::import_metadata::{finish_convert_footer, hdf5_dataset_attrs};
+use super::import_metadata::{enrich_hdf5_cf_coordinates, finish_convert_footer, hdf5_dataset_attrs};
 use super::parallel::H5ParallelSource;
 use super::shared::{
     ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
@@ -45,6 +45,7 @@ pub fn convert_h5_to_tet_with_progress(
     let file = File::open(input).map_err(|e| ConvertError::Hdf5(e.to_string()))?;
     let mut plans = Vec::new();
     collect_h5_plans(&file, "", &mut plans)?;
+    enrich_hdf5_cf_coordinates(&file, &mut plans);
 
     ensure_non_empty(
         input,
@@ -135,6 +136,7 @@ fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, Conv
         zarr_zstd: false,
         import_attrs: hdf5_dataset_attrs(ds),
         import_dim_names: None,
+        import_coords: None,
     })
 }
 

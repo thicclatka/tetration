@@ -132,6 +132,81 @@ fn writer_session_streaming_commit_without_full_tensor() {
 }
 
 #[test]
+fn writer_session_append_second_dataset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("append.tet");
+
+    let mut create = TetWriterSession::create(&path);
+    create
+        .push_dataset(
+            TetDatasetWrite::f32_row_major("temperature", &SHAPE, &CHUNK_SHAPE, f32_one_to_six())
+                .unwrap(),
+        )
+        .unwrap();
+    create.commit().unwrap();
+
+    let mut append = TetWriterSession::open_append(&path).unwrap();
+    assert!(append.is_append());
+    append.push_history_event("append", "rust");
+    let mut humidity =
+        TetDatasetWrite::f32_row_major("humidity", &SHAPE, &CHUNK_SHAPE, f32_one_to_six()).unwrap();
+    humidity.attrs.insert("units".to_owned(), "%".to_owned());
+    append.push_dataset(humidity).unwrap();
+    append.commit().unwrap();
+
+    let summary = read_tet_summary_v1(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(summary.datasets.len(), 2);
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(
+        summary.metadata.datasets["humidity"]
+            .attrs
+            .get("units")
+            .map(String::as_str),
+        Some("%")
+    );
+
+    let file = TetFile::open(&path).unwrap();
+    for (name, expect) in [("temperature", "3.5"), ("humidity", "3.5")] {
+        let doc = parse_query_json(&format!(r#"{{"dataset":"{name}","mean":[]}}"#)).unwrap();
+        validate_query(&doc).unwrap();
+        let response = execute_query_document(
+            &doc,
+            file.path(),
+            file.mmap(),
+            ExecuteQueryOptions::execute_no_preview(),
+            None,
+        )
+        .unwrap();
+        let line = format_query_response(&response, QueryOutputFormat::Quiet).unwrap();
+        assert!(line.contains(&format!("mean={expect}")), "{line}");
+    }
+}
+
+#[test]
+fn writer_session_append_rejects_duplicate_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dup.tet");
+    let mut create = TetWriterSession::create(&path);
+    create
+        .push_dataset(
+            TetDatasetWrite::f32_row_major("x", &SHAPE, &CHUNK_SHAPE, f32_one_to_six()).unwrap(),
+        )
+        .unwrap();
+    create.commit().unwrap();
+
+    let mut append = TetWriterSession::open_append(&path).unwrap();
+    let err = append
+        .push_dataset(
+            TetDatasetWrite::f32_row_major("x", &SHAPE, &CHUNK_SHAPE, f32_one_to_six()).unwrap(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        crate::catalog::CatalogError::InvalidWriteSpec(_)
+    ));
+}
+
+#[test]
 fn writer_session_streaming_requires_fill_commit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("stream_only.tet");

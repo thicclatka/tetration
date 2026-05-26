@@ -1,6 +1,5 @@
 //! Zarr v3 directory store → `.tet` conversion.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -9,7 +8,7 @@ use serde::Deserialize;
 
 use crate::utils::dtype::ElementDtype;
 
-use super::import_metadata::finish_convert_footer;
+use super::import_metadata::{finish_convert_footer, zarr_array_attrs};
 use super::parallel::ZarrParallelSource;
 use super::shared::{
     ImportPlan, ImportTileRead, chunk_shape_for_import, ensure_non_empty, join_catalog_path,
@@ -189,8 +188,9 @@ fn plan_zarr_array(
         cf: None,
         zarr_array_rel: Some(array_rel.to_owned()),
         zarr_zstd: zarr_chunk_payload_zstd(meta),
-        import_attrs: BTreeMap::new(),
+        import_attrs: zarr_array_attrs(&meta.attributes),
         import_dim_names: None,
+        import_coords: None,
     })
 }
 
@@ -409,6 +409,8 @@ pub fn is_zarr_v3_directory(path: &Path) -> bool {
 struct ZarrNodeMeta {
     zarr_format: u32,
     node_type: String,
+    #[serde(default)]
+    attributes: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     shape: Option<Vec<u64>>,
     #[serde(default)]

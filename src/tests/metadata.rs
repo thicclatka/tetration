@@ -20,6 +20,7 @@ fn convert_history_preserves_existing_metadata() {
             crate::catalog::DatasetMetadataV1 {
                 attrs: [("units".to_owned(), "K".to_owned())].into_iter().collect(),
                 dim_names: Some(vec!["y".to_owned(), "x".to_owned()]),
+                coords: None,
             },
         )]
         .into_iter()

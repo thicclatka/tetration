@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use super::cf::CfTransform;
 
 use crate::catalog::{
-    ArrayWriteMeta, CHUNK_PAYLOAD_CODEC_V1, CatalogError, StreamTileJob, StreamWriteProgress,
-    write_multi_raw_array_streaming,
+    ArrayWriteMeta, CHUNK_PAYLOAD_CODEC_V1, CatalogError, CoordAxisV1, StreamTileJob,
+    StreamWriteProgress, write_multi_raw_array_streaming,
 };
 use crate::utils::dtype::ElementDtype;
 
@@ -28,6 +28,8 @@ pub(crate) struct ImportPlan {
     pub import_attrs: BTreeMap<String, String>,
     /// NetCDF dimension names → `metadata.datasets[name].dim_names`.
     pub import_dim_names: Option<Vec<String>>,
+    /// Inline coordinate labels → `metadata.datasets[name].coords`.
+    pub import_coords: Option<BTreeMap<String, CoordAxisV1>>,
 }
 
 pub(crate) fn join_catalog_path(prefix: &str, name: &str) -> String {

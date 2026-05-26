@@ -1,5 +1,6 @@
 //! `NetCDF` → `.tet` conversion (streaming, one chunk at a time).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -9,7 +10,9 @@ use netcdf::types::{FloatType, IntType, NcVariableType};
 use crate::utils::dtype::ElementDtype;
 
 use super::cf::cf_from_netcdf;
-use super::import_metadata::{finish_convert_footer, netcdf_dim_names, netcdf_variable_attrs};
+use super::import_metadata::{
+    finish_convert_footer, netcdf_dim_names, netcdf_inline_coord_labels, netcdf_variable_attrs,
+};
 use super::parallel::NetcdfParallelSource;
 use super::shared::{
     ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
@@ -157,6 +160,11 @@ fn plan_variable_at(name: &str, var: &Variable<'_>) -> Result<ImportPlan, Conver
         zarr_zstd: false,
         import_attrs: netcdf_variable_attrs(var),
         import_dim_names: netcdf_dim_names(var),
+        import_coords: netcdf_inline_coord_labels(var).map(|c| {
+            let mut m = BTreeMap::new();
+            m.insert(name.to_owned(), c);
+            m
+        }),
     })
 }
 

@@ -348,6 +348,19 @@ fn convert_small_h5_cf_3d_decodes_temperature() {
         "expected scale_factor in imported attrs: {:?}",
         temp_meta.attrs
     );
+
+    let time_meta = summary.metadata.datasets.get("coordinates/time").unwrap();
+    assert_eq!(
+        time_meta.attrs.get("units").map(String::as_str),
+        Some("days since 2020-01-01")
+    );
+
+    let coords = temp_meta.coords.as_ref().expect("temperature coords");
+    assert_eq!(coords.len(), 3);
+    assert_eq!(coords.get("time").map(|c| c.labels.len()), Some(32));
+    assert_eq!(coords["time"].labels.first().map(String::as_str), Some("0"));
+    assert_eq!(coords.get("lat").map(|c| c.labels.len()), Some(32));
+    assert_eq!(coords.get("lon").map(|c| c.labels.len()), Some(32));
 }
 
 #[test]
@@ -517,6 +530,30 @@ fn convert_small_netcdf_cf_3d_decodes_temperature() {
 #[test]
 fn convert_small_zarr_tensor_3d_matches_source_bytes() {
     assert_small_fixture_zarr("tensor_3d");
+}
+
+#[test]
+fn convert_small_zarr_imports_array_attrs() {
+    let input = small_zarr("tensor_3d");
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("tensor_3d_attrs.tet");
+    convert_zarr_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let summary = read_tet_summary_v1(&mmap_file_read(&output).unwrap()).unwrap();
+    let f32_meta = summary.metadata.datasets.get("f32").unwrap();
+    assert_eq!(
+        f32_meta.attrs.get("tetration_dtype").map(String::as_str),
+        Some("f32")
+    );
+
+    let input = small_zarr("groups_3d");
+    let output = dir.path().join("groups_3d_attrs.tet");
+    convert_zarr_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
+    let summary = read_tet_summary_v1(&mmap_file_read(&output).unwrap()).unwrap();
+    let nested = summary.metadata.datasets.get("primary/f32").unwrap();
+    assert_eq!(
+        nested.attrs.get("tetration_dtype").map(String::as_str),
+        Some("f32")
+    );
 }
 
 #[test]

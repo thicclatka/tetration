@@ -372,6 +372,13 @@ fn format_datasets_table(
             if let Some(dim_names) = &ds_meta.dim_names {
                 let _ = writeln!(out, "       dim_names: {}", dim_names.join(", "));
             }
+            if let Some(coords) = &ds_meta.coords {
+                let summary: Vec<String> = coords
+                    .iter()
+                    .map(|(axis, c)| format!("{axis}({} labels)", c.labels.len()))
+                    .collect();
+                let _ = writeln!(out, "       coords: {}", summary.join(", "));
+            }
             for (k, v) in &ds_meta.attrs {
                 let _ = writeln!(out, "       {k}: {v}");
             }

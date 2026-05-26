@@ -144,14 +144,14 @@ tet info data.tet --json | jq '.summary.datasets'
 
 - [x] **Rust embedder examples** — `create_and_query`, `inspect_catalog`, `session_write`; run with `cargo run --example …`.
 - [x] **Rust embedder session API (baseline)** — [`TetWriterSession`](src/catalog/session.rs) / [`TetFile`](src/catalog/session.rs), [`execute_query_document`](src/query/execute.rs) / [`execute_query_json`](src/query/execute.rs), [`FileMetadataDraft`](src/catalog/session.rs) (in-memory until wire spec); [`prelude`](src/lib.rs) re-exports; tests in `src/tests/session.rs`.
-- [ ] **Rust embedder create + use (wire)** — append datasets to existing files; streaming session over `write_multi_raw_array_streaming`.
+- [x] **Rust embedder create + use (wire)** — [`TetWriterSession::open_append`](src/catalog/session.rs); streaming via [`commit_with_fill`](src/catalog/session.rs); catalog [`append_multi_raw_array_file`](src/catalog/append.rs).
 - [x] **File header metadata (footer JSON)** — `metadata.file` in `THST` footer (`tool`, `library_version`, `created_at`); [`TetWriterSession::metadata`](src/catalog/session.rs); `tet info` text + `--json`.
 - [x] **Dataset attributes (footer JSON)** — `metadata.datasets[name].attrs` + optional `dim_names`; session flush; [`read_tet_summary_v1`](src/catalog/mod.rs) / `tet info` roundtrip.
-- [ ] **Axis metadata** — **dimension names** (one string per axis, e.g. `time`, `lat`, `lon`) vs **coordinate labels** (one value per index along an axis); see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
+- [x] **Axis metadata (baseline)** — `dim_names` in footer metadata; inline **`coords`** labels (≤64 per axis) on convert for HDF5 CF `coordinates` and 1D coord arrays; see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
 - [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
 - [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 10 bindings wrap the same API).
 - [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
-- [x] **Import preservation (baseline)** — HDF5/NetCDF scalar attrs → footer `metadata.datasets` on `tet convert` (`units`, `long_name`, CF numeric attrs, …); NetCDF `dim_names` from dimension names; Zarr attrs deferred.
+- [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
 ## Phase 8 — Query ops & interchange (later)
 
