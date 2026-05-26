@@ -7,7 +7,9 @@ use crate::query::decode::dense_visit::{dense_tile_logical_base, logical_index_u
 use crate::query::decode::indexing::linear_rm_index;
 use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
 use crate::query::types::{PlannedChunkIo, ReadPlan, TetError};
-use crate::utils::{f32_le, f64_le, i32_le, i64_le, wire};
+use crate::utils::{
+    f16_le, f32_le, f64_le, i16_le, i32_le, i64_le, u8_le, u16_le, u32_le, u64_le, wire,
+};
 
 struct PreparedChunk<'a> {
     bytes_read: u64,
@@ -49,6 +51,48 @@ impl ChunkElem for i64 {
     const ELEM_SIZE: usize = 8;
     fn read_at(raw: &[u8], index: usize) -> Self {
         i64_le::read_i64_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for u8 {
+    const ELEM_SIZE: usize = 1;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        u8_le::read_u8_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for u16 {
+    const ELEM_SIZE: usize = 2;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        u16_le::read_u16_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for i16 {
+    const ELEM_SIZE: usize = 2;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        i16_le::read_i16_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for u32 {
+    const ELEM_SIZE: usize = 4;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        u32_le::read_u32_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for u64 {
+    const ELEM_SIZE: usize = 8;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        u64_le::read_u64_le_at(raw, index)
+    }
+}
+
+impl ChunkElem for half::f16 {
+    const ELEM_SIZE: usize = 2;
+    fn read_at(raw: &[u8], index: usize) -> Self {
+        f16_le::read_f16_le_at(raw, index)
     }
 }
 
@@ -517,4 +561,209 @@ pub(crate) fn scatter_chunk_into_plan_i64(
     out: &mut [Option<i64>],
 ) -> Result<u64, TetError> {
     scatter_chunk_into_option::<i64>(mmap, plan, c, out)
+}
+
+/// Visit each selected `u8` in a planned chunk.
+pub(crate) fn visit_planned_chunk_u8<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, u8) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<u8, _>(mmap, plan, c, visit)
+}
+
+/// Visit each selected `u8`, promoting values to `f64` for accumulators.
+pub(crate) fn visit_planned_chunk_u8_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_u8(mmap, plan, c, |li, v| visit(li, f64::from(v)))
+}
+
+pub(crate) fn scatter_chunk_into_plan_u8(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<u8>],
+) -> Result<u64, TetError> {
+    scatter_chunk_into_option::<u8>(mmap, plan, c, out)
+}
+
+/// Visit each selected `u16` in a planned chunk.
+pub(crate) fn visit_planned_chunk_u16<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, u16) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<u16, _>(mmap, plan, c, visit)
+}
+
+/// Visit each selected `u16`, promoting values to `f64` for accumulators.
+pub(crate) fn visit_planned_chunk_u16_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_u16(mmap, plan, c, |li, v| visit(li, f64::from(v)))
+}
+
+pub(crate) fn scatter_chunk_into_plan_u16(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<u16>],
+) -> Result<u64, TetError> {
+    scatter_chunk_into_option::<u16>(mmap, plan, c, out)
+}
+
+/// Visit each selected `i16` in a planned chunk.
+pub(crate) fn visit_planned_chunk_i16<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, i16) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<i16, _>(mmap, plan, c, visit)
+}
+
+/// Visit each selected `i16`, promoting values to `f64` for accumulators.
+pub(crate) fn visit_planned_chunk_i16_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_i16(mmap, plan, c, |li, v| visit(li, f64::from(v)))
+}
+
+pub(crate) fn scatter_chunk_into_plan_i16(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<i16>],
+) -> Result<u64, TetError> {
+    scatter_chunk_into_option::<i16>(mmap, plan, c, out)
+}
+
+pub(crate) fn visit_planned_chunk_u32<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, u32) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<u32, _>(mmap, plan, c, visit)
+}
+
+pub(crate) fn visit_planned_chunk_u32_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_u32(mmap, plan, c, |li, v| visit(li, f64::from(v)))
+}
+
+pub(crate) fn scatter_chunk_into_plan_u32(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<u32>],
+) -> Result<u64, TetError> {
+    scatter_chunk_into_option::<u32>(mmap, plan, c, out)
+}
+
+pub(crate) fn visit_planned_chunk_u64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, u64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<u64, _>(mmap, plan, c, visit)
+}
+
+pub(crate) fn visit_planned_chunk_u64_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_u64(mmap, plan, c, |li, v| visit(li, v as f64))
+}
+
+pub(crate) fn scatter_chunk_into_plan_u64(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [Option<u64>],
+) -> Result<u64, TetError> {
+    scatter_chunk_into_option::<u64>(mmap, plan, c, out)
+}
+
+pub(crate) fn visit_planned_chunk_f16<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, half::f16) -> Result<(), TetError>,
+{
+    visit_planned_chunk_elem::<half::f16, _>(mmap, plan, c, visit)
+}
+
+#[allow(dead_code)]
+pub(crate) fn visit_planned_chunk_f16_as_f64<F>(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    visit_planned_chunk_f16(mmap, plan, c, |li, v| visit(li, f64::from(v)))
+}
+
+pub(crate) fn scatter_chunk_into_plan_f16(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    c: &PlannedChunkIo,
+    out: &mut [half::f16],
+) -> Result<u64, TetError> {
+    scatter_chunk_into::<half::f16>(mmap, plan, c, out)
 }

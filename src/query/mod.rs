@@ -33,9 +33,11 @@ pub use engine::{
     MemoryStrategy, SpillPathAllowlist, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
     materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le,
-    materialize_read_plan_i32_le, materialize_read_plan_i64_le, plan_query_empty,
+    materialize_read_plan_i16_le, materialize_read_plan_i32_le, materialize_read_plan_i64_le,
+    materialize_read_plan_u8_le, materialize_read_plan_u16_le, plan_query_empty,
     plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, planned_chunk_mmap_slices,
-    spill_read_plan_f32_le, spill_read_plan_i32_le, spill_read_plan_i64_le,
+    spill_read_plan_f32_le, spill_read_plan_i16_le, spill_read_plan_i32_le, spill_read_plan_i64_le,
+    spill_read_plan_u8_le, spill_read_plan_u16_le,
 };
 pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 pub use types::{

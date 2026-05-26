@@ -2,10 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::query::types::{ReadPlan, TetError};
-
-use crate::query::decode::indexing::linear_rm_index;
+use crate::query::decode::indexing::{coords_from_linear_row_major, linear_rm_index};
 use crate::query::plan::read_plan::shape_product_usize;
+use crate::query::types::{ReadPlan, TetError};
 
 pub(crate) struct PartialAxisLayout {
     pub axis_indices: Vec<usize>,
@@ -97,4 +96,16 @@ pub(crate) fn fiber_linear_index(
     let rshape: Vec<u64> = axis_indices.iter().map(|&d| shape[d]).collect();
     let rc: Vec<usize> = axis_indices.iter().map(|&d| coords[d]).collect();
     linear_rm_index(&rc, &rshape)
+}
+
+/// Map a logical row-major index to reduced output cell and fiber index (partial-axis fold).
+pub(crate) fn reduced_cell_index(
+    li: usize,
+    shape: &[u64],
+    layout: &PartialAxisLayout,
+) -> Result<(usize, u64), TetError> {
+    let coords = coords_from_linear_row_major(li, shape)?;
+    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+    let fi = fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
+    Ok((oi, fi))
 }

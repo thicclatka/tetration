@@ -111,3 +111,69 @@ define_le_pod_module! {
     count_fn: i64_count;
     type_name: "i64";
 }
+
+define_le_pod_module! {
+    #[allow(clippy::int_plus_one, dead_code)]
+    pub(crate) mod u8_le;
+    ty u8;
+    elem_size: 1;
+    read_fn: read_u8_le_at;
+    cast_fn: try_cast_u8_le;
+    count_fn: u8_count;
+    type_name: "u8";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod u16_le;
+    ty u16;
+    elem_size: 2;
+    read_fn: read_u16_le_at;
+    cast_fn: try_cast_u16_le;
+    count_fn: u16_count;
+    type_name: "u16";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod i16_le;
+    ty i16;
+    elem_size: 2;
+    read_fn: read_i16_le_at;
+    cast_fn: try_cast_i16_le;
+    count_fn: i16_count;
+    type_name: "i16";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod u32_le;
+    ty u32;
+    elem_size: 4;
+    read_fn: read_u32_le_at;
+    cast_fn: try_cast_u32_le;
+    count_fn: u32_count;
+    type_name: "u32";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod u64_le;
+    ty u64;
+    elem_size: 8;
+    read_fn: read_u64_le_at;
+    cast_fn: try_cast_u64_le;
+    count_fn: u64_count;
+    type_name: "u64";
+}
+
+define_le_pod_module! {
+    #[allow(dead_code)]
+    pub(crate) mod f16_le;
+    ty half::f16;
+    elem_size: 2;
+    read_fn: read_f16_le_at;
+    cast_fn: try_cast_f16_le;
+    count_fn: f16_count;
+    type_name: "f16";
+}

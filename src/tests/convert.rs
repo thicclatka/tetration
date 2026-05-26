@@ -14,6 +14,8 @@ use crate::query::{
     materialize_read_plan_i64_le, parse_query_json, plan_query_with_tet_mmap, validate_query,
 };
 
+use super::verify::assert_tet_verify_ok;
+
 const FIXTURE_DTYPES: [&str; 4] = ["f32", "f64", "i32", "i64"];
 
 fn repo_root() -> PathBuf {
@@ -185,6 +187,7 @@ fn assert_small_fixture_h5_with_jobs(stem: &str, parallel_jobs: usize) {
         let got = materialize_dataset_le_bytes(&mmap, name);
         assert_eq!(got, want, "dataset {name} bytes differ for {stem}");
     }
+    assert_tet_verify_ok(&output);
 }
 
 fn assert_small_fixture_netcdf(stem: &str) {
@@ -211,6 +214,7 @@ fn assert_small_fixture_netcdf_with_jobs(stem: &str, parallel_jobs: usize) {
         let got = materialize_dataset_le_bytes(&mmap, name);
         assert_eq!(got, want, "dataset {name} bytes differ for {stem}");
     }
+    assert_tet_verify_ok(&output);
 }
 
 fn assert_small_fixture_zarr(stem: &str) {
@@ -232,6 +236,7 @@ fn assert_small_fixture_zarr(stem: &str) {
         let got = materialize_dataset_le_bytes(&mmap, name);
         assert_eq!(got, want, "dataset {name} bytes differ for zarr {stem}");
     }
+    assert_tet_verify_ok(&output);
 }
 
 fn zarr_array_le_bytes(array_dir: &Path) -> Vec<u8> {
@@ -303,6 +308,7 @@ fn convert_small_h5_groups_3d_matches_nested_source_bytes() {
     let want_scale = hdf5_dataset_path_le_bytes(&src, "aux/scale");
     let got_scale = materialize_dataset_le_bytes(&mmap, "aux/scale");
     assert_eq!(got_scale, want_scale);
+    assert_tet_verify_ok(&output);
 }
 
 #[cfg(feature = "tetration-hdf5")]
@@ -361,6 +367,7 @@ fn convert_small_h5_cf_3d_decodes_temperature() {
     assert_eq!(coords["time"].labels.first().map(String::as_str), Some("0"));
     assert_eq!(coords.get("lat").map(|c| c.labels.len()), Some(32));
     assert_eq!(coords.get("lon").map(|c| c.labels.len()), Some(32));
+    assert_tet_verify_ok(&output);
 }
 
 #[test]
@@ -491,6 +498,7 @@ fn convert_small_netcdf_groups_3d_matches_nested_source_bytes() {
         let got = materialize_dataset_le_bytes(&mmap, &path);
         assert_eq!(got, want, "dataset {path} bytes differ");
     }
+    assert_tet_verify_ok(&output);
 }
 
 #[test]
@@ -525,6 +533,7 @@ fn convert_small_netcdf_cf_3d_decodes_temperature() {
     );
     let dim_names = temp_meta.dim_names.as_ref().expect("nc dim_names");
     assert_eq!(dim_names.len(), 3);
+    assert_tet_verify_ok(&output);
 }
 
 #[test]
@@ -554,6 +563,8 @@ fn convert_small_zarr_imports_array_attrs() {
         nested.attrs.get("tetration_dtype").map(String::as_str),
         Some("f32")
     );
+    assert_tet_verify_ok(&dir.path().join("tensor_3d_attrs.tet"));
+    assert_tet_verify_ok(&output);
 }
 
 #[test]
@@ -573,4 +584,5 @@ fn convert_small_zarr_groups_3d_matches_nested_source_bytes() {
         let got = materialize_dataset_le_bytes(&mmap, &path);
         assert_eq!(got, want, "dataset {path} bytes differ");
     }
+    assert_tet_verify_ok(&output);
 }

@@ -11,8 +11,9 @@ use crate::query::decode::indexing::coords_from_linear_row_major;
 use crate::query::engine::budget::MemoryStrategy;
 use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
 
-use super::int;
-use super::{LogicalF32Backing, LogicalF64Backing, MaterializedLogical};
+use super::{
+    LogicalF32Backing, LogicalF64Backing, MaterializedLogical, materialized_logical_as_f64,
+};
 
 fn median_f64(values: &mut [f64]) -> Result<f64, TetError> {
     if values.is_empty() {
@@ -297,9 +298,13 @@ pub(crate) fn run_tier_c_operation(
 ) -> Result<OperationPreviewFields, TetError> {
     if matches!(
         materialized,
-        MaterializedLogical::I32 { .. } | MaterializedLogical::I64 { .. }
+        MaterializedLogical::I32 { .. }
+            | MaterializedLogical::I64 { .. }
+            | MaterializedLogical::U8 { .. }
+            | MaterializedLogical::U16 { .. }
+            | MaterializedLogical::I16 { .. }
     ) {
-        let vec = int::materialized_logical_as_f64(materialized)?;
+        let vec = materialized_logical_as_f64(materialized)?;
         let synthetic = MaterializedLogical::F64 {
             backing: LogicalF64Backing::InMemory(vec),
             total_bytes_read_from_disk: 0,

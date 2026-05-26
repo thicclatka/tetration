@@ -1,0 +1,102 @@
+//! Full logical selection backing (RAM or temp spill) for tier-C ops.
+
+use crate::query::engine::budget::MemoryStrategy;
+
+use super::int;
+use super::shared::mmap_spill;
+use super::types::{LogicalF16Backing, LogicalF32Backing, LogicalF64Backing};
+
+pub(crate) enum MaterializedLogical {
+    F32 {
+        backing: LogicalF32Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    F64 {
+        backing: LogicalF64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    I32 {
+        backing: int::LogicalI32Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    I64 {
+        backing: int::LogicalI64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U8 {
+        backing: int::LogicalU8Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U16 {
+        backing: int::LogicalU16Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    I16 {
+        backing: int::LogicalI16Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U32 {
+        backing: int::LogicalU32Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U64 {
+        backing: int::LogicalU64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    F16 {
+        backing: LogicalF16Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+}
+
+/// Load a materialized logical selection as `f64` for tier-C statistics.
+pub(crate) fn materialized_logical_as_f64(
+    materialized: &MaterializedLogical,
+) -> Result<Vec<f64>, crate::query::types::TetError> {
+    match materialized {
+        MaterializedLogical::F32 { backing, .. } => match backing {
+            LogicalF32Backing::InMemory(v) => Ok(v.iter().map(|&x| f64::from(x)).collect()),
+            LogicalF32Backing::TempSpill(temp) => {
+                let mmap = mmap_spill(temp.path())?;
+                Ok(bytemuck::cast_slice::<u8, f32>(&mmap)
+                    .iter()
+                    .map(|&x| f64::from(x))
+                    .collect())
+            }
+        },
+        MaterializedLogical::F64 { backing, .. } => match backing {
+            LogicalF64Backing::InMemory(v) => Ok(v.clone()),
+            LogicalF64Backing::TempSpill(temp) => {
+                let mmap = mmap_spill(temp.path())?;
+                Ok(bytemuck::cast_slice::<u8, f64>(&mmap).to_vec())
+            }
+        },
+        MaterializedLogical::I32 { backing, .. } => int::materialized_logical_as_f64_i32(backing),
+        MaterializedLogical::I64 { backing, .. } => int::materialized_logical_as_f64_i64(backing),
+        MaterializedLogical::U8 { backing, .. } => int::materialized_logical_as_f64_u8(backing),
+        MaterializedLogical::U16 { backing, .. } => int::materialized_logical_as_f64_u16(backing),
+        MaterializedLogical::I16 { backing, .. } => int::materialized_logical_as_f64_i16(backing),
+        MaterializedLogical::U32 { backing, .. } => int::materialized_logical_as_f64_u32(backing),
+        MaterializedLogical::U64 { backing, .. } => int::materialized_logical_as_f64_u64(backing),
+        MaterializedLogical::F16 { backing, .. } => match backing {
+            LogicalF16Backing::InMemory(v) => Ok(v.iter().map(|&x| f64::from(x)).collect()),
+            LogicalF16Backing::TempSpill(temp) => {
+                let mmap = super::shared::mmap_spill(temp.path())?;
+                Ok(bytemuck::cast_slice::<u8, half::f16>(&mmap)
+                    .iter()
+                    .map(|&x| f64::from(x))
+                    .collect())
+            }
+        },
+    }
+}

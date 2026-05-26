@@ -200,10 +200,16 @@ fn map_zarr_dtype(
         })
         .ok_or_else(|| ConvertError::Zarr(format!("array `{name}` missing data_type")))?;
     match tag.as_str() {
+        "float16" => Ok(ElementDtype::F16),
         "float32" => Ok(ElementDtype::F32),
         "float64" => Ok(ElementDtype::F64),
+        "uint8" | "bool" | "int8" => Ok(ElementDtype::U8),
+        "uint16" => Ok(ElementDtype::U16),
+        "int16" => Ok(ElementDtype::I16),
         "int32" => Ok(ElementDtype::I32),
         "int64" => Ok(ElementDtype::I64),
+        "uint32" => Ok(ElementDtype::U32),
+        "uint64" => Ok(ElementDtype::U64),
         other => Err(ConvertError::UnsupportedDtype {
             name: name.to_owned(),
             detail: format!("zarr data_type `{other}`"),

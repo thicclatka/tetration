@@ -76,7 +76,7 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 | **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                           |
 | **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                              | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                     |
 | **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                 | Full/capped materialize (f32/f64/i32/i64), export spill, parallel fill, tier-C stats.                                                                                           |
-| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel_fold.rs`, `partial_fold.rs`, … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk **`f32`** sum/sumsq + min/max; parallel + partial-axis streaming folds. |
+| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk **`f32`** sum/sumsq + min/max; parallel + partial-axis streaming folds. |
 | **`dispatch.rs`**  | —                                                                                                                             | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                      |
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                     | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                             |
 | **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                           | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                              |
@@ -182,7 +182,7 @@ flowchart TD
 
 ### Streaming fold performance
 
-**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel_fold.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
+**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
 
 So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator. Wall time is dominated by **page-cache / disk bandwidth** and CPU over the selection when out-of-core, or **memory bandwidth + cores** when in-core.
 
@@ -434,7 +434,7 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 | Tier  | Name                             | When to use                                                | Engine pattern                                                                                                                         |
 | ----- | -------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | [`scalar_fold`](../src/query/dispatch.rs) → parallel chunks (in-core), linear scan (out-of-core contiguous raw), or sequential chunks. |
-| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | [`partial_fold`](../src/query/fold/partial_fold.rs) with same `FoldIoPolicy` chunk ordering.                                           |
+| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | [`partial`](../src/query/fold/partial/mod.rs) with same `FoldIoPolicy` chunk ordering.                                           |
 | **C** | **Materialize-required**         | Needs full logical tensor order, sort, or index of extrema | Full decode (or spill file); may add new `operation_*` response fields.                                                                |
 | **D** | **Out of scope for `Operation`** | Writers, dtype views, foreign format import                | Separate APIs (`materialize_*`, `tet convert`, metadata), not the JSON `operation` enum.                                               |
 
@@ -476,7 +476,7 @@ These match the product vision but belong **beside** the reduction enum:
 - **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 11 Python).
 - **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet qhist` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
-When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial_fold.rs`, and (if tier **C**) `materialize_stats.rs`.
+When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.
 
 ## JSON security (input and output)
 

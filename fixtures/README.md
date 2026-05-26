@@ -4,25 +4,26 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 
 ## By phase
 
-| Phase        | Role of fixtures                                                                                                                    |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **1–3**      | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                                      |
-| **4**        | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                          |
-| **5**        | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).        |
-| **6**        | Bench harness (`benchmark/`, `spec.json`); future query-format golden cases and CLI UX smoke.                                       |
-| **7**        | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.                     |
-| **10**       | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                     |
+| Phase   | Role of fixtures                                                                                                             |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **1–3** | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                           |
+| **4**   | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                   |
+| **5**   | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only). |
+| **6**   | Bench harness (`benchmark/`, `spec.json`); future query-format golden cases and CLI UX smoke.                                |
+| **7**   | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.              |
+| **10**  | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.              |
 
 ## Layout
 
 ### Small (tracked)
 
-| Path                         | Contents                                                                                                                           |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `small/h5/`, `small/netcdf/` | **`tensor_{3,4,5}d`** — baseline root vars **f32, f64, i32, i64**                                                                  |
-| `small/h5/`, `small/netcdf/` | **`groups_3d`** — nested **`primary/{dtype}`** + **`aux`**, **`meta`** groups                                                      |
-| `small/h5/`, `small/netcdf/` | **`cf_3d`** — coords (**time/lat/lon**), **`temperature`** with **scale_factor / add_offset / \_FillValue**, plus root **f32…i64** |
-| `small/zarr/`                | **`tensor_{3,4,5}d`** directory stores; **`groups_3d`** with **`primary/`** subgroup                                               |
+| Path                         | Contents                                                                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `small/h5/`, `small/netcdf/` | **`tensor_{3,4,5}d`** — baseline root vars **f32, f64, i32, i64**                                                                                                      |
+| `small/h5/`, `small/netcdf/` | **`groups_3d`** — nested **`primary/{dtype}`** + **`aux`**, **`meta`** groups                                                                                          |
+| `small/h5/`, `small/netcdf/` | **`cf_3d`** — coords (**time/lat/lon**), **`temperature`** with **scale_factor / add_offset / \_FillValue**, plus root **f32…i64**                                     |
+| `small/zarr/`                | **`tensor_{3,4,5}d`** directory stores; **`groups_3d`** with **`primary/`** subgroup                                                                                   |
+| `small/tet/`                 | Tracked **`.tet`** for **`tet verify`**, **`tet verify --deep`**, **`tet repair`**, and **query** on **u8/u32/f16** — see [`small/tet/README.md`](small/tet/README.md) |
 
 | File        | Shape              | Notes                                  |
 | ----------- | ------------------ | -------------------------------------- |
@@ -65,10 +66,10 @@ mise run fixtures:clean-extra-large
 
 ## Tests
 
-| Consumer           | What it checks                                                                                                    |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Consumer               | What it checks                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/tests/convert.rs` | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
-| Manual / bench     | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks)                                      |
+| Manual / bench         | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks)                                                                         |
 
 Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --lib tests::convert`.
 

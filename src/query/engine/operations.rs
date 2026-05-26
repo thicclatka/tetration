@@ -61,6 +61,36 @@ fn materialized_io(materialized: &MaterializedLogical) -> (u64, MemoryStrategy) 
             total_bytes_read_from_disk,
             strategy,
             ..
+        }
+        | MaterializedLogical::U8 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
+        }
+        | MaterializedLogical::U16 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
+        }
+        | MaterializedLogical::I16 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
+        }
+        | MaterializedLogical::U32 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
+        }
+        | MaterializedLogical::U64 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
+        }
+        | MaterializedLogical::F16 {
+            total_bytes_read_from_disk,
+            strategy,
+            ..
         } => (*total_bytes_read_from_disk, *strategy),
     }
 }
@@ -83,6 +113,18 @@ fn preview_from_bundle(
         bundle.i32_truncated,
         bundle.i64,
         bundle.i64_truncated,
+        bundle.u8,
+        bundle.u8_truncated,
+        bundle.u16,
+        bundle.u16_truncated,
+        bundle.i16,
+        bundle.i16_truncated,
+        bundle.u32,
+        bundle.u32_truncated,
+        bundle.u64,
+        bundle.u64_truncated,
+        bundle.f16,
+        bundle.f16_truncated,
         operation,
         memory_strategy,
         spill_f32_path,
@@ -132,6 +174,18 @@ fn fold_outcome_to_preview(
             f64_truncated: folded.f64_preview_truncated,
             i32_truncated: folded.i32_preview_truncated,
             i64_truncated: folded.i64_preview_truncated,
+            u8: folded.u8_preview,
+            u8_truncated: folded.u8_preview_truncated,
+            u16: folded.u16_preview,
+            u16_truncated: folded.u16_preview_truncated,
+            i16: folded.i16_preview,
+            i16_truncated: folded.i16_preview_truncated,
+            u32: folded.u32_preview,
+            u32_truncated: folded.u32_preview_truncated,
+            u64: folded.u64_preview,
+            u64_truncated: folded.u64_preview_truncated,
+            f16: folded.f16_preview,
+            f16_truncated: folded.f16_preview_truncated,
         },
         folded.operation,
         Some(strategy.as_str()),

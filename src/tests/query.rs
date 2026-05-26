@@ -930,6 +930,53 @@ fn plan_query_operation_median_scalar_temp_spill_when_over_budget() {
 }
 
 #[test]
+fn plan_query_u16_preview_and_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("u16.tet");
+    fixture::write_multichunk_2x3_u16_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.u16_preview.len(), 4);
+    assert!(ex.u16_preview_truncated);
+    assert_eq!(ex.operation_sum.unwrap(), 21.0);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_u16_bytes, Some(12));
+}
+
+#[test]
+fn plan_query_i16_preview_and_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("i16.tet");
+    fixture::write_multichunk_2x3_i16_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.i16_preview.len(), 4);
+    assert!(ex.i16_preview_truncated);
+    assert_eq!(ex.operation_sum.unwrap(), 21.0);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_i16_bytes, Some(12));
+}
+
+#[test]
+fn plan_query_u8_preview_and_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("u8.tet");
+    fixture::write_multichunk_2x3_u8_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","sum":[]}"#;
+    let doc = parse_query_json(json).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(4)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.u8_preview.len(), 4);
+    assert!(ex.u8_preview_truncated);
+    assert_eq!(ex.f32_preview.len(), 0);
+    assert_eq!(ex.operation_sum.unwrap(), 21.0);
+    assert_eq!(resp.catalog.as_ref().unwrap().dataset_u8_bytes, Some(6));
+}
+
+#[test]
 fn plan_query_i32_preview_and_sum() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("i32.tet");

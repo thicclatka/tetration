@@ -162,6 +162,9 @@ fn map_netcdf_dtype(name: &str, ty: NcVariableType) -> Result<ElementDtype, Conv
     match ty {
         NcVariableType::Float(FloatType::F32) => Ok(ElementDtype::F32),
         NcVariableType::Float(FloatType::F64) => Ok(ElementDtype::F64),
+        NcVariableType::Int(IntType::U8 | IntType::I8) => Ok(ElementDtype::U8),
+        NcVariableType::Int(IntType::U16) => Ok(ElementDtype::U16),
+        NcVariableType::Int(IntType::I16) => Ok(ElementDtype::I16),
         NcVariableType::Int(IntType::I32) => Ok(ElementDtype::I32),
         NcVariableType::Int(IntType::I64) => Ok(ElementDtype::I64),
         other => Err(ConvertError::UnsupportedDtype {

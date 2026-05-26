@@ -76,6 +76,29 @@ pub fn le_row_major_2x3_f32_one_to_six() -> Vec<u8> {
     data
 }
 
+/// Row-major `u8` tensor values 1..=6 (`shape` [2, 3]).
+pub fn le_row_major_2x3_u8_one_to_six() -> Vec<u8> {
+    (1_u8..=6).collect()
+}
+
+/// Row-major `u16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_u16..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `i16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_i16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_i16..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
 /// Row-major `i32` tensor values 1..=6 as little-endian bytes (`shape` [2, 3]).
 pub fn le_row_major_2x3_i32_one_to_six() -> Vec<u8> {
     let mut data = vec![0u8; 24];
@@ -165,6 +188,100 @@ fn write_multichunk_2x3_f64(path: &Path, dataset_name: &str, chunk_codec: u32, d
     );
 }
 
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u16` file (values 1..6).
+pub fn write_multichunk_2x3_u16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u16,
+        &le_row_major_2x3_u16_one_to_six(),
+    );
+}
+
+/// Row-major `u32` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u32_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 24];
+    for (slot, n) in data.chunks_exact_mut(4).zip(1_u32..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `u64` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u64_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 48];
+    for (slot, n) in data.chunks_exact_mut(8).zip(1_u64..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `f16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_f16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_u32..=6) {
+        let v = half::f16::from_f32(n as f32);
+        slot.copy_from_slice(&v.to_bits().to_le_bytes());
+    }
+    data
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u32` file (values 1..6).
+pub fn write_multichunk_2x3_u32_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u32,
+        &le_row_major_2x3_u32_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u64` file (values 1..6).
+pub fn write_multichunk_2x3_u64_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u64,
+        &le_row_major_2x3_u64_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f16` file (values 1..6).
+pub fn write_multichunk_2x3_f16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.f16,
+        &le_row_major_2x3_f16_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i16` file (values 1..6).
+pub fn write_multichunk_2x3_i16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.i16,
+        &le_row_major_2x3_i16_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u8` file (values 1..6).
+pub fn write_multichunk_2x3_u8_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u8,
+        &le_row_major_2x3_u8_one_to_six(),
+    );
+}
+
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i32` file (values 1..6).
 pub fn write_multichunk_2x3_i32_tiles(path: &Path, dataset_name: &str) {
     write_multichunk_2x3(
@@ -217,4 +334,79 @@ pub fn write_multichunk_2x3_with_execution(
 /// (all-zero `f32` tensor so frames shrink on disk).
 pub fn write_multichunk_2x3_zero_zstd(path: &Path, dataset_name: &str) {
     write_multichunk_2x3_zstd(path, dataset_name, &vec![0u8; 24]);
+}
+
+/// Shape `[34, 64]` with chunk `[4, 4]` → **144** tiles (quick verify samples 128).
+pub const VERIFY_LARGE_SHAPE: [u64; 2] = [34, 64];
+pub const VERIFY_LARGE_CHUNK: [u64; 2] = [4, 4];
+
+/// Write a raw `f32` grid with more than [`crate::verify::DEEP_DECODE_MAX_CHUNKS`] chunks.
+pub fn write_verify_large_f32(path: &Path, dataset_name: &str) {
+    let ne = usize::try_from(VERIFY_LARGE_SHAPE[0] * VERIFY_LARGE_SHAPE[1]).unwrap();
+    let mut data = vec![0u8; ne * 4];
+    for (slot, i) in data.chunks_exact_mut(4).zip(0_u32..) {
+        slot.copy_from_slice(&(i as f32).to_le_bytes());
+    }
+    write_raw_array_file(
+        path,
+        &RawArrayWrite {
+            name: dataset_name,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            shape: &VERIFY_LARGE_SHAPE,
+            chunk_shape: &VERIFY_LARGE_CHUNK,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            data: &data,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+}
+
+fn corrupt_footer_json_bytes(data: &mut [u8]) {
+    const TAIL: usize = 16;
+    let json_len = u64::from_le_bytes(
+        data[data.len() - TAIL..data.len() - TAIL + 8]
+            .try_into()
+            .unwrap(),
+    );
+    let json_end = data.len() - TAIL;
+    let json_start = json_end - usize::try_from(json_len).unwrap();
+    for b in &mut data[json_start..json_end] {
+        *b = b'X';
+    }
+}
+
+/// Multichunk `f32` plus a corrupt history footer (for `tet verify` / `tet repair plan`).
+pub fn write_repair_plan_fixture(path: &Path, dataset_name: &str) {
+    use crate::catalog::{FooterBlobV1, TetMetadataV1, write_footer_blob};
+
+    write_multichunk_2x3_tiles(path, dataset_name);
+    write_footer_blob(
+        path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1::default()),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+    let mut data = std::fs::read(path).unwrap();
+    corrupt_footer_json_bytes(&mut data);
+    std::fs::write(path, &data).unwrap();
+}
+
+/// Regenerate tracked files under `fixtures/small/tet/` (see `fixtures/small/tet/README.md`).
+pub fn write_tracked_small_tet_fixtures(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    write_multichunk_2x3_tiles(&dir.join("sample.tet"), "temperature");
+    write_verify_large_f32(&dir.join("large.tet"), "a");
+    write_repair_plan_fixture(&dir.join("plan.tet"), "a");
+    write_multichunk_2x3_u8_tiles(&dir.join("multichunk_u8.tet"), "a");
+    write_multichunk_2x3_u32_tiles(&dir.join("multichunk_u32.tet"), "a");
+    write_multichunk_2x3_f16_tiles(&dir.join("multichunk_f16.tet"), "a");
+}
+
+/// Path to committed manual fixtures: `fixtures/small/tet/`.
+pub fn tracked_small_tet_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/small/tet")
 }

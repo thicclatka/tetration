@@ -36,8 +36,8 @@ pub use execution::{DEFAULT_MEMORY_BUDGET_PERCENT_BPS, FileExecutionSettingsV1};
 pub(crate) use history::rewrite_footer_bytes_for_test;
 pub use history::{
     FooterBlobV1, HistoryEvent, HistoryEventV1, HistoryFooterWireV1, MetadataBlobRefV1,
-    append_convert_history, append_history_events, read_footer_blob, read_metadata,
-    unix_timestamp_now, write_footer_blob,
+    append_convert_history, append_history_events, payload_file_len, read_footer_blob,
+    read_metadata, unix_timestamp_now, write_footer_blob,
 };
 pub use index::{CHUNK_INDEX_HEADER_V1, ChunkIndexEntryV1, ChunkIndexHeaderV1};
 pub use metadata::{
@@ -52,6 +52,13 @@ pub use stream_write::{
 };
 pub use tile::{chunk_coords_intersecting_global_box, chunk_coords_intersecting_strided};
 pub use write::{write_multi_raw_array_file, write_one_chunk_raw_file, write_raw_array_file};
+
+/// Verify APIs moved to [`crate::verify`]; re-exported for compatibility.
+pub use crate::verify::{
+    TetVerifyReport, VerifyFinding, VerifyFixHint, VerifyRecommendation, VerifySeverity,
+    VerifySummary, format_verify_json, format_verify_quiet, format_verify_text, verify_tet_bytes,
+    verify_tet_file,
+};
 
 /// v1 chunk payload codec wire tags (`u32` values written per chunk in the index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +157,18 @@ pub struct DatasetDtypeTagV1 {
     pub i32: u32,
     /// Two's-complement `i64`, row-major within each chunk.
     pub i64: u32,
+    /// Unsigned `u8`, row-major within each chunk.
+    pub u8: u32,
+    /// Unsigned `u16`, row-major within each chunk.
+    pub u16: u32,
+    /// Two's-complement `i16`, row-major within each chunk.
+    pub i16: u32,
+    /// Unsigned `u32`, row-major within each chunk.
+    pub u32: u32,
+    /// IEEE754 binary16 (`f16`), row-major within each chunk.
+    pub f16: u32,
+    /// Unsigned `u64`, row-major within each chunk.
+    pub u64: u32,
 }
 
 /// Defined dataset element dtypes for layout v1 (see `docs/layout_v1.md`).
@@ -158,6 +177,12 @@ pub const DATASET_DTYPE_TAG_V1: DatasetDtypeTagV1 = DatasetDtypeTagV1 {
     f64: 2,
     i32: 3,
     i64: 4,
+    u8: 5,
+    u16: 6,
+    i16: 7,
+    u32: 8,
+    f16: 9,
+    u64: 10,
 };
 
 impl DatasetDtypeTagV1 {
@@ -182,8 +207,47 @@ impl DatasetDtypeTagV1 {
     }
 
     #[must_use]
+    pub const fn is_u8(self, dtype: u32) -> bool {
+        dtype == self.u8
+    }
+
+    #[must_use]
+    pub const fn is_u16(self, dtype: u32) -> bool {
+        dtype == self.u16
+    }
+
+    #[must_use]
+    pub const fn is_i16(self, dtype: u32) -> bool {
+        dtype == self.i16
+    }
+
+    #[must_use]
+    pub const fn is_u32(self, dtype: u32) -> bool {
+        dtype == self.u32
+    }
+
+    #[must_use]
+    pub const fn is_f16(self, dtype: u32) -> bool {
+        dtype == self.f16
+    }
+
+    #[must_use]
+    pub const fn is_u64(self, dtype: u32) -> bool {
+        dtype == self.u64
+    }
+
+    #[must_use]
     pub const fn is_supported(self, dtype: u32) -> bool {
-        self.is_f32(dtype) || self.is_f64(dtype) || self.is_i32(dtype) || self.is_i64(dtype)
+        self.is_f32(dtype)
+            || self.is_f64(dtype)
+            || self.is_i32(dtype)
+            || self.is_i64(dtype)
+            || self.is_u8(dtype)
+            || self.is_u16(dtype)
+            || self.is_i16(dtype)
+            || self.is_u32(dtype)
+            || self.is_f16(dtype)
+            || self.is_u64(dtype)
     }
 }
 
