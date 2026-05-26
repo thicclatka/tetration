@@ -4,7 +4,7 @@ use crate::query::engine::budget::MemoryStrategy;
 
 use super::int;
 use super::shared::mmap_spill;
-use super::types::{LogicalF32Backing, LogicalF64Backing};
+use super::types::{LogicalF16Backing, LogicalF32Backing, LogicalF64Backing};
 
 pub(crate) enum MaterializedLogical {
     F32 {
@@ -42,6 +42,21 @@ pub(crate) enum MaterializedLogical {
         total_bytes_read_from_disk: u64,
         strategy: MemoryStrategy,
     },
+    U32 {
+        backing: int::LogicalU32Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    U64 {
+        backing: int::LogicalU64Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
+    F16 {
+        backing: LogicalF16Backing,
+        total_bytes_read_from_disk: u64,
+        strategy: MemoryStrategy,
+    },
 }
 
 /// Load a materialized logical selection as `f64` for tier-C statistics.
@@ -71,5 +86,17 @@ pub(crate) fn materialized_logical_as_f64(
         MaterializedLogical::U8 { backing, .. } => int::materialized_logical_as_f64_u8(backing),
         MaterializedLogical::U16 { backing, .. } => int::materialized_logical_as_f64_u16(backing),
         MaterializedLogical::I16 { backing, .. } => int::materialized_logical_as_f64_i16(backing),
+        MaterializedLogical::U32 { backing, .. } => int::materialized_logical_as_f64_u32(backing),
+        MaterializedLogical::U64 { backing, .. } => int::materialized_logical_as_f64_u64(backing),
+        MaterializedLogical::F16 { backing, .. } => match backing {
+            LogicalF16Backing::InMemory(v) => Ok(v.iter().map(|&x| f64::from(x)).collect()),
+            LogicalF16Backing::TempSpill(temp) => {
+                let mmap = super::shared::mmap_spill(temp.path())?;
+                Ok(bytemuck::cast_slice::<u8, half::f16>(&mmap)
+                    .iter()
+                    .map(|&x| f64::from(x))
+                    .collect())
+            }
+        },
     }
 }

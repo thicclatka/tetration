@@ -13,6 +13,9 @@ pub(crate) struct FoldPlanOutcome {
     pub u8_preview: Vec<u8>,
     pub u16_preview: Vec<u16>,
     pub i16_preview: Vec<i16>,
+    pub u32_preview: Vec<u32>,
+    pub u64_preview: Vec<u64>,
+    pub f16_preview: Vec<half::f16>,
     pub f32_preview_truncated: bool,
     pub f64_preview_truncated: bool,
     pub i32_preview_truncated: bool,
@@ -20,6 +23,9 @@ pub(crate) struct FoldPlanOutcome {
     pub u8_preview_truncated: bool,
     pub u16_preview_truncated: bool,
     pub i16_preview_truncated: bool,
+    pub u32_preview_truncated: bool,
+    pub u64_preview_truncated: bool,
+    pub f16_preview_truncated: bool,
     pub total_bytes_read_from_disk: u64,
     pub operation: OperationPreviewFields,
 }
@@ -28,17 +34,28 @@ pub(crate) struct FoldPlanOutcome {
 pub(crate) enum FoldPreviewBuffer {
     F32(Vec<f32>),
     F64(Vec<f64>),
+    F16(Vec<half::f16>),
     I32(Vec<i32>),
     I64(Vec<i64>),
     U8(Vec<u8>),
     U16(Vec<u16>),
     I16(Vec<i16>),
+    U32(Vec<u32>),
+    U64(Vec<u64>),
 }
 
-macro_rules! empty_int_previews {
-    () => {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
-    };
+#[derive(Default)]
+struct EmptyPreviews {
+    f32: Vec<f32>,
+    f64: Vec<f64>,
+    f16: Vec<half::f16>,
+    i32: Vec<i32>,
+    i64: Vec<i64>,
+    u8: Vec<u8>,
+    u16: Vec<u16>,
+    i16: Vec<i16>,
+    u32: Vec<u32>,
+    u64: Vec<u64>,
 }
 
 /// Build a [`FoldPlanOutcome`] for any supported preview dtype.
@@ -52,134 +69,84 @@ pub(crate) fn build_fold_plan_outcome_typed(
 ) -> FoldPlanOutcome {
     let empty = max_preview == 0;
     let truncated = logical_len > max_preview;
-    let (i32_p, i64_p, u8_p, u16_p, i16_p) = empty_int_previews!();
+    let mut e = EmptyPreviews::default();
+    let mut f32_t = false;
+    let mut f64_t = false;
+    let mut f16_t = false;
+    let mut i32_t = false;
+    let mut i64_t = false;
+    let mut u8_t = false;
+    let mut u16_t = false;
+    let mut i16_t = false;
+    let mut u32_t = false;
+    let mut u64_t = false;
+
     match preview {
-        FoldPreviewBuffer::F32(v) => FoldPlanOutcome {
-            f32_preview: if empty { Vec::new() } else { v },
-            f64_preview: Vec::new(),
-            i32_preview: i32_p,
-            i64_preview: i64_p,
-            u8_preview: u8_p,
-            u16_preview: u16_p,
-            i16_preview: i16_p,
-            f32_preview_truncated: truncated,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            u8_preview_truncated: false,
-            u16_preview_truncated: false,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::F64(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: if empty { Vec::new() } else { v },
-            i32_preview: i32_p,
-            i64_preview: i64_p,
-            u8_preview: u8_p,
-            u16_preview: u16_p,
-            i16_preview: i16_p,
-            f32_preview_truncated: false,
-            f64_preview_truncated: truncated,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            u8_preview_truncated: false,
-            u16_preview_truncated: false,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::I32(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: if empty { Vec::new() } else { v },
-            i64_preview: i64_p,
-            u8_preview: u8_p,
-            u16_preview: u16_p,
-            i16_preview: i16_p,
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: truncated,
-            i64_preview_truncated: false,
-            u8_preview_truncated: false,
-            u16_preview_truncated: false,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::I64(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: i32_p,
-            i64_preview: if empty { Vec::new() } else { v },
-            u8_preview: u8_p,
-            u16_preview: u16_p,
-            i16_preview: i16_p,
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: truncated,
-            u8_preview_truncated: false,
-            u16_preview_truncated: false,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::U8(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: i32_p,
-            i64_preview: i64_p,
-            u8_preview: if empty { Vec::new() } else { v },
-            u16_preview: u16_p,
-            i16_preview: i16_p,
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            u8_preview_truncated: truncated,
-            u16_preview_truncated: false,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::U16(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: i32_p,
-            i64_preview: i64_p,
-            u8_preview: u8_p,
-            u16_preview: if empty { Vec::new() } else { v },
-            i16_preview: i16_p,
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            u8_preview_truncated: false,
-            u16_preview_truncated: truncated,
-            i16_preview_truncated: false,
-            total_bytes_read_from_disk,
-            operation,
-        },
-        FoldPreviewBuffer::I16(v) => FoldPlanOutcome {
-            f32_preview: Vec::new(),
-            f64_preview: Vec::new(),
-            i32_preview: i32_p,
-            i64_preview: i64_p,
-            u8_preview: u8_p,
-            u16_preview: u16_p,
-            i16_preview: if empty { Vec::new() } else { v },
-            f32_preview_truncated: false,
-            f64_preview_truncated: false,
-            i32_preview_truncated: false,
-            i64_preview_truncated: false,
-            u8_preview_truncated: false,
-            u16_preview_truncated: false,
-            i16_preview_truncated: truncated,
-            total_bytes_read_from_disk,
-            operation,
-        },
+        FoldPreviewBuffer::F32(v) => {
+            e.f32 = if empty { Vec::new() } else { v };
+            f32_t = truncated;
+        }
+        FoldPreviewBuffer::F64(v) => {
+            e.f64 = if empty { Vec::new() } else { v };
+            f64_t = truncated;
+        }
+        FoldPreviewBuffer::F16(v) => {
+            e.f16 = if empty { Vec::new() } else { v };
+            f16_t = truncated;
+        }
+        FoldPreviewBuffer::I32(v) => {
+            e.i32 = if empty { Vec::new() } else { v };
+            i32_t = truncated;
+        }
+        FoldPreviewBuffer::I64(v) => {
+            e.i64 = if empty { Vec::new() } else { v };
+            i64_t = truncated;
+        }
+        FoldPreviewBuffer::U8(v) => {
+            e.u8 = if empty { Vec::new() } else { v };
+            u8_t = truncated;
+        }
+        FoldPreviewBuffer::U16(v) => {
+            e.u16 = if empty { Vec::new() } else { v };
+            u16_t = truncated;
+        }
+        FoldPreviewBuffer::I16(v) => {
+            e.i16 = if empty { Vec::new() } else { v };
+            i16_t = truncated;
+        }
+        FoldPreviewBuffer::U32(v) => {
+            e.u32 = if empty { Vec::new() } else { v };
+            u32_t = truncated;
+        }
+        FoldPreviewBuffer::U64(v) => {
+            e.u64 = if empty { Vec::new() } else { v };
+            u64_t = truncated;
+        }
+    }
+
+    FoldPlanOutcome {
+        f32_preview: e.f32,
+        f64_preview: e.f64,
+        f16_preview: e.f16,
+        i32_preview: e.i32,
+        i64_preview: e.i64,
+        u8_preview: e.u8,
+        u16_preview: e.u16,
+        i16_preview: e.i16,
+        u32_preview: e.u32,
+        u64_preview: e.u64,
+        f32_preview_truncated: f32_t,
+        f64_preview_truncated: f64_t,
+        f16_preview_truncated: f16_t,
+        i32_preview_truncated: i32_t,
+        i64_preview_truncated: i64_t,
+        u8_preview_truncated: u8_t,
+        u16_preview_truncated: u16_t,
+        i16_preview_truncated: i16_t,
+        u32_preview_truncated: u32_t,
+        u64_preview_truncated: u64_t,
+        total_bytes_read_from_disk,
+        operation,
     }
 }
 
@@ -237,6 +204,20 @@ pub(crate) fn validate_fold_preview(
 pub(crate) fn validate_fold_preview_f64(
     saw_any: bool,
     preview: &[f64],
+    preview_cap: usize,
+) -> Result<(), TetError> {
+    validate_fold_preview_unset(
+        saw_any,
+        preview_cap,
+        preview.iter().any(|v| v.is_nan()),
+        "operation requires at least one decoded value from the read plan",
+    )
+}
+
+/// Like [`validate_fold_preview_f64`] for `f16` preview buffers.
+pub(crate) fn validate_fold_preview_f16(
+    saw_any: bool,
+    preview: &[half::f16],
     preview_cap: usize,
 ) -> Result<(), TetError> {
     validate_fold_preview_unset(

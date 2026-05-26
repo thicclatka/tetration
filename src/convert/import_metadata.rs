@@ -362,6 +362,24 @@ fn hdf5_read_1d_labels(
             .into_iter()
             .map(label_from_display)
             .collect(),
+        ElementDtype::U32 => ds
+            .read_raw::<u32>()
+            .ok()?
+            .into_iter()
+            .map(label_from_display)
+            .collect(),
+        ElementDtype::U64 => ds
+            .read_raw::<u64>()
+            .ok()?
+            .into_iter()
+            .map(label_from_display)
+            .collect(),
+        ElementDtype::F16 => ds
+            .read_raw::<u16>()
+            .ok()?
+            .into_iter()
+            .map(|bits| label_from_display(f64::from(half::f16::from_bits(bits))))
+            .collect(),
     })
 }
 

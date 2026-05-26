@@ -7,6 +7,9 @@ use crate::query::engine::spill_policy::{SpillPathAllowlist, TempSpillFile};
 use crate::query::types::{ReadPlan, TetError};
 use crate::utils::dtype::ElementDtype;
 
+use super::f16::{
+    materialize_into_vec_f16, preview_from_materialized_f16, preview_from_spill_file_f16,
+};
 use super::f32::{
     materialize_into_vec, preview_from_materialized_f32, preview_from_spill_file_f32,
 };
@@ -15,7 +18,7 @@ use super::f64::{
 };
 use super::int;
 use super::logical::MaterializedLogical;
-use super::types::{DecodePreviewBundle, LogicalF32Backing, LogicalF64Backing};
+use super::types::{DecodePreviewBundle, LogicalF16Backing, LogicalF32Backing, LogicalF64Backing};
 
 /// Decode the full logical selection, choosing RAM vs temp spill from the memory budget.
 pub(crate) fn materialize_logical_selection(
@@ -26,107 +29,163 @@ pub(crate) fn materialize_logical_selection(
     dtype: ElementDtype,
 ) -> Result<MaterializedLogical, TetError> {
     if budget.full_tensor_exceeds_budget(plan, dtype)? {
-        let temp = TempSpillFile::create(allowlist)?;
-        let bytes = crate::query::dispatch::spill_full_selection(mmap, plan, temp.path(), dtype)?;
-        let strategy = MemoryStrategy::TempSpillMaterialize;
-        Ok(match dtype {
-            ElementDtype::F32 => MaterializedLogical::F32 {
-                backing: LogicalF32Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::F64 => MaterializedLogical::F64 {
-                backing: LogicalF64Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::I32 => MaterializedLogical::I32 {
-                backing: int::LogicalI32Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::I64 => MaterializedLogical::I64 {
-                backing: int::LogicalI64Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::U8 => MaterializedLogical::U8 {
-                backing: int::LogicalU8Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::U16 => MaterializedLogical::U16 {
-                backing: int::LogicalU16Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-            ElementDtype::I16 => MaterializedLogical::I16 {
-                backing: int::LogicalI16Backing::TempSpill(temp),
-                total_bytes_read_from_disk: bytes,
-                strategy,
-            },
-        })
+        materialize_logical_spill(mmap, plan, allowlist, dtype)
     } else {
-        let strategy = MemoryStrategy::InMemoryMaterialize;
-        match dtype {
-            ElementDtype::F32 => {
-                let (vec, bytes) = materialize_into_vec(mmap, plan)?;
-                Ok(MaterializedLogical::F32 {
-                    backing: LogicalF32Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::F64 => {
-                let (vec, bytes) = materialize_into_vec_f64(mmap, plan)?;
-                Ok(MaterializedLogical::F64 {
-                    backing: LogicalF64Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::I32 => {
-                let (vec, bytes) = int::materialize_into_vec_i32(mmap, plan)?;
-                Ok(MaterializedLogical::I32 {
-                    backing: int::LogicalI32Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::I64 => {
-                let (vec, bytes) = int::materialize_into_vec_i64(mmap, plan)?;
-                Ok(MaterializedLogical::I64 {
-                    backing: int::LogicalI64Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::U8 => {
-                let (vec, bytes) = int::materialize_into_vec_u8(mmap, plan)?;
-                Ok(MaterializedLogical::U8 {
-                    backing: int::LogicalU8Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::U16 => {
-                let (vec, bytes) = int::materialize_into_vec_u16(mmap, plan)?;
-                Ok(MaterializedLogical::U16 {
-                    backing: int::LogicalU16Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
-            }
-            ElementDtype::I16 => {
-                let (vec, bytes) = int::materialize_into_vec_i16(mmap, plan)?;
-                Ok(MaterializedLogical::I16 {
-                    backing: int::LogicalI16Backing::InMemory(vec),
-                    total_bytes_read_from_disk: bytes,
-                    strategy,
-                })
+        materialize_logical_in_memory(mmap, plan, dtype)
+    }
+}
+
+fn materialize_logical_spill(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    allowlist: &SpillPathAllowlist,
+    dtype: ElementDtype,
+) -> Result<MaterializedLogical, TetError> {
+    let temp = TempSpillFile::create(allowlist)?;
+    let bytes = crate::query::dispatch::spill_full_selection(mmap, plan, temp.path(), dtype)?;
+    let strategy = MemoryStrategy::TempSpillMaterialize;
+    Ok(match dtype {
+        ElementDtype::F32 => MaterializedLogical::F32 {
+            backing: LogicalF32Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::F64 => MaterializedLogical::F64 {
+            backing: LogicalF64Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::I32 => MaterializedLogical::I32 {
+            backing: int::LogicalI32Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::I64 => MaterializedLogical::I64 {
+            backing: int::LogicalI64Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::U8 => MaterializedLogical::U8 {
+            backing: int::LogicalU8Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::U16 => MaterializedLogical::U16 {
+            backing: int::LogicalU16Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::I16 => MaterializedLogical::I16 {
+            backing: int::LogicalI16Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::U32 => MaterializedLogical::U32 {
+            backing: int::LogicalU32Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::U64 => MaterializedLogical::U64 {
+            backing: int::LogicalU64Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+        ElementDtype::F16 => MaterializedLogical::F16 {
+            backing: LogicalF16Backing::TempSpill(temp),
+            total_bytes_read_from_disk: bytes,
+            strategy,
+        },
+    })
+}
+
+fn materialize_logical_in_memory(
+    mmap: &[u8],
+    plan: &ReadPlan,
+    dtype: ElementDtype,
+) -> Result<MaterializedLogical, TetError> {
+    let strategy = MemoryStrategy::InMemoryMaterialize;
+    Ok(match dtype {
+        ElementDtype::F32 => {
+            let (vec, bytes) = materialize_into_vec(mmap, plan)?;
+            MaterializedLogical::F32 {
+                backing: LogicalF32Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
             }
         }
-    }
+        ElementDtype::F64 => {
+            let (vec, bytes) = materialize_into_vec_f64(mmap, plan)?;
+            MaterializedLogical::F64 {
+                backing: LogicalF64Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::I32 => {
+            let (vec, bytes) = int::materialize_into_vec_i32(mmap, plan)?;
+            MaterializedLogical::I32 {
+                backing: int::LogicalI32Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::I64 => {
+            let (vec, bytes) = int::materialize_into_vec_i64(mmap, plan)?;
+            MaterializedLogical::I64 {
+                backing: int::LogicalI64Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::U8 => {
+            let (vec, bytes) = int::materialize_into_vec_u8(mmap, plan)?;
+            MaterializedLogical::U8 {
+                backing: int::LogicalU8Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::U16 => {
+            let (vec, bytes) = int::materialize_into_vec_u16(mmap, plan)?;
+            MaterializedLogical::U16 {
+                backing: int::LogicalU16Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::I16 => {
+            let (vec, bytes) = int::materialize_into_vec_i16(mmap, plan)?;
+            MaterializedLogical::I16 {
+                backing: int::LogicalI16Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::U32 => {
+            let (vec, bytes) = int::materialize_into_vec_u32(mmap, plan)?;
+            MaterializedLogical::U32 {
+                backing: int::LogicalU32Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::U64 => {
+            let (vec, bytes) = int::materialize_into_vec_u64(mmap, plan)?;
+            MaterializedLogical::U64 {
+                backing: int::LogicalU64Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+        ElementDtype::F16 => {
+            let (vec, bytes) = materialize_into_vec_f16(mmap, plan)?;
+            MaterializedLogical::F16 {
+                backing: LogicalF16Backing::InMemory(vec),
+                total_bytes_read_from_disk: bytes,
+                strategy,
+            }
+        }
+    })
 }
 
 /// First `max` logical values without a second full decode (from RAM or spill file).
@@ -168,6 +227,18 @@ pub(crate) fn preview_from_materialized(
             let (p, t) = int::preview_from_materialized_i16(backing, logical_len, max)?;
             Ok(DecodePreviewBundle::i16_preview(p, t))
         }
+        MaterializedLogical::U32 { backing, .. } => {
+            let (p, t) = int::preview_from_materialized_u32(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle::u32_preview(p, t))
+        }
+        MaterializedLogical::U64 { backing, .. } => {
+            let (p, t) = int::preview_from_materialized_u64(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle::u64_preview(p, t))
+        }
+        MaterializedLogical::F16 { backing, .. } => {
+            let (p, t) = preview_from_materialized_f16(backing, logical_len, max)?;
+            Ok(DecodePreviewBundle::f16_preview(p, t))
+        }
     }
 }
 
@@ -207,6 +278,18 @@ pub(crate) fn preview_from_spill_export_file(
         ElementDtype::I16 => {
             let (p, t) = int::preview_from_spill_file_i16(path, cap, logical_len)?;
             Ok(DecodePreviewBundle::i16_preview(p, t))
+        }
+        ElementDtype::U32 => {
+            let (p, t) = int::preview_from_spill_file_u32(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle::u32_preview(p, t))
+        }
+        ElementDtype::U64 => {
+            let (p, t) = int::preview_from_spill_file_u64(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle::u64_preview(p, t))
+        }
+        ElementDtype::F16 => {
+            let (p, t) = preview_from_spill_file_f16(path, cap, logical_len)?;
+            Ok(DecodePreviewBundle::f16_preview(p, t))
         }
     }
 }

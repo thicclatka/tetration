@@ -107,7 +107,7 @@ pub enum Commands {
         /// After verify, apply safe in-place repairs (see `tet repair`).
         #[arg(long)]
         repair: bool,
-        /// Decode every chunk payload (default: first 128 chunks on large files).
+        /// Full verify: decode every chunk payload (`tet verify` alone is a quick scan of the first 128 chunks on large files).
         #[arg(long)]
         deep: bool,
     },

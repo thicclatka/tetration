@@ -360,6 +360,135 @@ impl ValueAccum {
         }
     }
 
+    /// Bulk `i32` LE slab fold (values promoted to `f64`).
+    pub fn push_i32_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
+        debug_assert_eq!(raw.len() % 4, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[i32] = bytemuck::cast_slice(raw);
+        match kind {
+            ReductionKind::Count => {
+                self.count += vals.len();
+            }
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                self.sum += variance_simd::i32_sum_sumsq(vals).0;
+            }
+            ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let (slab_sum, slab_sumsq) = variance_simd::i32_sum_sumsq(vals);
+                self.sum += slab_sum;
+                self.welford
+                    .merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
+            }
+            ReductionKind::Min | ReductionKind::Max => {
+                self.count += vals.len();
+                let (slab_min, slab_max) = variance_simd::i32_min_max(vals);
+                if self.have_min_max {
+                    self.min = self.min.min(slab_min);
+                    self.max = self.max.max(slab_max);
+                } else {
+                    self.min = slab_min;
+                    self.max = slab_max;
+                    self.have_min_max = true;
+                }
+            }
+            ReductionKind::Product
+            | ReductionKind::NormL1
+            | ReductionKind::NormL2
+            | ReductionKind::AllFinite
+            | ReductionKind::AnyNan => {
+                for &v in vals {
+                    self.push_f64(f64::from(v));
+                }
+            }
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
+        }
+    }
+
+    /// Bulk `u8` LE slab fold (values promoted to `f64`).
+    pub fn push_u8_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
+        if raw.is_empty() {
+            return;
+        }
+        let vals = raw;
+        match kind {
+            ReductionKind::Count => {
+                self.count += vals.len();
+            }
+            ReductionKind::Sum | ReductionKind::Mean => {
+                self.count += vals.len();
+                self.sum += variance_simd::u8_sum_sumsq(vals).0;
+            }
+            ReductionKind::Var | ReductionKind::Std => {
+                self.count += vals.len();
+                let (slab_sum, slab_sumsq) = variance_simd::u8_sum_sumsq(vals);
+                self.sum += slab_sum;
+                self.welford
+                    .merge_sum_sumsq(vals.len() as f64, slab_sum, slab_sumsq);
+            }
+            ReductionKind::Min | ReductionKind::Max => {
+                self.count += vals.len();
+                let (slab_min, slab_max) = variance_simd::u8_min_max(vals);
+                if self.have_min_max {
+                    self.min = self.min.min(slab_min);
+                    self.max = self.max.max(slab_max);
+                } else {
+                    self.min = slab_min;
+                    self.max = slab_max;
+                    self.have_min_max = true;
+                }
+            }
+            ReductionKind::Product
+            | ReductionKind::NormL1
+            | ReductionKind::NormL2
+            | ReductionKind::AllFinite
+            | ReductionKind::AnyNan => {
+                for &v in vals {
+                    self.push_f64(f64::from(v));
+                }
+            }
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
+        }
+    }
+
+    /// Bulk `f16` LE slab fold (values promoted to `f64`).
+    pub fn push_f16_le_bytes(&mut self, raw: &[u8], kind: ReductionKind) {
+        debug_assert_eq!(raw.len() % 2, 0);
+        if raw.is_empty() {
+            return;
+        }
+        let vals: &[half::f16] = bytemuck::cast_slice(raw);
+        match kind {
+            ReductionKind::Count => {
+                self.count += vals.len();
+            }
+            ReductionKind::Sum
+            | ReductionKind::Mean
+            | ReductionKind::Var
+            | ReductionKind::Std
+            | ReductionKind::Min
+            | ReductionKind::Max
+            | ReductionKind::Product
+            | ReductionKind::NormL1
+            | ReductionKind::NormL2
+            | ReductionKind::AllFinite
+            | ReductionKind::AnyNan => {
+                for &v in vals {
+                    self.push_f64(f64::from(v));
+                }
+            }
+            ReductionKind::ArgMin | ReductionKind::ArgMax => {
+                unreachable!("argmin/argmax use ArgIndexAccum")
+            }
+        }
+    }
+
     #[must_use]
     #[allow(clippy::cast_precision_loss)]
     pub fn finish_f64(&self, kind: ReductionKind) -> f64 {

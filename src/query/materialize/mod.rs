@@ -1,5 +1,6 @@
 //! Decode planned chunk payloads into logical row-major tensors.
 
+mod f16;
 mod f32;
 mod f64;
 pub mod int;
@@ -11,15 +12,14 @@ pub mod stats;
 mod types;
 mod validate;
 
+pub use f16::{materialize_read_plan_f16_le, spill_read_plan_f16_le};
 pub use f32::{
     MaterializeReadPlanF32IntoOutcome, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, spill_read_plan_f32_le,
 };
 pub use f64::{materialize_read_plan_f64_le, spill_read_plan_f64_le};
-pub use int::{
-    materialize_read_plan_i16_le, materialize_read_plan_u8_le, materialize_read_plan_u16_le,
-};
 
+pub(crate) use f16::fold_read_plan_scalar_operation_f16;
 pub(crate) use f32::fold_read_plan_scalar_operation;
 pub(crate) use f64::fold_read_plan_scalar_operation_f64;
 pub(crate) use logical::{MaterializedLogical, materialized_logical_as_f64};

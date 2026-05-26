@@ -160,7 +160,7 @@ tet info data.tet --json | jq '.summary.datasets'
 
 **Goal:** **`tet verify`** / **`tet repair`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
 
-**Baseline (May 2026):** file health + wire tags `1`–`7` (`f32`–`i16`); booleans import as **`u8`**. Follow-ups (`u32`, `f16`, integer SIMD) are optional stretch, not blocking Phase 9.
+**Baseline (May 2026):** file health + wire tags `1`–`10` (`f32`–`u64`, including **`f16`** tag `9`); booleans import as **`u8`**. `tet verify` is a **quick scan** (first 128 chunk decode-checks on large files); use **`tet verify --deep`** for a full payload decode pass.
 
 ### File health / verification
 
@@ -181,7 +181,8 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (tag `5`), **`u16`**
 - [x] **Convert** — HDF5 signed/unsigned 8/16-bit + `Boolean`→`u8`; NetCDF `byte`/`short`/`ushort`; Zarr `int8`/`uint8`/`bool`→`u8`, `int16`/`uint16`.
 - [x] **Query** — materialize, streaming fold, tier-A/B/C, spill, dtype-matched previews (`u8_preview`, `u16_preview`, `i16_preview`).
 - [x] **Tests** — catalog roundtrip, query sum/preview, verify fixture gate per tag.
-- [ ] **More dtypes (`u32`, `f16`, …)** — optional stretch; repeat the wire-tag checklist when needed.
+- [x] **More dtypes (`u32`, `f16`, `u64`)** — wire tags `8`/`9`/`10`; query materialize/fold, convert (Zarr `float16`/`uint32`/`uint64`, HDF5 unsigned `U4`/`U8`), verify fixtures.
+- [x] **Integer SIMD (bulk `i32`/`u8` sum/var/min-max)** — [`variance_simd.rs`](src/query/fold/variance_simd.rs) + slab paths in [`reduction.rs`](src/query/fold/reduction.rs) / linear scan.
 - [ ] **SIMD / fast paths** — optional bulk kernels where ROI is clear (integer tags stay scalar-first today).
 
 ## Phase 9 — Query ops & interchange (later)
@@ -209,7 +210,7 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 ### Already shipped (Phase 4)
 
-- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when in-core and `chunk_count > 1` ([`parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
+- [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when in-core and `chunk_count > 1` ([`parallel/`](src/query/fold/parallel/mod.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [x] **Out-of-core linear scan** — sequential byte-stream fold when logical size exceeds available RAM headroom and payloads are contiguous raw ([`linear_scan.rs`](src/query/fold/linear_scan.rs), [PR #7](https://github.com/thicclatka/tetration/pull/7)).
 
 ## Phase 10 — GPU (later)
@@ -278,7 +279,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 
 1. ~~**Dtypes:** integer tags (`i32` / `i64`) on disk and in materialize.~~ **Done** — wire tags `3`/`4`, writers, query preview/spill/ops.
 2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `src/tests/convert.rs`, [`fixtures/`](fixtures/README.md).~~ **Done**
-3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel_fold.rs`](src/query/fold/parallel_fold.rs).
+3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel/`](src/query/fold/parallel/mod.rs).
 4. ~~**Adaptive out-of-core fold:** linear scan + SIMD bulk tier-A/B when data oversubscribes RAM.~~ **Done** — [PR #7](https://github.com/thicclatka/tetration/pull/7); see [`fold_policy.rs`](src/query/fold/fold_policy.rs), [`linear_scan.rs`](src/query/fold/linear_scan.rs).
 5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
 6. **Query front-end spike (Phase 6+):** optional TOML or line-oriented profile → same `QueryDocument`; golden files in repo.

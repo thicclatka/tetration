@@ -91,6 +91,23 @@ impl TetVerifyReport {
         .finalize()
     }
 
+    /// Structural failure before a full summary is available.
+    pub(crate) fn incomplete(
+        path: Option<String>,
+        file_len: u64,
+        findings: Vec<VerifyFinding>,
+    ) -> Self {
+        Self {
+            ok: false,
+            path,
+            file_len,
+            findings,
+            recommendations: Vec::new(),
+            summary: None,
+        }
+        .finalize()
+    }
+
     pub(crate) fn finalize(mut self) -> Self {
         self.recommendations = super::recommend::recommendations_for_findings(&self.findings);
         if let Some(path_s) = self.path.clone() {

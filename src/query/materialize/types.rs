@@ -12,6 +12,11 @@ pub(crate) enum LogicalF64Backing {
     TempSpill(TempSpillFile),
 }
 
+pub(crate) enum LogicalF16Backing {
+    InMemory(Vec<half::f16>),
+    TempSpill(TempSpillFile),
+}
+
 /// Capped decode previews for all supported element types.
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -23,6 +28,9 @@ pub(crate) struct DecodePreviewBundle {
     pub u8: Vec<u8>,
     pub u16: Vec<u16>,
     pub i16: Vec<i16>,
+    pub u32: Vec<u32>,
+    pub u64: Vec<u64>,
+    pub f16: Vec<half::f16>,
     pub f32_truncated: bool,
     pub f64_truncated: bool,
     pub i32_truncated: bool,
@@ -30,6 +38,9 @@ pub(crate) struct DecodePreviewBundle {
     pub u8_truncated: bool,
     pub u16_truncated: bool,
     pub i16_truncated: bool,
+    pub u32_truncated: bool,
+    pub u64_truncated: bool,
+    pub f16_truncated: bool,
 }
 
 impl DecodePreviewBundle {
@@ -48,6 +59,9 @@ impl DecodePreviewBundle {
             u8_truncated: truncated,
             u16_truncated: truncated,
             i16_truncated: truncated,
+            u32_truncated: truncated,
+            u64_truncated: truncated,
+            f16_truncated: truncated,
             ..Self::default()
         }
     }
@@ -111,6 +125,33 @@ impl DecodePreviewBundle {
         Self {
             i16: values,
             i16_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn u32_preview(values: Vec<u32>, truncated: bool) -> Self {
+        Self {
+            u32: values,
+            u32_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn u64_preview(values: Vec<u64>, truncated: bool) -> Self {
+        Self {
+            u64: values,
+            u64_truncated: truncated,
+            ..Self::empty()
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn f16_preview(values: Vec<half::f16>, truncated: bool) -> Self {
+        Self {
+            f16: values,
+            f16_truncated: truncated,
             ..Self::empty()
         }
     }

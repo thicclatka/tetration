@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::catalog::{CatalogError, read_tet_summary_v1};
+use crate::catalog::{CatalogError, TetFileSummaryV1, read_tet_summary_v1};
 
 use super::chunks::{
     check_chunk_dataset_ids, check_chunk_decode, check_duplicate_payload_offsets,
@@ -11,7 +11,7 @@ use super::chunks::{
 use super::datasets::check_dataset_tensor_bytes;
 use super::footer::{check_dataset_count, check_footer, check_footer_metadata_limits};
 use super::options::VerifyOptions;
-use super::report::{TetVerifyReport, VerifySummary, ok_finding};
+use super::report::{TetVerifyReport, VerifyFinding, VerifySummary, ok_finding};
 
 /// Verify a mapped `.tet` byte slice.
 #[must_use]
@@ -26,28 +26,36 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>, opts: VerifyOptions) -
         }
     };
 
-    let mut findings = vec![
+    let findings = match verify_chunks_and_datasets(&summary, path_s.clone(), file_len) {
+        Ok(f) => f,
+        Err(report) => return report,
+    };
+    let (findings, deep_decode) = verify_decode_pass(data, &summary.chunks, findings, opts);
+    verify_footer_pass(data, &summary, findings, path_s, file_len, deep_decode)
+}
+
+fn initial_findings() -> Vec<VerifyFinding> {
+    vec![
         ok_finding("superblock", None),
         ok_finding("dataset_directory", None),
         ok_finding("chunk_index", None),
-    ];
+        ok_finding(
+            "chunk_payloads",
+            Some("index spans validated during parse".to_owned()),
+        ),
+    ]
+}
 
-    findings.push(ok_finding(
-        "chunk_payloads",
-        Some("index spans validated during parse".to_owned()),
-    ));
+fn verify_chunks_and_datasets(
+    summary: &TetFileSummaryV1,
+    path_s: Option<String>,
+    file_len: u64,
+) -> Result<Vec<VerifyFinding>, TetVerifyReport> {
+    let mut findings = initial_findings();
 
     if let Some(f) = check_chunk_dataset_ids(&summary.datasets, &summary.chunks) {
         findings.push(f);
-        return TetVerifyReport {
-            ok: false,
-            path: path_s,
-            file_len,
-            findings,
-            recommendations: Vec::new(),
-            summary: None,
-        }
-        .finalize();
+        return Err(TetVerifyReport::incomplete(path_s, file_len, findings));
     }
     findings.push(ok_finding("chunk_dataset_ids", None));
 
@@ -59,71 +67,56 @@ pub fn verify_tet_bytes(data: &[u8], path: Option<&Path>, opts: VerifyOptions) -
         .iter()
         .any(|f| f.check == "dataset_tensor_bytes" && !f.ok)
     {
-        return TetVerifyReport {
-            ok: false,
-            path: path_s,
-            file_len,
-            findings,
-            recommendations: Vec::new(),
-            summary: None,
-        }
-        .finalize();
+        return Err(TetVerifyReport::incomplete(path_s, file_len, findings));
     }
 
     if let Some(f) = check_duplicate_payload_offsets(&summary.chunks) {
         findings.push(f);
     }
-
     if let Some(f) = check_payload_order(&summary.chunks) {
         findings.push(f);
     }
 
-    let (decode_findings, deep_decode) =
-        check_chunk_decode(data, &summary.chunks, opts.deep_decode);
-    findings.extend(decode_findings);
+    Ok(findings)
+}
 
-    if let Some(f) = check_dataset_count(&summary) {
+fn verify_decode_pass(
+    data: &[u8],
+    chunks: &[crate::catalog::ChunkIndexEntryV1],
+    mut findings: Vec<VerifyFinding>,
+    opts: VerifyOptions,
+) -> (Vec<VerifyFinding>, bool) {
+    let (decode_findings, deep_decode) = check_chunk_decode(data, chunks, opts.deep_decode);
+    findings.extend(decode_findings);
+    (findings, deep_decode)
+}
+
+fn verify_footer_pass(
+    data: &[u8],
+    summary: &TetFileSummaryV1,
+    mut findings: Vec<VerifyFinding>,
+    path_s: Option<String>,
+    file_len: u64,
+    deep_decode: bool,
+) -> TetVerifyReport {
+    if let Some(f) = check_dataset_count(summary) {
         findings.push(f);
-        return TetVerifyReport {
-            ok: false,
-            path: path_s,
-            file_len,
-            findings,
-            recommendations: Vec::new(),
-            summary: None,
-        }
-        .finalize();
+        return TetVerifyReport::incomplete(path_s, file_len, findings);
     }
     findings.push(ok_finding("dataset_count", None));
 
-    match check_footer(data, &summary) {
+    match check_footer(data, summary) {
         Ok(f) => findings.push(f),
         Err(f) => {
             findings.push(f);
-            return TetVerifyReport {
-                ok: false,
-                path: path_s,
-                file_len,
-                findings,
-                recommendations: Vec::new(),
-                summary: None,
-            }
-            .finalize();
+            return TetVerifyReport::incomplete(path_s, file_len, findings);
         }
     }
 
-    let meta_finding = check_footer_metadata_limits(&summary);
+    let meta_finding = check_footer_metadata_limits(summary);
     if !meta_finding.ok {
         findings.push(meta_finding);
-        return TetVerifyReport {
-            ok: false,
-            path: path_s,
-            file_len,
-            findings,
-            recommendations: Vec::new(),
-            summary: None,
-        }
-        .finalize();
+        return TetVerifyReport::incomplete(path_s, file_len, findings);
     }
     findings.push(meta_finding);
 

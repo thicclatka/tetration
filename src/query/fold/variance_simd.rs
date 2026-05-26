@@ -260,3 +260,112 @@ pub(crate) fn f64_sum_sumsq(vals: &[f64]) -> (f64, f64) {
     }
     (sum, sumsq)
 }
+
+#[inline]
+pub(crate) fn scalar_i32_sum_sumsq(vals: &[i32]) -> (f64, f64) {
+    let mut sum = 0.0f64;
+    let mut sumsq = 0.0f64;
+    for &v in vals {
+        let x = f64::from(v);
+        sum += x;
+        sumsq += x * x;
+    }
+    (sum, sumsq)
+}
+
+#[cfg(target_arch = "x86_64")]
+mod i32_arch {
+    use std::arch::x86_64::*;
+
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn i32_sum_sumsq_sse2(vals: &[i32]) -> (f64, f64) {
+        let ptr = vals.as_ptr();
+        let len = vals.len();
+        let mut sum = 0.0f64;
+        let mut sumsq = 0.0f64;
+        let mut i = 0usize;
+        let simd_end = len - (len % 4);
+        while i < simd_end {
+            let (lo_arr, hi_arr) = unsafe {
+                let v = _mm_loadu_si128(ptr.add(i) as *const __m128i);
+                let lo = _mm_cvtepi32_pd(v);
+                let hi = _mm_cvtepi32_pd(_mm_shuffle_epi32(v, 0xEE));
+                let mut lo_arr = [0.0f64; 2];
+                let mut hi_arr = [0.0f64; 2];
+                _mm_storeu_pd(lo_arr.as_mut_ptr(), lo);
+                _mm_storeu_pd(hi_arr.as_mut_ptr(), hi);
+                (lo_arr, hi_arr)
+            };
+            sum += lo_arr[0] + lo_arr[1] + hi_arr[0] + hi_arr[1];
+            sumsq += lo_arr[0] * lo_arr[0]
+                + lo_arr[1] * lo_arr[1]
+                + hi_arr[0] * hi_arr[0]
+                + hi_arr[1] * hi_arr[1];
+            i += 4;
+        }
+        while i < len {
+            let x = f64::from(unsafe { *ptr.add(i) });
+            sum += x;
+            sumsq += x * x;
+            i += 1;
+        }
+        (sum, sumsq)
+    }
+}
+
+/// Sum and sum-of-squares for `i32` slabs promoted to `f64`.
+#[must_use]
+pub(crate) fn i32_sum_sumsq(vals: &[i32]) -> (f64, f64) {
+    if vals.is_empty() {
+        return (0.0, 0.0);
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("sse2") {
+            return unsafe { i32_arch::i32_sum_sumsq_sse2(vals) };
+        }
+    }
+    scalar_i32_sum_sumsq(vals)
+}
+
+#[inline]
+pub(crate) fn scalar_u8_sum_sumsq(vals: &[u8]) -> (f64, f64) {
+    let mut sum = 0.0f64;
+    let mut sumsq = 0.0f64;
+    for &v in vals {
+        let x = f64::from(v);
+        sum += x;
+        sumsq += x * x;
+    }
+    (sum, sumsq)
+}
+
+/// Sum and sum-of-squares for `u8` slabs promoted to `f64`.
+#[must_use]
+pub(crate) fn u8_sum_sumsq(vals: &[u8]) -> (f64, f64) {
+    scalar_u8_sum_sumsq(vals)
+}
+
+#[inline]
+pub(crate) fn i32_min_max(vals: &[i32]) -> (f64, f64) {
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for &v in vals {
+        let vd = f64::from(v);
+        min = min.min(vd);
+        max = max.max(vd);
+    }
+    (min, max)
+}
+
+#[inline]
+pub(crate) fn u8_min_max(vals: &[u8]) -> (f64, f64) {
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for &v in vals {
+        let vd = f64::from(v);
+        min = min.min(vd);
+        max = max.max(vd);
+    }
+    (min, max)
+}

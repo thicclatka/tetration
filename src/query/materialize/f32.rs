@@ -136,8 +136,8 @@ pub(crate) fn fold_read_plan_scalar_operation(
     kind: fold::reduction::ReductionKind,
     policy: &crate::query::fold::fold_policy::FoldIoPolicy,
 ) -> Result<fold::FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
-        return crate::query::fold::parallel_fold::fold_read_plan_scalar_operation_parallel(
+    if crate::query::fold::parallel::use_parallel_fold(plan, policy) {
+        return crate::query::fold::parallel::fold_read_plan_scalar_operation_parallel(
             mmap,
             plan,
             max_f32,

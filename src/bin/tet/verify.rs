@@ -10,6 +10,7 @@ use tetration::verify::{
 
 use crate::util::cli_error;
 
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct VerifyRunOpts {
     pub path: PathBuf,
     pub json: bool,

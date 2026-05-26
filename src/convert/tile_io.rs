@@ -34,6 +34,9 @@ pub(crate) fn read_hdf5_tile_le_into(
         ElementDtype::I16 => read_hdf5_tile_typed_into::<i16>(ds, &ranges, spec.ndim, buf),
         ElementDtype::I32 => read_hdf5_tile_typed_into::<i32>(ds, &ranges, spec.ndim, buf),
         ElementDtype::I64 => read_hdf5_tile_typed_into::<i64>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::U32 => read_hdf5_tile_typed_into::<u32>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::U64 => read_hdf5_tile_typed_into::<u64>(ds, &ranges, spec.ndim, buf),
+        ElementDtype::F16 => read_hdf5_tile_f16_into(ds, &ranges, spec.ndim, buf),
     }?;
     if let Some(cf) = spec.cf {
         cf.apply_tile_le(spec.dtype, buf)?;
@@ -55,6 +58,22 @@ fn copy_pod_tile_to_buf<T: bytemuck::Pod>(
         )));
     }
     buf.copy_from_slice(bytes);
+    Ok(())
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn read_hdf5_tile_f16_into(
+    ds: &hdf5_metno::Dataset,
+    ranges: &[(u64, u64)],
+    ndim: usize,
+    buf: &mut [u8],
+) -> Result<(), ConvertError> {
+    let mut tmp = vec![0u16; buf.len() / 2];
+    read_hdf5_tile_typed_into::<u16>(ds, ranges, ndim, bytemuck::cast_slice_mut(&mut tmp))?;
+    let out: &mut [half::f16] = bytemuck::cast_slice_mut(buf);
+    for (o, bits) in out.iter_mut().zip(tmp) {
+        *o = half::f16::from_bits(bits);
+    }
     Ok(())
 }
 

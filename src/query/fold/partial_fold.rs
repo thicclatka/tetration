@@ -2,48 +2,39 @@
 
 #![allow(clippy::too_many_lines, clippy::too_many_arguments)]
 
-use crate::query::types::{OperationPreviewFields, ReadPlan, TetError};
-
-use crate::query::decode::chunk_decode::{
-    visit_planned_chunk, visit_planned_chunk_f64, visit_planned_chunk_i32_as_f64,
-    visit_planned_chunk_i64_as_f64,
-};
-use crate::query::decode::indexing::coords_from_linear_row_major;
-use crate::query::dispatch::accumulate_chunk_read_bytes;
-use crate::query::fold::fold_policy::FoldIoPolicy;
-use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
-use crate::query::fold::reduction::{ArgIndexAccum, ReductionKind, ValueAccum};
-use crate::query::fold::shared::{
-    FoldPlanOutcome, FoldPreviewBuffer, build_fold_plan_outcome, build_fold_plan_outcome_typed,
-    validate_fold_preview, validate_fold_preview_f64,
+use crate::query::{
+    decode::{chunk_decode, indexing},
+    dispatch,
+    fold::{fold_policy, parallel, partial_geometry, reduction, shared},
+    types::{OperationPreviewFields, ReadPlan, TetError},
 };
 
 pub(crate) fn partial_arg_fields(
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     element_count: usize,
     out_shape: &[u64],
-    cells: &[ArgIndexAccum],
+    cells: &[reduction::ArgIndexAccum],
 ) -> OperationPreviewFields {
-    let indices: Vec<u64> = cells.iter().map(ArgIndexAccum::index).collect();
+    let indices: Vec<u64> = cells.iter().map(reduction::ArgIndexAccum::index).collect();
     let mut fields = OperationPreviewFields {
         element_count: Some(element_count),
         reduced_shape: Some(out_shape.to_vec()),
         ..OperationPreviewFields::default()
     };
     match kind {
-        ReductionKind::ArgMin => fields.reduced_argmin = Some(indices),
-        ReductionKind::ArgMax => fields.reduced_argmax = Some(indices),
+        reduction::ReductionKind::ArgMin => fields.reduced_argmin = Some(indices),
+        reduction::ReductionKind::ArgMax => fields.reduced_argmax = Some(indices),
         _ => {}
     }
     fields
 }
 
 pub(crate) fn partial_fields(
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     element_count: usize,
     out_shape: &[u64],
     reduced: &[f64],
-    cells: &[ValueAccum],
+    cells: &[reduction::ValueAccum],
 ) -> OperationPreviewFields {
     let mut fields = OperationPreviewFields {
         element_count: Some(element_count),
@@ -51,23 +42,23 @@ pub(crate) fn partial_fields(
         ..OperationPreviewFields::default()
     };
     match kind {
-        ReductionKind::Sum => fields.reduced_sum = Some(reduced.to_vec()),
-        ReductionKind::Mean => fields.reduced_mean = Some(reduced.to_vec()),
-        ReductionKind::Min => fields.reduced_min = Some(reduced.to_vec()),
-        ReductionKind::Max => fields.reduced_max = Some(reduced.to_vec()),
-        ReductionKind::Count => fields.reduced_count = Some(reduced.to_vec()),
-        ReductionKind::Var => fields.reduced_var = Some(reduced.to_vec()),
-        ReductionKind::Std => fields.reduced_std = Some(reduced.to_vec()),
-        ReductionKind::Product => fields.reduced_product = Some(reduced.to_vec()),
-        ReductionKind::NormL1 => fields.reduced_norm_l1 = Some(reduced.to_vec()),
-        ReductionKind::NormL2 => fields.reduced_norm_l2 = Some(reduced.to_vec()),
-        ReductionKind::AllFinite => {
+        reduction::ReductionKind::Sum => fields.reduced_sum = Some(reduced.to_vec()),
+        reduction::ReductionKind::Mean => fields.reduced_mean = Some(reduced.to_vec()),
+        reduction::ReductionKind::Min => fields.reduced_min = Some(reduced.to_vec()),
+        reduction::ReductionKind::Max => fields.reduced_max = Some(reduced.to_vec()),
+        reduction::ReductionKind::Count => fields.reduced_count = Some(reduced.to_vec()),
+        reduction::ReductionKind::Var => fields.reduced_var = Some(reduced.to_vec()),
+        reduction::ReductionKind::Std => fields.reduced_std = Some(reduced.to_vec()),
+        reduction::ReductionKind::Product => fields.reduced_product = Some(reduced.to_vec()),
+        reduction::ReductionKind::NormL1 => fields.reduced_norm_l1 = Some(reduced.to_vec()),
+        reduction::ReductionKind::NormL2 => fields.reduced_norm_l2 = Some(reduced.to_vec()),
+        reduction::ReductionKind::AllFinite => {
             fields.reduced_all_finite = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
         }
-        ReductionKind::AnyNan => {
+        reduction::ReductionKind::AnyNan => {
             fields.reduced_any_nan = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
         }
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
             unreachable!("argmin/argmax use partial_arg_fields")
         }
     }
@@ -79,12 +70,12 @@ pub(crate) fn fold_read_plan_partial_operation(
     mmap: &[u8],
     plan: &ReadPlan,
     max_f32: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-    policy: &FoldIoPolicy,
-) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
-        return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_parallel(
+    policy: &fold_policy::FoldIoPolicy,
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    if parallel::use_parallel_fold(plan, policy) {
+        return parallel::fold_read_plan_partial_operation_parallel(
             mmap,
             plan,
             max_f32,
@@ -109,24 +100,29 @@ pub(crate) fn fold_read_plan_partial_operation_int(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
     dtype: crate::utils::dtype::ElementDtype,
-    policy: &FoldIoPolicy,
-) -> Result<FoldPlanOutcome, TetError> {
+    policy: &fold_policy::FoldIoPolicy,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     use crate::utils::dtype::ElementDtype;
     match dtype {
-        ElementDtype::I32 => {
-            fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels, policy)
-        }
         ElementDtype::I64 => {
             fold_read_plan_partial_operation_i64(mmap, plan, max_preview, kind, axis_labels, policy)
         }
-        ElementDtype::U8 | ElementDtype::U16 | ElementDtype::I16 => {
+        ElementDtype::U8
+        | ElementDtype::I32
+        | ElementDtype::U16
+        | ElementDtype::I16
+        | ElementDtype::U32
+        | ElementDtype::U64 => {
             fold_read_plan_partial_operation_i32(mmap, plan, max_preview, kind, axis_labels, policy)
         }
+        ElementDtype::F16 => Err(TetError::Validation(
+            "partial-axis fold on f16 is not supported".into(),
+        )),
         _ => Err(TetError::Validation(
-            "integer partial fold requires i32, i64, u8, u16, or i16 dtype".into(),
+            "integer partial fold requires i32, i64, u8, u16, i16, u32, or u64 dtype".into(),
         )),
     }
 }
@@ -136,10 +132,10 @@ pub(crate) fn fold_read_plan_partial_operation_i32(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-    policy: &FoldIoPolicy,
-) -> Result<FoldPlanOutcome, TetError> {
+    policy: &fold_policy::FoldIoPolicy,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     fold_read_plan_partial_operation_promoted(
         mmap,
         plan,
@@ -156,10 +152,10 @@ pub(crate) fn fold_read_plan_partial_operation_i64(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-    policy: &FoldIoPolicy,
-) -> Result<FoldPlanOutcome, TetError> {
+    policy: &fold_policy::FoldIoPolicy,
+) -> Result<shared::FoldPlanOutcome, TetError> {
     fold_read_plan_partial_operation_promoted(
         mmap,
         plan,
@@ -175,12 +171,12 @@ fn fold_read_plan_partial_operation_promoted(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
     is_i32: bool,
     sequential_io: bool,
-) -> Result<FoldPlanOutcome, TetError> {
-    let layout = partial_axis_layout(plan, axis_labels)?;
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    let layout = partial_geometry::partial_axis_layout(plan, axis_labels)?;
     let shape = &plan.logical_selection_shape;
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
@@ -222,11 +218,11 @@ fn fold_read_plan_partial_operation_promoted(
             "operation requires at least one decoded value from the read plan".into(),
         ));
     }
-    Ok(build_fold_plan_outcome_typed(
+    Ok(shared::build_fold_plan_outcome_typed(
         if is_i32 {
-            FoldPreviewBuffer::I32(i32_preview)
+            shared::FoldPreviewBuffer::I32(i32_preview)
         } else {
-            FoldPreviewBuffer::I64(i64_preview)
+            shared::FoldPreviewBuffer::I64(i64_preview)
         },
         max_preview,
         n,
@@ -240,12 +236,12 @@ pub(crate) fn fold_read_plan_partial_operation_f64(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
-    policy: &FoldIoPolicy,
-) -> Result<FoldPlanOutcome, TetError> {
-    if crate::query::fold::parallel_fold::use_parallel_fold(plan, policy) {
-        return crate::query::fold::parallel_fold::fold_read_plan_partial_operation_f64_parallel(
+    policy: &fold_policy::FoldIoPolicy,
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    if crate::query::fold::parallel::use_parallel_fold(plan, policy) {
+        return parallel::fold_read_plan_partial_operation_f64_parallel(
             mmap,
             plan,
             max_preview,
@@ -269,12 +265,12 @@ fn fold_read_plan_partial_operation_impl(
     mmap: &[u8],
     plan: &ReadPlan,
     max_preview: usize,
-    kind: ReductionKind,
+    kind: reduction::ReductionKind,
     axis_labels: &[String],
     f64_path: bool,
     sequential_io: bool,
-) -> Result<FoldPlanOutcome, TetError> {
-    let layout = partial_axis_layout(plan, axis_labels)?;
+) -> Result<shared::FoldPlanOutcome, TetError> {
+    let layout = partial_geometry::partial_axis_layout(plan, axis_labels)?;
     let shape = &plan.logical_selection_shape;
     let n = plan.logical_f32_element_count;
     let preview_cap = max_preview.min(n);
@@ -314,17 +310,17 @@ fn fold_read_plan_partial_operation_impl(
     };
 
     if f64_path {
-        validate_fold_preview_f64(saw_any, &f64_preview, preview_cap)?;
-        Ok(build_fold_plan_outcome_typed(
-            FoldPreviewBuffer::F64(f64_preview),
+        shared::validate_fold_preview_f64(saw_any, &f64_preview, preview_cap)?;
+        Ok(shared::build_fold_plan_outcome_typed(
+            shared::FoldPreviewBuffer::F64(f64_preview),
             max_preview,
             n,
             total_bytes_read_from_disk,
             operation,
         ))
     } else {
-        validate_fold_preview(saw_any, &f32_preview, preview_cap)?;
-        Ok(build_fold_plan_outcome(
+        shared::validate_fold_preview(saw_any, &f32_preview, preview_cap)?;
+        Ok(shared::build_fold_plan_outcome(
             f32_preview,
             max_preview,
             n,
@@ -337,8 +333,8 @@ fn fold_read_plan_partial_operation_impl(
 fn run_partial_f32(
     mmap: &[u8],
     plan: &ReadPlan,
-    kind: ReductionKind,
-    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
+    kind: reduction::ReductionKind,
+    layout: &partial_geometry::PartialAxisLayout,
     shape: &[u64],
     n: usize,
     preview_cap: usize,
@@ -347,19 +343,23 @@ fn run_partial_f32(
     total_bytes: &mut u64,
     sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
+                let chunk_bytes = chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
                         preview[li] = v;
                     }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                    let oi = partial_geometry::reduced_index(
+                        &coords,
+                        &layout.axis_set,
+                        &layout.out_shape,
+                    )?;
                     let fi = crate::query::fold::partial_geometry::fiber_linear_index(
                         &coords,
                         &layout.axis_indices,
@@ -368,25 +368,29 @@ fn run_partial_f32(
                     cells[oi].push(fi, v, kind);
                     Ok(())
                 })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
         _ => {
-            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk(mmap, plan, c, |li, v| {
+                let chunk_bytes = chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
                         preview[li] = v;
                     }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                    let oi = partial_geometry::reduced_index(
+                        &coords,
+                        &layout.axis_set,
+                        &layout.out_shape,
+                    )?;
                     cells[oi].push(v);
                     Ok(())
                 })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
@@ -397,8 +401,8 @@ fn run_partial_f32(
 fn run_partial_f64(
     mmap: &[u8],
     plan: &ReadPlan,
-    kind: ReductionKind,
-    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
+    kind: reduction::ReductionKind,
+    layout: &partial_geometry::PartialAxisLayout,
     shape: &[u64],
     n: usize,
     preview_cap: usize,
@@ -407,19 +411,23 @@ fn run_partial_f64(
     total_bytes: &mut u64,
     sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
+                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
                         preview[li] = v;
                     }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                    let oi = partial_geometry::reduced_index(
+                        &coords,
+                        &layout.axis_set,
+                        &layout.out_shape,
+                    )?;
                     let fi = crate::query::fold::partial_geometry::fiber_linear_index(
                         &coords,
                         &layout.axis_indices,
@@ -428,25 +436,29 @@ fn run_partial_f64(
                     cells[oi].push_f64(fi, v, kind);
                     Ok(())
                 })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
         _ => {
-            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_f64(mmap, plan, c, |li, v| {
+                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(mmap, plan, c, |li, v| {
                     *saw_any = true;
                     if li < preview_cap {
                         preview[li] = v;
                     }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
+                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                    let oi = partial_geometry::reduced_index(
+                        &coords,
+                        &layout.axis_set,
+                        &layout.out_shape,
+                    )?;
                     cells[oi].push_f64(v);
                     Ok(())
                 })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
@@ -457,8 +469,8 @@ fn run_partial_f64(
 fn run_partial_promoted_i32(
     mmap: &[u8],
     plan: &ReadPlan,
-    kind: ReductionKind,
-    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
+    kind: reduction::ReductionKind,
+    layout: &partial_geometry::PartialAxisLayout,
     shape: &[u64],
     n: usize,
     preview_cap: usize,
@@ -467,46 +479,56 @@ fn run_partial_promoted_i32(
     total_bytes: &mut u64,
     sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v as i32;
-                    }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-                    let fi = crate::query::fold::partial_geometry::fiber_linear_index(
-                        &coords,
-                        &layout.axis_indices,
-                        shape,
-                    )? as u64;
-                    cells[oi].push_f64(fi, v, kind);
-                    Ok(())
-                })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
+                        *saw_any = true;
+                        if li < preview_cap {
+                            preview[li] = v as i32;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &layout.axis_set,
+                            &layout.out_shape,
+                        )?;
+                        let fi = crate::query::fold::partial_geometry::fiber_linear_index(
+                            &coords,
+                            &layout.axis_indices,
+                            shape,
+                        )? as u64;
+                        cells[oi].push_f64(fi, v, kind);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
         _ => {
-            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v as i32;
-                    }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-                    cells[oi].push_f64(v);
-                    Ok(())
-                })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_i32_as_f64(mmap, plan, c, |li, v| {
+                        *saw_any = true;
+                        if li < preview_cap {
+                            preview[li] = v as i32;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &layout.axis_set,
+                            &layout.out_shape,
+                        )?;
+                        cells[oi].push_f64(v);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
@@ -517,8 +539,8 @@ fn run_partial_promoted_i32(
 fn run_partial_promoted_i64(
     mmap: &[u8],
     plan: &ReadPlan,
-    kind: ReductionKind,
-    layout: &crate::query::fold::partial_geometry::PartialAxisLayout,
+    kind: reduction::ReductionKind,
+    layout: &partial_geometry::PartialAxisLayout,
     shape: &[u64],
     n: usize,
     preview_cap: usize,
@@ -527,46 +549,56 @@ fn run_partial_promoted_i64(
     total_bytes: &mut u64,
     sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = crate::query::fold::fold_policy::chunk_indices_for_fold(plan, sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
     match kind {
-        ReductionKind::ArgMin | ReductionKind::ArgMax => {
-            let mut cells = vec![ArgIndexAccum::default(); layout.out_len];
+        reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
+            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v as i64;
-                    }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-                    let fi = crate::query::fold::partial_geometry::fiber_linear_index(
-                        &coords,
-                        &layout.axis_indices,
-                        shape,
-                    )? as u64;
-                    cells[oi].push_f64(fi, v, kind);
-                    Ok(())
-                })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
+                        *saw_any = true;
+                        if li < preview_cap {
+                            preview[li] = v as i64;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &layout.axis_set,
+                            &layout.out_shape,
+                        )?;
+                        let fi = crate::query::fold::partial_geometry::fiber_linear_index(
+                            &coords,
+                            &layout.axis_indices,
+                            shape,
+                        )? as u64;
+                        cells[oi].push_f64(fi, v, kind);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
         }
         _ => {
-            let mut cells = vec![ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
             for i in chunk_order {
                 let c = &plan.chunks[i];
-                let chunk_bytes = visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v as i64;
-                    }
-                    let coords = coords_from_linear_row_major(li, shape)?;
-                    let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
-                    cells[oi].push_f64(v);
-                    Ok(())
-                })?;
-                accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_i64_as_f64(mmap, plan, c, |li, v| {
+                        *saw_any = true;
+                        if li < preview_cap {
+                            preview[li] = v as i64;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &layout.axis_set,
+                            &layout.out_shape,
+                        )?;
+                        cells[oi].push_f64(v);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
             Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))

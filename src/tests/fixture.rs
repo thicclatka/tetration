@@ -199,6 +199,67 @@ pub fn write_multichunk_2x3_u16_tiles(path: &Path, dataset_name: &str) {
     );
 }
 
+/// Row-major `u32` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u32_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 24];
+    for (slot, n) in data.chunks_exact_mut(4).zip(1_u32..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `u64` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_u64_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 48];
+    for (slot, n) in data.chunks_exact_mut(8).zip(1_u64..=6) {
+        slot.copy_from_slice(&n.to_le_bytes());
+    }
+    data
+}
+
+/// Row-major `f16` tensor values 1..=6 as LE bytes (`shape` [2, 3]).
+pub fn le_row_major_2x3_f16_one_to_six() -> Vec<u8> {
+    let mut data = vec![0u8; 12];
+    for (slot, n) in data.chunks_exact_mut(2).zip(1_u32..=6) {
+        let v = half::f16::from_f32(n as f32);
+        slot.copy_from_slice(&v.to_bits().to_le_bytes());
+    }
+    data
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u32` file (values 1..6).
+pub fn write_multichunk_2x3_u32_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u32,
+        &le_row_major_2x3_u32_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `u64` file (values 1..6).
+pub fn write_multichunk_2x3_u64_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.u64,
+        &le_row_major_2x3_u64_one_to_six(),
+    );
+}
+
+/// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `f16` file (values 1..6).
+pub fn write_multichunk_2x3_f16_tiles(path: &Path, dataset_name: &str) {
+    write_multichunk_2x3(
+        path,
+        dataset_name,
+        CHUNK_PAYLOAD_CODEC_V1.raw,
+        DATASET_DTYPE_TAG_V1.f16,
+        &le_row_major_2x3_f16_one_to_six(),
+    );
+}
+
 /// Write a single-dataset `[2,3]` / `[2,2]` multi-chunk raw `i16` file (values 1..6).
 pub fn write_multichunk_2x3_i16_tiles(path: &Path, dataset_name: &str) {
     write_multichunk_2x3(
