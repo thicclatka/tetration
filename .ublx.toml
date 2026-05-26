@@ -1,3 +1,4 @@
+exclude = ["target", "__pycache__", "object", ".venv"]
+show_hidden_files = true
 enable_enhance_all = true
 run_snapshot_on_startup = true
-exclude = ["target", "__pycache__"]
