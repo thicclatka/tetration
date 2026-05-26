@@ -71,15 +71,15 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 
 ## Module map
 
-| Submodule          | Files                                                                                                                         | Responsibility                                                                                                                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                           |
-| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                              | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                     |
-| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                 | Full/capped materialize (f32/f64/i32/i64), export spill, parallel fill, tier-C stats.                                                                                           |
-| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk **`f32`** sum/sumsq + min/max; parallel + partial-axis streaming folds. |
-| **`dispatch.rs`**  | —                                                                                                                             | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                      |
-| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                     | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                             |
-| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                           | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                              |
+| Submodule          | Files                                                                                                                                              | Responsibility                                                                                                                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                     | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
+| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                                   | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
+| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                      | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
+| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
+| **`dispatch.rs`**  | —                                                                                                                                                  | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
+| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                          | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
+| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                                | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
 
@@ -419,11 +419,11 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 **Execution paths today:**
 
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
-- **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (empty axis list) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in **`f32_preview`** or **`f64_preview`** when `raw_f32_preview_max > 0`.
+- **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (empty axis list) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in dtype-matched preview arrays (`f32_preview`, `u8_preview`, …) when `raw_f32_preview_max > 0`.
 - **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
 - **Export spill** — **`mmap_spill`** when **`spill`** is set and no reduction key. Preview is read from the spilled file (single full decode; dtype-native bytes).
 
-Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) (`f32` = 1, `f64` = 2, `i32` = 3, `i64` = 4). The preview cap does **not** truncate `operation_*` aggregates.
+Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) — `f32` = 1, `f64` = 2, `i32` = 3, `i64` = 4, `u8` = 5, `u16` = 6, `i16` = 7, `u32` = 8, `f16` = 9, `u64` = 10 (see [`layout_v1.md`](layout_v1.md)). Tier-A/B aggregates promote integers to **`f64`** in `operation_*`. The preview cap does **not** truncate `operation_*` aggregates. **`f16` partial-axis** fold is still rejected at dispatch (scalar tier-A/B only).
 
 ## Operations roadmap (planned)
 
@@ -434,7 +434,7 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 | Tier  | Name                             | When to use                                                | Engine pattern                                                                                                                         |
 | ----- | -------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | **A** | **Scalar fold**                  | `axes: []`, associative or online stats                    | [`scalar_fold`](../src/query/dispatch.rs) → parallel chunks (in-core), linear scan (out-of-core contiguous raw), or sequential chunks. |
-| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | [`partial`](../src/query/fold/partial/mod.rs) with same `FoldIoPolicy` chunk ordering.                                           |
+| **B** | **Partial-axis fold**            | Non-empty `axes`, element-wise combine along dimensions    | [`partial`](../src/query/fold/partial/mod.rs) with same `FoldIoPolicy` chunk ordering.                                                 |
 | **C** | **Materialize-required**         | Needs full logical tensor order, sort, or index of extrema | Full decode (or spill file); may add new `operation_*` response fields.                                                                |
 | **D** | **Out of scope for `Operation`** | Writers, dtype views, foreign format import                | Separate APIs (`materialize_*`, `tet convert`, metadata), not the JSON `operation` enum.                                               |
 
@@ -554,10 +554,11 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 ## Robustness (catalog index)
 
 - Catalog robustness and index property tests: [`src/tests/catalog.rs`](../src/tests/catalog.rs).
-- Query planning, materialize, operations, memory budget, f64 path, tier-C stats: [`src/tests/query.rs`](../src/tests/query.rs).
+- Query planning, materialize, operations, memory budget, all dtype paths, tier-C stats: [`src/tests/query.rs`](../src/tests/query.rs).
 - Fold I/O policy and contiguous-span detection: [`src/tests/fold.rs`](../src/tests/fold.rs).
 - SIMD bulk folds vs scalar reference: [`src/tests/variance_simd.rs`](../src/tests/variance_simd.rs).
 - Bulk variance vs Welford reference: [`src/tests/reduction.rs`](../src/tests/reduction.rs).
+- File health: [`src/verify/`](../src/verify/), [`src/tests/verify.rs`](../src/tests/verify.rs), [`src/tests/repair.rs`](../src/tests/repair.rs), [`src/tests/verify_fixtures.rs`](../src/tests/verify_fixtures.rs), committed CLI smoke [`fixtures/small/tet/`](../fixtures/small/tet/README.md).
 - Payload decode uses [`src/utils/le_pod.rs`](../src/utils/le_pod.rs) (`f32_le` / `f64_le` / …; bytemuck; aligned cast when possible).
 
 ## Intentional gaps (v1)
@@ -565,5 +566,5 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution picks parallel decode/fold per `FoldIoPolicy` (see [Adaptive fold I/O](#adaptive-fold-io)).
 - **`operation.axes`** uses **decimal dimension indices**, not dimension names or coordinate labels ([planned](#dimension-names-vs-coordinate-labels-planned)).
 - Spill path must lie under default roots (canonical **`.tet` parent** and descendants + platform `…/tetration` cache dirs) or `--spill-allow`; relative **`"spill"`** paths resolve against the **`.tet` directory** (not shell cwd).
-- Integer dtypes (`i32` / `i64`) are supported in writers and query execution (aggregates promote to `f64` for fold paths).
+- Integer and narrow float dtypes (`u8`–`u64`, `f16`) are supported in writers, convert, and query execution (tier-A/B aggregates promote to `f64` for fold paths).
 - JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy is enforced via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).

@@ -66,10 +66,11 @@ mise run fixtures:clean-extra-large
 
 ## Tests
 
-| Consumer               | What it checks                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/tests/convert.rs` | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
-| Manual / bench         | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks)                                                                         |
+| Consumer                          | What it checks                                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/tests/convert.rs`            | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
+| `src/tests/small_tet_fixtures.rs` | Committed **`small/tet/*.tet`** — `tet verify` / `--deep` / `tet repair` / query sum\|var; see [`small/tet/README.md`](small/tet/README.md)          |
+| Manual / bench                    | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks); **`small/tet/`** for quick CLI smoke                                   |
 
 Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --lib tests::convert`.
 

@@ -17,9 +17,10 @@
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
 - **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import** — `tet convert` from HDF5, NetCDF, Zarr v3 directory stores.
-- **CLI** — `tet info`, `tet verify`, `tet query`, `tet qhist`, `tet convert`.
+- **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
+- **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`.
 
-Dtypes on disk and in query execution: **`f32`**, **`f64`**, **`i32`**, **`i64`**.
+**Wire dtypes** (tags `1`–`10`, row-major chunks): **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`**, **`u16`**, **`i16`**, **`u32`**, **`f16`**, **`u64`**. Booleans import as **`u8`**. See [`docs/layout_v1.md`](docs/layout_v1.md#dataset-record-concatenated-variable-length-per-record).
 
 ## Quick start
 
@@ -69,6 +70,7 @@ tet convert volume.h5 volume.tet          # HDF5 / NetCDF / Zarr v3 → .tet
 
 tet info volume.tet
 tet verify volume.tet
+tet verify --deep volume.tet -q    # full chunk decode (large files sample 128 by default)
 tet query '{"dataset":"<name>","mean":[]}' -t volume.tet -x -q   # <name> from info output
 ```
 
@@ -90,6 +92,7 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 | ---------------------------------------------- | ------ | ---------------------------------------------------------- |
 | [`tet info`](#tet-info) `<path.tet>`           | —      | Summarize a file (default: dataset table)                  |
 | [`tet verify`](#tet-verify) `<path.tet>`       | —      | Layout health check (exit 1 on failure); `--json` / `-q`   |
+| [`tet repair`](#tet-repair) `<path.tet>`       | —      | Plan or apply safe in-place fixes (e.g. bad footer)        |
 | [`tet query`](#tet-query) `[QUERY]`            | `q`    | Validate JSON; optional catalog + execute against `-t`     |
 | [`tet qhist`](#tet-qhist) `[list\|run]`        | `hist` | Recent queries (platform cache; **not** the `.tet` footer) |
 | [`tet convert`](#tet-convert) `<in> <out.tet>` | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                           |
@@ -108,13 +111,24 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 
 ### `tet verify`
 
-| Flag        | Effect                                                |
-| ----------- | ----------------------------------------------------- |
-| _(default)_ | Human-readable check list + summary                   |
-| `--json`    | Pretty JSON [`TetVerifyReport`](src/verify/report.rs) |
-| `-q`        | One line (`status=ok` / `failed`)                     |
+| Flag        | Effect                                                                               |
+| ----------- | ------------------------------------------------------------------------------------ |
+| _(default)_ | Human-readable check list + summary (decodes up to **128** chunks on large files)    |
+| `--deep`    | Decode **every** chunk payload (not just the quick sample)                           |
+| `--repair`  | After verify, apply safe in-place repairs for repairable findings (see `tet repair`) |
+| `--json`    | Pretty JSON [`TetVerifyReport`](src/verify/report.rs)                                |
+| `-q`        | One line (`status=ok` / `failed`)                                                    |
 
-Exit code **1** when verification fails (CI-friendly).
+Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`fixtures/small/tet/README.md`](fixtures/small/tet/README.md).
+
+### `tet repair`
+
+| Flag           | Effect                                                                   |
+| -------------- | ------------------------------------------------------------------------ |
+| _(default)_    | Plan from verify recommendations (no writes)                             |
+| `--apply CODE` | Apply fix (repeatable); today: `footer_invalid` strips a bad `THST` tail |
+| `--dry-run`    | With `--apply`, show changes without writing                             |
+| `--json`       | Pretty JSON plan or repair report                                        |
 
 ### `tet query`
 
@@ -156,12 +170,12 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 ## Documentation map
 
-| Doc                                            | Contents                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------- |
-| [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, verification, CLI history, what's next       |
-| [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history           |
-| [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security |
-| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, local bench sizes              |
+| Doc                                            | Contents                                                                               |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, verification, CLI history, what's next                               |
+| [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                   |
+| [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                         |
+| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`small/tet/`](fixtures/small/tet/) verify/query smoke |
 
 ## Design stance (short)
 
@@ -169,7 +183,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + `f32`–`i16` wire dtypes) is done; **Phase 9** is named axes and richer query ops; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
 
 ## Library use
 
@@ -183,4 +197,4 @@ use tetration::prelude::*;
 // or: tetration::layout::mmap_file_read, tetration::query::{parse_query_json, …}
 ```
 
-Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`. **File health:** `tet verify` / `tet repair` (`--deep` for full chunk decode); see [GETTING_STARTED.md — Phase 9](GETTING_STARTED.md#phase-9--query-ops--interchange-later) for query-semantics next steps.
+Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Verify / repair:** [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), [`repair_tet_file`](https://docs.rs/tetration/latest/tetration/repair/fn.repair_tet_file.html) (`VerifyOptions::deep_decode` mirrors `tet verify --deep`). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`, `gen_small_tet_fixtures` (tracked [`fixtures/small/tet/`](fixtures/small/tet/)). Next query-semantics work: [GETTING_STARTED.md — Phase 9](GETTING_STARTED.md#phase-9--query-ops--interchange-later).

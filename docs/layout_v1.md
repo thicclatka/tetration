@@ -224,3 +224,11 @@ The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **o
 ## Concurrency (informative)
 
 Writers should use **exclusive create** or clearly documented append rules before parallel writers touch payloads. v1 does not define locking; see the main **README** for the long-term concurrency story.
+
+## File health (verify / repair)
+
+**`tet verify`** (library: [`verify_tet_file`](../src/verify/mod.rs)) checks superblock, dataset directory, chunk index, payload bounds, optional decode integrity (quick scan: first **128** chunks on large files; **`--deep`** / `VerifyOptions::deep_decode` for all chunks), dataset tensor-byte cross-check, and footer/metadata limits.
+
+**`tet repair`** ([`repair_tet_file`](../src/repair/mod.rs)) applies safe in-place fixes from verify recommendations (today: **`footer_invalid`** — truncate after chunk payloads when the `THST` JSON is corrupt).
+
+Tracked manual smoke files: [`fixtures/small/tet/README.md`](../fixtures/small/tet/README.md). Regenerate: `mise run fixtures:small-tet` or `cargo run --example gen_small_tet_fixtures`.
