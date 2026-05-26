@@ -149,7 +149,7 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Dataset attributes (footer JSON)** — `metadata.datasets[name].attrs` + optional `dim_names`; session flush; [`read_tet_summary_v1`](src/catalog/mod.rs) / `tet info` roundtrip.
 - [x] **Axis metadata (baseline)** — `dim_names` in footer metadata; inline **`coords`** labels (≤64 per axis) on convert for HDF5 CF `coordinates` and 1D coord arrays; see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
 - [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
-- [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 10 bindings wrap the same API).
+- [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 11 bindings wrap the same API).
 - [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
 - [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
@@ -169,11 +169,11 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 ### Interchange & format
 
 - [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
-- [ ] **Layout / codec evolution** — v2 only when v1 guarantees are insufficient (new dtypes, filters, dedicated metadata regions).
+- [ ] **Layout / codec evolution (beyond Phase 9)** — v2 only when v1 cannot be extended (filters, dedicated metadata regions, breaking layout changes).
 
 ### Out of scope for JSON `operation`
 
-- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled slabs (Phase 10 Python).
+- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled slabs (Phase 11 Python).
 - **Optional client cache** — memoize `(catalog hash, query hash) → plan or result` in CLI session or bindings; never append query logs to `.tet`.
 
 ### Already shipped (Phase 4)
@@ -181,7 +181,33 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 - [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when in-core and `chunk_count > 1` ([`parallel_fold.rs`](src/query/fold/parallel_fold.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [x] **Out-of-core linear scan** — sequential byte-stream fold when logical size exceeds available RAM headroom and payloads are contiguous raw ([`linear_scan.rs`](src/query/fold/linear_scan.rs), [PR #7](https://github.com/thicclatka/tetration/pull/7)).
 
-## Phase 9 — GPU (later)
+## Phase 9 — Dtypes & file health (later)
+
+**Goal:** extend **supported element dtypes** on the v1 wire (e.g. **`u8`**, **`u16`**, **`u32`**, **`u64`**, optional **`f16`**) with end-to-end writer, convert, and query support; add explicit **file health verification** for ops, embedders, and CI. Distinct from Phase 7 metadata and Phase 8 query semantics — this is catalog + execution + integrity tooling.
+
+### Element dtypes (wire + execution)
+
+Today: **`f32`**, **`f64`**, **`i32`**, **`i64`** ([`ElementDtype`](src/utils/dtype.rs), [`DATASET_DTYPE_TAG_V1`](src/catalog/mod.rs)).
+
+- [ ] **Wire tags** — assign catalog dtype tags; document in [`docs/layout_v1.md`](docs/layout_v1.md); decide v1 extension vs layout v2 before implementation.
+- [ ] **Writers** — `RawArrayWrite` / streaming / append / session paths; `chunk_grid_plan` / tile element size.
+- [ ] **Convert** — HDF5 / NetCDF / Zarr import mapping (feature-gated where native libs differ).
+- [ ] **Query** — materialize, streaming fold, tier-A/B/C ops, spill paths, preview arrays; integer promotion rules for aggregates.
+- [ ] **SIMD / fast paths** — add bulk kernels where ROI is clear (e.g. `u8` may stay scalar-first).
+- [ ] **Tests** — roundtrip writers, convert snippets, query golden cases per new dtype.
+
+### File health / verification
+
+Baseline today: [`validate_chunk_payloads`](src/catalog/index.rs) when building a summary ([`read_tet_summary_v1`](src/catalog/mod.rs)); no dedicated CLI.
+
+- [ ] **`tet verify <path.tet>`** — human-readable report (exit non-zero on failure); `--json` for automation.
+- [ ] **Library API** — e.g. `verify_tet_file` returning structured errors (superblock, catalog, index spans, footer).
+- [ ] **Index vs payloads** — walk all chunk entries: offsets, `stored_byte_len`, codec, in-bounds payloads; optional sequential-order check.
+- [ ] **Footer** — `THST` bounds, `metadata` / `history` JSON validation against [`MetadataLimitsV1`](src/catalog/metadata.rs).
+- [ ] **Optional deep checks** — spot-decode random raw/zstd tiles; catalog/tensor byte-length consistency per dataset.
+- [ ] **CI** — run verify on fixture `.tet` files after write/convert integration tests.
+
+## Phase 10 — GPU (later)
 
 **Goal:** optional **device materialization** after CPU decode — format stays mmap-first; GPU is a binding/runtime choice, not a different wire layout.
 
@@ -190,7 +216,7 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 - [ ] **VRAM guardrails** — cap in-flight bytes, check free device memory, fall back to CPU on OOM.
 - [ ] **Alignment / dtype notes** — document row-major chunk payloads and `f32` / `f16` expectations for fast paths (see README “GPUs and tensors”).
 
-## Phase 10 — Bindings (Python & C ABI)
+## Phase 11 — Bindings (Python & C ABI)
 
 **Goal:** ship **language bindings** after the CLI and on-disk story are stable — separate Python repo (PyPI rename) pinning published **`tetration`** on crates.io; optional **`cdylib`** for other FFIs.
 
@@ -255,4 +281,6 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 8. **Metadata scaffold (Phase 7):** file header blob + one dataset attribute roundtrip in catalog / `tet info`.
 9. **History events v2 (Phase 7):** structured transform event + session flush API.
 10. **Histogram (Phase 8):** caller-supplied `min` / `max` for bin edges.
-11. **Python repo scaffold (Phase 10):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+11. **File health (Phase 9):** `tet verify` + library report over fixtures.
+12. **Dtypes (Phase 9):** first additional wire tag (e.g. `u8`) through write → query smoke.
+13. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

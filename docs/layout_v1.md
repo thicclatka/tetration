@@ -82,7 +82,9 @@ Each record is:
 
 Records are concatenated in catalog order; `dataset_id` in the chunk index is the **0-based index** into this list (`0` = first record).
 
-### Axis metadata (planned, Phase 7+)
+**Additional dtypes (`u8`, `u16`, …):** not on the v1 wire today. Planned under [Phase 9 — Dtypes & file health](../GETTING_STARTED.md#phase-9--dtypes--file-health-later) (tag assignment, writers, convert, query execution). Layout v2 is reserved for changes that cannot extend v1.
+
+### Axis metadata (Phase 7 baseline)
 
 v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis names or per-index labels on disk yet. Planned metadata (file header blob, dataset attrs, or sidecar regions) distinguishes two **separate** layers:
 
