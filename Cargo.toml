@@ -43,6 +43,10 @@ path = "examples/session_write.rs"
 name = "streaming_write"
 path = "examples/streaming_write.rs"
 
+[[example]]
+name = "gen_small_tet_fixtures"
+path = "examples/gen_small_tet_fixtures.rs"
+
 [dependencies]
 bytemuck = "1.25.0"
 clap = { version = "4.5.51", features = ["derive"] }

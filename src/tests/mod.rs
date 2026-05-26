@@ -15,6 +15,7 @@ mod query;
 mod reduction;
 mod repair;
 mod session;
+mod small_tet_fixtures;
 mod utils;
 mod variance_simd;
 mod verify;

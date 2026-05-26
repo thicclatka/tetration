@@ -92,24 +92,25 @@ Stricter local: `cargo clippy -- -D warnings -W clippy::pedantic`; `cargo test -
 
 **Integration tests** live in **`src/tests/`** (compiled with `cargo test --lib`):
 
-| Module / file                   | Covers                                                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `src/tests/catalog.rs`          | Catalog roundtrip (f32/f64), index robustness, chunk tile geometry, proptest `validate_chunk_payloads`, `le_pod` / `f32_le` |
-| `src/tests/query.rs`            | Query JSON, mmap materialize, f64 + tier-C ops, memory budget, spill allowlist + temp spill cleanup                         |
-| `src/tests/fold.rs`             | `FoldIoPolicy`, contiguous raw span detection, I/O regime routing                                                           |
-| `src/tests/variance_simd.rs`    | SIMD vs scalar `f32` sum/sumsq and min/max                                                                                  |
-| `src/tests/reduction.rs`        | Bulk variance accumulators vs elementwise Welford                                                                           |
-| `src/tests/utils.rs`            | Host memory probe (`available_memory_bytes`)                                                                                |
-| `src/tests/layout_roundtrip.rs` | Superblock / empty file                                                                                                     |
-| `src/tests/convert.rs`          | HDF5 / NetCDF / Zarr import (`tensor_*`, `groups_3d`, `cf_3d`), parallel jobs, format sniff                                 |
-| `src/tests/cli_output.rs`       | `format_query_response` for `full` / `json` / `stats` / `quiet`                                                             |
-| `src/tests/cli_info.rs`         | `tet info` table, `--json`, filters, spawn `tet` smoke (debug/release/`cargo run` fallback)                                 |
-| `src/tests/cli_history.rs`      | Platform query history JSONL append/list/clear                                                                              |
-| `src/tests/fixture.rs`          | Shared temp `.tet` builders, `index_patch` helpers (wire offsets from `ChunkIndexEntryV1::WIRE_*`)                          |
-| `src/tests/session.rs`          | `TetWriterSession` commit + history, `TetFile` + `execute_query_document`                                                   |
-| `src/tests/verify.rs`           | `verify_tet_file`, CLI smoke, `assert_tet_verify_ok` helper                                                                 |
-| `src/tests/verify_fixtures.rs`  | `verify_tet_file` on writer dtypes + small convert fixtures (CI gate)                                                       |
-| `src/tests/repair.rs`           | `footer_invalid` strip + recommendation command lines                                                                       |
+| Module / file                     | Covers                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `src/tests/catalog.rs`            | Catalog roundtrip (f32/f64), index robustness, chunk tile geometry, proptest `validate_chunk_payloads`, `le_pod` / `f32_le`    |
+| `src/tests/query.rs`              | Query JSON, mmap materialize, f64 + tier-C ops, memory budget, spill allowlist + temp spill cleanup                            |
+| `src/tests/fold.rs`               | `FoldIoPolicy`, contiguous raw span detection, I/O regime routing                                                              |
+| `src/tests/variance_simd.rs`      | SIMD vs scalar `f32` sum/sumsq and min/max                                                                                     |
+| `src/tests/reduction.rs`          | Bulk variance accumulators vs elementwise Welford                                                                              |
+| `src/tests/utils.rs`              | Host memory probe (`available_memory_bytes`)                                                                                   |
+| `src/tests/layout_roundtrip.rs`   | Superblock / empty file                                                                                                        |
+| `src/tests/convert.rs`            | HDF5 / NetCDF / Zarr import (`tensor_*`, `groups_3d`, `cf_3d`), parallel jobs, format sniff                                    |
+| `src/tests/cli_output.rs`         | `format_query_response` for `full` / `json` / `stats` / `quiet`                                                                |
+| `src/tests/cli_info.rs`           | `tet info` table, `--json`, filters, spawn `tet` smoke (debug/release/`cargo run` fallback)                                    |
+| `src/tests/small_tet_fixtures.rs` | Committed [`fixtures/small/tet/`](fixtures/small/tet/) — verify quick/deep, repair plan, query sum/var u8/u32/f16; spawn `tet` |
+| `src/tests/cli_history.rs`        | Platform query history JSONL append/list/clear                                                                                 |
+| `src/tests/fixture.rs`            | Shared temp `.tet` builders, `index_patch` helpers (wire offsets from `ChunkIndexEntryV1::WIRE_*`)                             |
+| `src/tests/session.rs`            | `TetWriterSession` commit + history, `TetFile` + `execute_query_document`                                                      |
+| `src/tests/verify.rs`             | `verify_tet_file`, CLI smoke, `assert_tet_verify_ok` helper                                                                    |
+| `src/tests/verify_fixtures.rs`    | `verify_tet_file` on writer dtypes + small convert fixtures (CI gate)                                                          |
+| `src/tests/repair.rs`             | `footer_invalid` strip + recommendation command lines                                                                          |
 
 Examples: `cargo test --lib`, `cargo test --lib tests::catalog::index_bounds_proptest`, `cargo test --lib tests::fold`.
 

@@ -335,3 +335,78 @@ pub fn write_multichunk_2x3_with_execution(
 pub fn write_multichunk_2x3_zero_zstd(path: &Path, dataset_name: &str) {
     write_multichunk_2x3_zstd(path, dataset_name, &vec![0u8; 24]);
 }
+
+/// Shape `[34, 64]` with chunk `[4, 4]` → **144** tiles (quick verify samples 128).
+pub const VERIFY_LARGE_SHAPE: [u64; 2] = [34, 64];
+pub const VERIFY_LARGE_CHUNK: [u64; 2] = [4, 4];
+
+/// Write a raw `f32` grid with more than [`crate::verify::DEEP_DECODE_MAX_CHUNKS`] chunks.
+pub fn write_verify_large_f32(path: &Path, dataset_name: &str) {
+    let ne = usize::try_from(VERIFY_LARGE_SHAPE[0] * VERIFY_LARGE_SHAPE[1]).unwrap();
+    let mut data = vec![0u8; ne * 4];
+    for (slot, i) in data.chunks_exact_mut(4).zip(0_u32..) {
+        slot.copy_from_slice(&(i as f32).to_le_bytes());
+    }
+    write_raw_array_file(
+        path,
+        &RawArrayWrite {
+            name: dataset_name,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            shape: &VERIFY_LARGE_SHAPE,
+            chunk_shape: &VERIFY_LARGE_CHUNK,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            data: &data,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+}
+
+fn corrupt_footer_json_bytes(data: &mut [u8]) {
+    const TAIL: usize = 16;
+    let json_len = u64::from_le_bytes(
+        data[data.len() - TAIL..data.len() - TAIL + 8]
+            .try_into()
+            .unwrap(),
+    );
+    let json_end = data.len() - TAIL;
+    let json_start = json_end - usize::try_from(json_len).unwrap();
+    for b in &mut data[json_start..json_end] {
+        *b = b'X';
+    }
+}
+
+/// Multichunk `f32` plus a corrupt history footer (for `tet verify` / `tet repair plan`).
+pub fn write_repair_plan_fixture(path: &Path, dataset_name: &str) {
+    use crate::catalog::{FooterBlobV1, TetMetadataV1, write_footer_blob};
+
+    write_multichunk_2x3_tiles(path, dataset_name);
+    write_footer_blob(
+        path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1::default()),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+    let mut data = std::fs::read(path).unwrap();
+    corrupt_footer_json_bytes(&mut data);
+    std::fs::write(path, &data).unwrap();
+}
+
+/// Regenerate tracked files under `fixtures/small/tet/` (see `fixtures/small/tet/README.md`).
+pub fn write_tracked_small_tet_fixtures(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    write_multichunk_2x3_tiles(&dir.join("sample.tet"), "temperature");
+    write_verify_large_f32(&dir.join("large.tet"), "a");
+    write_repair_plan_fixture(&dir.join("plan.tet"), "a");
+    write_multichunk_2x3_u8_tiles(&dir.join("multichunk_u8.tet"), "a");
+    write_multichunk_2x3_u32_tiles(&dir.join("multichunk_u32.tet"), "a");
+    write_multichunk_2x3_f16_tiles(&dir.join("multichunk_f16.tet"), "a");
+}
+
+/// Path to committed manual fixtures: `fixtures/small/tet/`.
+pub fn tracked_small_tet_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/small/tet")
+}
