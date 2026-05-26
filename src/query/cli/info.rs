@@ -4,8 +4,9 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::catalog::{
-    CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, DATASET_DTYPE_TAG_V1, DatasetRecordV1,
-    FileExecutionSettingsV1, HistoryEventV1, TetFileSummaryV1,
+    CHUNK_PAYLOAD_CODEC_V1, ChunkIndexEntryV1, CoordAxisV1, DATASET_DTYPE_TAG_V1,
+    DatasetMetadataV1, DatasetRecordV1, FileExecutionSettingsV1, HistoryEventV1, TetFileSummaryV1,
+    TetMetadataV1,
 };
 use crate::layout::SuperblockV1;
 
@@ -13,6 +14,19 @@ use super::text::{contains_ascii_case_insensitive, truncate_field};
 
 /// Default max chunk rows in the text table (`tet info --chunks`).
 pub const DEFAULT_INFO_CHUNK_TABLE_LIMIT: usize = 32;
+
+/// Max coordinate labels printed per axis in `tet info --metadata` text mode.
+pub const INFO_METADATA_VERBOSE_LABELS: usize = 12;
+
+/// How dataset footer metadata is rendered in the default dataset table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InfoMetadataDisplay {
+    /// Under each dataset row when footer metadata exists: `dim_names`, compact `coords`, attrs.
+    #[default]
+    WhenPresent,
+    /// Like [`WhenPresent`] but prints coordinate label previews (`--metadata`).
+    Verbose,
+}
 
 /// Which sections to print in text mode (`tet info` without `--json`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,16 +94,20 @@ impl InfoListFilter {
         parts.join(" ")
     }
 
-    /// Whether `rec` matches all set predicates.
+    /// Whether `rec` matches all set predicates (`grep` also searches footer metadata when set).
     #[must_use]
-    pub fn matches_dataset(&self, rec: &DatasetRecordV1) -> bool {
+    pub fn matches_dataset(
+        &self,
+        rec: &DatasetRecordV1,
+        ds_meta: Option<&DatasetMetadataV1>,
+    ) -> bool {
         if let Some(needle) = self.dataset.as_deref()
             && !contains_ascii_case_insensitive(&rec.name, needle)
         {
             return false;
         }
         if let Some(needle) = self.grep.as_deref() {
-            let hay = format!("{} {}", rec.name, dtype_label(rec.dtype));
+            let hay = dataset_grep_haystack(rec, ds_meta);
             if !contains_ascii_case_insensitive(&hay, needle) {
                 return false;
             }
@@ -175,6 +193,7 @@ pub fn format_info_text(
     filter: Option<&InfoListFilter>,
     sections: InfoViewSections,
     chunk_limit: usize,
+    metadata_display: InfoMetadataDisplay,
 ) -> String {
     let filtered = filtered_summary(summary, filter);
     let mut out = String::new();
@@ -202,10 +221,16 @@ pub fn format_info_text(
     }
     if sections.datasets {
         out.push('\n');
+        if let Some(file_meta) = &filtered.metadata.file {
+            out.push_str(&format_file_metadata_section(file_meta));
+            out.push('\n');
+        }
         out.push_str(&format_datasets_table(
             &filtered.datasets,
             &filtered.chunks,
+            &filtered.metadata,
             filter,
+            metadata_display,
         ));
     }
     if sections.chunks {
@@ -236,7 +261,8 @@ fn filtered_summary(
     let mut datasets = Vec::new();
     let mut id_map = std::collections::HashMap::new();
     for (old_id, rec) in summary.datasets.iter().enumerate() {
-        if f.matches_dataset(rec) {
+        let ds_meta = summary.metadata.datasets.get(&rec.name);
+        if f.matches_dataset(rec, ds_meta) {
             id_map.insert(old_id as u64, datasets.len() as u64);
             datasets.push(rec.clone());
         }
@@ -251,12 +277,34 @@ fn filtered_summary(
             Some(ch)
         })
         .collect();
+    let metadata = filter_metadata_for_datasets(&summary.metadata, &datasets);
     TetFileSummaryV1 {
         superblock: summary.superblock.clone(),
         datasets,
         chunks,
         file_execution: summary.file_execution,
         history: summary.history.clone(),
+        metadata,
+    }
+}
+
+fn filter_metadata_for_datasets(
+    meta: &TetMetadataV1,
+    datasets: &[DatasetRecordV1],
+) -> TetMetadataV1 {
+    let names: std::collections::HashSet<&str> = datasets.iter().map(|d| d.name.as_str()).collect();
+    let datasets: std::collections::BTreeMap<_, _> = meta
+        .datasets
+        .iter()
+        .filter(|(k, _)| names.contains(k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if meta.file.is_none() && datasets.is_empty() {
+        return TetMetadataV1::default();
+    }
+    TetMetadataV1 {
+        file: meta.file.clone(),
+        datasets,
     }
 }
 
@@ -293,10 +341,55 @@ fn format_execution_section(ex: FileExecutionSettingsV1) -> String {
     out
 }
 
+fn format_file_metadata_section(file: &crate::catalog::FileMetadataV1) -> String {
+    let mut out = String::new();
+    out.push_str("file metadata:\n");
+    if let Some(tool) = &file.tool {
+        let _ = writeln!(out, "  tool: {tool}");
+    }
+    if let Some(ver) = &file.library_version {
+        let _ = writeln!(out, "  library_version: {ver}");
+    }
+    if let Some(at) = &file.created_at {
+        let _ = writeln!(out, "  created_at: {at}");
+    }
+    out
+}
+
+fn dataset_grep_haystack(rec: &DatasetRecordV1, ds_meta: Option<&DatasetMetadataV1>) -> String {
+    let mut hay = format!("{} {}", rec.name, dtype_label(rec.dtype));
+    let Some(m) = ds_meta else {
+        return hay;
+    };
+    if let Some(dim_names) = &m.dim_names {
+        hay.push(' ');
+        hay.push_str(&dim_names.join(" "));
+    }
+    for (k, v) in &m.attrs {
+        hay.push(' ');
+        hay.push_str(k);
+        hay.push(' ');
+        hay.push_str(v);
+    }
+    if let Some(coords) = &m.coords {
+        for (axis, c) in coords {
+            hay.push(' ');
+            hay.push_str(axis);
+            for label in &c.labels {
+                hay.push(' ');
+                hay.push_str(label);
+            }
+        }
+    }
+    hay
+}
+
 fn format_datasets_table(
     datasets: &[DatasetRecordV1],
     chunks: &[ChunkIndexEntryV1],
+    metadata: &TetMetadataV1,
     filter: Option<&InfoListFilter>,
+    metadata_display: InfoMetadataDisplay,
 ) -> String {
     let mut out = String::new();
     if datasets.is_empty() {
@@ -325,8 +418,54 @@ fn format_datasets_table(
             shape_label(&ds.chunk_shape),
             n_chunks
         );
+        if let Some(ds_meta) = metadata.datasets.get(&ds.name) {
+            append_dataset_metadata_lines(&mut out, ds_meta, metadata_display);
+        }
     }
     out
+}
+
+fn append_dataset_metadata_lines(
+    out: &mut String,
+    ds_meta: &DatasetMetadataV1,
+    display: InfoMetadataDisplay,
+) {
+    if let Some(dim_names) = &ds_meta.dim_names {
+        let _ = writeln!(out, "       dim_names: {}", dim_names.join(", "));
+    }
+    if let Some(coords) = &ds_meta.coords {
+        match display {
+            InfoMetadataDisplay::WhenPresent => {
+                let summary: Vec<String> = coords
+                    .iter()
+                    .map(|(axis, c)| format!("{axis}({} labels)", c.labels.len()))
+                    .collect();
+                let _ = writeln!(out, "       coords: {}", summary.join(", "));
+            }
+            InfoMetadataDisplay::Verbose => {
+                for (axis, c) in coords {
+                    let _ = writeln!(out, "       {}", format_coord_axis_verbose(axis, c));
+                }
+            }
+        }
+    }
+    for (k, v) in &ds_meta.attrs {
+        let _ = writeln!(out, "       {k}: {v}");
+    }
+}
+
+fn format_coord_axis_verbose(axis: &str, c: &CoordAxisV1) -> String {
+    let labels = &c.labels;
+    if labels.is_empty() {
+        return format!("{axis}: (empty)");
+    }
+    let show = INFO_METADATA_VERBOSE_LABELS.min(labels.len());
+    let head = labels[..show].join(", ");
+    if labels.len() > show {
+        format!("{axis}: {head} … (+{} more)", labels.len() - show)
+    } else {
+        format!("{axis}: {head}")
+    }
 }
 
 fn format_chunks_table(

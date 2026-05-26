@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::utils::dtype::ElementDtype;
 
+use super::import_metadata::{finish_convert_footer, zarr_array_attrs};
 use super::parallel::ZarrParallelSource;
 use super::shared::{
     ImportPlan, ImportTileRead, chunk_shape_for_import, ensure_non_empty, join_catalog_path,
@@ -15,7 +16,6 @@ use super::shared::{
 };
 use super::tile_io::tile_axis_ranges;
 use super::{ConvertError, ConvertProgress, ConvertReport, report};
-use crate::catalog::append_convert_history;
 
 /// Import supported numeric arrays from a Zarr v3 directory store into one `.tet`.
 ///
@@ -71,7 +71,7 @@ pub fn convert_zarr_to_tet_with_progress(
         |job, buf| source.fill_tile(job, buf),
         Some(&mut progress_bridge as &mut dyn FnMut(u64, u64, &str)),
     )?;
-    let history = append_convert_history(output, "zarr")?;
+    let history = finish_convert_footer(output, "zarr", &plans)?;
 
     Ok(report(
         input,
@@ -180,15 +180,11 @@ fn plan_zarr_array(
                 .collect()
         });
     let chunk_shape = chunk_shape_for_import(&shape, zarr_chunks);
-    Ok(ImportPlan {
-        name: name.to_owned(),
-        dtype,
-        shape,
-        chunk_shape,
-        cf: None,
-        zarr_array_rel: Some(array_rel.to_owned()),
-        zarr_zstd: zarr_chunk_payload_zstd(meta),
-    })
+    Ok(
+        ImportPlan::new(name.to_owned(), dtype, shape, chunk_shape, None)
+            .with_zarr(array_rel.to_owned(), zarr_chunk_payload_zstd(meta))
+            .with_import(zarr_array_attrs(&meta.attributes), None, None),
+    )
 }
 
 fn map_zarr_dtype(
@@ -406,6 +402,8 @@ pub fn is_zarr_v3_directory(path: &Path) -> bool {
 struct ZarrNodeMeta {
     zarr_format: u32,
     node_type: String,
+    #[serde(default)]
+    attributes: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     shape: Option<Vec<u64>>,
     #[serde(default)]

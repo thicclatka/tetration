@@ -290,6 +290,31 @@ pub(crate) fn extract_tile_row_major(
     Ok(out)
 }
 
+/// Extract one row-major tile and copy it into `buf` (length must match the tile).
+///
+/// # Errors
+///
+/// Same as [`extract_tile_row_major`], plus [`CatalogError::InvalidWriteSpec`] when `buf.len()`
+/// does not match the extracted tile.
+pub(crate) fn write_tile_row_major_into(
+    full: &[u8],
+    shape: &[u64],
+    chunk_shape: &[u64],
+    chunk_coord: &[u64],
+    ndim: usize,
+    elem_size: usize,
+    buf: &mut [u8],
+) -> Result<(), CatalogError> {
+    let tile = extract_tile_row_major(full, shape, chunk_shape, chunk_coord, ndim, elem_size)?;
+    if tile.len() != buf.len() {
+        return Err(CatalogError::InvalidWriteSpec(
+            "tile buffer length mismatch for chunk",
+        ));
+    }
+    buf.copy_from_slice(&tile);
+    Ok(())
+}
+
 /// Copy one `f32` tile (row-major) from a full row-major tensor buffer into a new byte vec.
 #[allow(dead_code)]
 pub(crate) fn extract_f32_tile_row_major(

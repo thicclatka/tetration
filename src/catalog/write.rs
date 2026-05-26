@@ -1,20 +1,14 @@
 //! Write paths for layout v1 `.tet` files.
+//!
+//! Multi-dataset creates delegate layout math and tile iteration to [`crate::catalog::file_layout`].
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
-use crate::layout::{LAYOUT_VERSION_V1, SuperblockV1};
-use crate::utils::wire;
-
 use super::dataset::{self, RawArrayWrite};
-use super::index::{self, ChunkIndexEntryV1};
-use super::tile;
-use super::{
-    CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, FileExecutionSettingsV1, MAX_NDIM,
-    OneChunkRawWrite,
-};
-use crate::utils::dtype::ElementDtype;
+use super::index::ChunkIndexEntryV1;
+use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, FileExecutionSettingsV1, OneChunkRawWrite};
 
 /// Write a `.tet` with one dataset and any number of chunks (row-major `f32` or `f64` elements),
 /// each stored as [`CHUNK_PAYLOAD_CODEC_V1`].[`raw`](super::ChunkPayloadCodecV1::raw) or
@@ -64,136 +58,42 @@ fn write_multi_raw_array_file_inner(
         )?);
     }
     let dataset_blob_len = blob.len() as u64;
-    let index_base = wire::align8_u64(40u64 + dataset_blob_len);
+    let n_chunks_total =
+        super::file_layout::sum_chunk_counts(specs.iter().map(|s| (s.shape, s.chunk_shape)))?;
+    let (index_base, chunk_index_length, payload_start) =
+        super::file_layout::chunk_index_layout(dataset_blob_len, n_chunks_total)?;
 
     let mut entries: Vec<ChunkIndexEntryV1> = Vec::new();
     let mut payloads: Vec<Vec<u8>> = Vec::new();
-
-    let index_header_len = index::CHUNK_INDEX_HEADER_V1.header_len as u64;
-    let mut n_chunks_total: u64 = 0;
-    for spec in specs {
-        let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-        n_chunks_total = n_chunks_total
-            .checked_add(tile::total_chunk_count(&counts)?)
-            .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    }
-    let entries_len_u64 = n_chunks_total
-        .checked_mul(ChunkIndexEntryV1::WIRE_LEN as u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    let chunk_index_length = index_header_len
-        .checked_add(entries_len_u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-
-    let payload_start = index_base + chunk_index_length;
     let mut cursor = payload_start;
-
-    let tags = DATASET_DTYPE_TAG_V1;
     for (dataset_id, spec) in specs.iter().enumerate() {
-        let ndim = spec.shape.len();
-        let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-        let n_chunks = tile::total_chunk_count(&counts)?;
-        let elem_size = if tags.is_f32(spec.dtype) {
-            ElementDtype::F32.elem_size()
-        } else if tags.is_f64(spec.dtype) {
-            ElementDtype::F64.elem_size()
-        } else if tags.is_i32(spec.dtype) {
-            ElementDtype::I32.elem_size()
-        } else if tags.is_i64(spec.dtype) {
-            ElementDtype::I64.elem_size()
-        } else {
-            return Err(CatalogError::InvalidWriteSpec(
-                "unsupported dtype for tile extraction",
-            ));
-        };
-
-        for k in 0..n_chunks {
-            let coord = tile::chunk_coord_from_linear(k, &counts, ndim);
-            let tile_bytes = tile::extract_tile_row_major(
-                spec.data,
-                spec.shape,
-                spec.chunk_shape,
-                &coord[..ndim],
-                ndim,
-                elem_size,
-            )?;
-            let raw_len =
-                u64::try_from(tile_bytes.len()).map_err(|_| CatalogError::TooLargeForPlatform {
-                    field: "chunk_payload_len",
-                    value: u64::MAX,
-                })?;
-            let stored_vec =
-                CHUNK_PAYLOAD_CODEC_V1.encode_tile_payload(spec.chunk_codec, tile_bytes)?;
-            let stored_len =
-                u64::try_from(stored_vec.len()).map_err(|_| CatalogError::TooLargeForPlatform {
-                    field: "chunk_stored_len",
-                    value: u64::MAX,
-                })?;
-            let mut chunk_index = [0u64; MAX_NDIM];
-            chunk_index[..ndim].copy_from_slice(&coord[..ndim]);
-            entries.push(ChunkIndexEntryV1 {
-                dataset_id: u64::try_from(dataset_id).map_err(|_| {
-                    CatalogError::TooLargeForPlatform {
-                        field: "dataset_id",
-                        value: u64::MAX,
-                    }
-                })?,
-                chunk_index,
-                payload_offset: cursor,
-                raw_byte_len: raw_len,
-                stored_byte_len: stored_len,
-                codec: spec.chunk_codec,
-            });
-            cursor = cursor
-                .checked_add(stored_len)
-                .ok_or(CatalogError::InvalidWriteSpec("payload cursor overflow"))?;
-            payloads.push(stored_vec);
-        }
+        let grid = super::chunk_grid_plan(spec.shape, spec.chunk_shape, spec.dtype)?;
+        cursor = super::file_layout::push_raw_tiles_from_tensor(
+            spec,
+            &grid,
+            super::file_layout::wire_dataset_id(dataset_id)?,
+            cursor,
+            &mut entries,
+            &mut payloads,
+        )?;
     }
 
-    let sb = SuperblockV1 {
-        layout_version: LAYOUT_VERSION_V1,
-        dataset_count: u32::try_from(specs.len()).map_err(|_| {
-            CatalogError::TooLargeForPlatform {
-                field: "dataset_count",
-                value: specs.len() as u64,
-            }
-        })?,
-        flags: 0,
-        chunk_index_offset: index_base,
-        chunk_index_length,
-    };
-
-    let mut index_bytes = Vec::with_capacity(super::usize_from_u64(
-        "chunk_index_byte_length",
-        chunk_index_length,
-    )?);
-    index::write_chunk_index_header(
-        &mut index_bytes,
+    let sb = super::file_layout::layout_superblock(specs.len(), index_base, chunk_index_length)?;
+    let index_bytes = super::file_layout::build_chunk_index_bytes(
+        &entries,
         n_chunks_total,
+        chunk_index_length,
         specs[0]
             .file_execution
             .unwrap_or_else(FileExecutionSettingsV1::default_engine),
-    );
-    for e in &entries {
-        index_bytes.extend_from_slice(&e.to_bytes());
-    }
-
-    debug_assert_eq!(index_bytes.len() as u64, chunk_index_length);
+    )?;
 
     let mut f = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(path)?;
-    f.write_all(&sb.to_bytes())?;
-    f.write_all(&dataset_blob_len.to_le_bytes())?;
-    f.write_all(&blob)?;
-    let after_blob = 40usize + blob.len();
-    let pad = super::usize_from_u64("chunk_index_base", index_base)?.saturating_sub(after_blob);
-    if pad > 0 {
-        f.write_all(&vec![0u8; pad])?;
-    }
-    f.write_all(&index_bytes)?;
+    super::file_layout::write_file_preamble(&mut f, &sb, &blob, index_base, &index_bytes)?;
     for p in payloads {
         f.write_all(&p)?;
     }

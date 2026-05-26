@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tetration::catalog::read_tet_summary_v1;
 use tetration::layout::mmap_file_read;
 use tetration::query::{
-    DEFAULT_INFO_CHUNK_TABLE_LIMIT, InfoListFilter, format_info_json, format_info_quiet,
-    format_info_text, info_view_sections_from_flags,
+    DEFAULT_INFO_CHUNK_TABLE_LIMIT, InfoListFilter, InfoMetadataDisplay, format_info_json,
+    format_info_quiet, format_info_text, info_view_sections_from_flags,
 };
 
 use crate::util::cli_error;
@@ -24,6 +24,7 @@ pub(crate) struct InfoRunOpts {
     pub limit: Option<usize>,
     pub dataset: Option<String>,
     pub grep: Option<String>,
+    pub metadata: bool,
 }
 
 pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
@@ -48,6 +49,11 @@ pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
             opts.show_footer_history,
         );
         let chunk_limit = opts.limit.unwrap_or(DEFAULT_INFO_CHUNK_TABLE_LIMIT);
+        let metadata_display = if opts.metadata {
+            InfoMetadataDisplay::Verbose
+        } else {
+            InfoMetadataDisplay::WhenPresent
+        };
         format_info_text(
             path_ref,
             file_len,
@@ -55,6 +61,7 @@ pub(crate) fn run_info(opts: InfoRunOpts) -> Result<(), String> {
             filter.as_ref(),
             sections,
             chunk_limit,
+            metadata_display,
         )
     };
     print!("{out}");

@@ -9,12 +9,14 @@ use netcdf::types::{FloatType, IntType, NcVariableType};
 use crate::utils::dtype::ElementDtype;
 
 use super::cf::cf_from_netcdf;
+use super::import_metadata::{
+    finish_convert_footer, netcdf_dim_names, netcdf_self_import_coords, netcdf_variable_attrs,
+};
 use super::parallel::NetcdfParallelSource;
 use super::shared::{
     ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
 };
 use super::{ConvertError, ConvertProgress, ConvertReport, report};
-use crate::catalog::append_convert_history;
 
 /// Import all supported numeric variables from a `NetCDF` file into one `.tet`.
 ///
@@ -85,7 +87,7 @@ pub fn convert_netcdf_to_tet_with_progress(
         |job, buf| source.fill_tile(job, buf),
         Some(&mut progress_bridge as &mut dyn FnMut(u64, u64, &str)),
     )?;
-    let history = append_convert_history(output, "nc")?;
+    let history = finish_convert_footer(output, "nc", &plans)?;
 
     Ok(report(
         input,
@@ -147,15 +149,13 @@ fn plan_variable_at(name: &str, var: &Variable<'_>) -> Result<ImportPlan, Conver
     } else {
         chunk_shape_for_import(&shape, var.chunking().ok().flatten())
     };
-    Ok(ImportPlan {
-        name: name.to_owned(),
-        dtype,
-        shape,
-        chunk_shape,
-        cf,
-        zarr_array_rel: None,
-        zarr_zstd: false,
-    })
+    Ok(
+        ImportPlan::new(name.to_owned(), dtype, shape, chunk_shape, cf).with_import(
+            netcdf_variable_attrs(var),
+            netcdf_dim_names(var),
+            netcdf_self_import_coords(name, var),
+        ),
+    )
 }
 
 fn map_netcdf_dtype(name: &str, ty: NcVariableType) -> Result<ElementDtype, ConvertError> {

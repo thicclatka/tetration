@@ -43,6 +43,7 @@ fn run(cli: Cli) -> Result<(), String> {
             limit,
             dataset,
             grep,
+            metadata,
         } => run_info(InfoRunOpts {
             path,
             json,
@@ -56,6 +57,7 @@ fn run(cli: Cli) -> Result<(), String> {
             limit,
             dataset,
             grep,
+            metadata,
         }),
         Commands::Query {
             query,
