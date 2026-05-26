@@ -10,9 +10,6 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
-use crate::layout::{self, SuperblockV1, mmap_file_read};
-use crate::utils::dtype::ElementDtype;
-
 use super::dataset::RawArrayWrite;
 use super::execution::FileExecutionSettingsV1;
 use super::history::{self, FooterBlobV1, HistoryEventV1, write_footer_blob};
@@ -24,6 +21,7 @@ use super::{
     append_multi_mixed, append_multi_raw_array_file, read_tet_summary_v1,
     validate_array_write_meta, write_multi_raw_array_file,
 };
+use crate::layout::{self, SuperblockV1, mmap_file_read};
 
 /// In-memory dataset queued for [`TetWriterSession::commit`].
 #[derive(Debug, Clone)]
@@ -36,7 +34,7 @@ pub struct TetDatasetWrite {
     pub data: Vec<u8>,
     /// CF-style string attributes persisted in the footer `metadata` object.
     pub attrs: BTreeMap<String, String>,
-    /// Optional dimension names (`ndim` strings); coordinate labels are not stored yet.
+    /// Optional dimension names (`ndim` strings). Axis label maps (`coords`) are import-only today.
     pub dim_names: Option<Vec<String>>,
 }
 
@@ -147,15 +145,112 @@ impl SessionDataset {
         }
     }
 
-    fn dim_names(&self) -> &Option<Vec<String>> {
+    fn dim_names(&self) -> Option<&Vec<String>> {
         match self {
-            Self::InMemory(d) => &d.dim_names,
-            Self::Streaming(d) => &d.dim_names,
+            Self::InMemory(d) => d.dim_names.as_ref(),
+            Self::Streaming(d) => d.dim_names.as_ref(),
         }
     }
 
     fn is_streaming(&self) -> bool {
         matches!(self, Self::Streaming(_))
+    }
+}
+
+/// Normalized dataset row for [`TetWriterSession::commit_with_fill`].
+struct CommitPrepared {
+    name: String,
+    dtype: u32,
+    shape: Vec<u64>,
+    chunk_shape: Vec<u64>,
+    data: Option<Vec<u8>>,
+}
+
+/// Split queued session datasets into a uniform row for mixed commit.
+fn take_commit_prepared(datasets: Vec<SessionDataset>) -> Vec<CommitPrepared> {
+    datasets
+        .into_iter()
+        .map(|ds| match ds {
+            SessionDataset::InMemory(w) => CommitPrepared {
+                name: w.name,
+                dtype: w.dtype,
+                shape: w.shape,
+                chunk_shape: w.chunk_shape,
+                data: Some(w.data),
+            },
+            SessionDataset::Streaming(s) => CommitPrepared {
+                name: s.name,
+                dtype: s.dtype,
+                shape: s.shape,
+                chunk_shape: s.chunk_shape,
+                data: None,
+            },
+        })
+        .collect()
+}
+
+/// In-memory rows from [`CommitPrepared`] as [`RawArrayWrite`] refs (raw codec).
+fn memory_raw_writes<'a>(
+    prepared: &'a [CommitPrepared],
+    file_execution: Option<FileExecutionSettingsV1>,
+) -> Vec<RawArrayWrite<'a>> {
+    prepared
+        .iter()
+        .filter_map(|d| {
+            Some(RawArrayWrite::from_tensor(
+                &d.name,
+                d.dtype,
+                &d.shape,
+                &d.chunk_shape,
+                CHUNK_PAYLOAD_CODEC_V1.raw,
+                d.data.as_ref()?,
+                file_execution,
+            ))
+        })
+        .collect()
+}
+
+/// [`ArrayWriteMeta`] rows; `streaming_only` skips in-memory datasets.
+fn commit_array_metas<'a>(
+    prepared: &'a [CommitPrepared],
+    file_execution: Option<FileExecutionSettingsV1>,
+    streaming_only: bool,
+) -> Vec<ArrayWriteMeta<'a>> {
+    prepared
+        .iter()
+        .filter(|d| !streaming_only || d.data.is_none())
+        .map(|d| {
+            ArrayWriteMeta::row_major(&d.name, d.dtype, &d.shape, &d.chunk_shape, file_execution)
+        })
+        .collect()
+}
+
+/// Fill one tile: slice in-memory tensor bytes or delegate to streaming `fill`.
+fn fill_commit_prepared_tile<F>(
+    prepared: &[CommitPrepared],
+    job: &StreamTileJob<'_>,
+    buf: &mut [u8],
+    fill: &F,
+) -> Result<(), CatalogError>
+where
+    F: Fn(&StreamTileJob<'_>, &mut [u8]) -> Result<(), CatalogError>,
+{
+    let ds = prepared.iter().find(|p| p.name == job.dataset_name).ok_or(
+        CatalogError::InvalidWriteSpec("unknown dataset in tile job"),
+    )?;
+    if let Some(data) = &ds.data {
+        let elem_size = super::elem_size_for_wire_tag(ds.dtype)?;
+        tile::write_tile_row_major_into(
+            data,
+            &ds.shape,
+            &ds.chunk_shape,
+            &job.chunk_coord[..job.ndim],
+            job.ndim,
+            elem_size,
+            buf,
+        )
+    } else {
+        fill(job, buf)
     }
 }
 
@@ -341,12 +436,11 @@ impl TetWriterSession {
             });
         }
         for ds in &self.datasets {
-            if ds.attrs().is_empty() && ds.dim_names().is_none() {
+            if DatasetMetadataV1::import_is_empty(ds.attrs(), ds.dim_names(), None) {
                 continue;
             }
-            let entry = meta.dataset_mut(ds.name());
-            entry.attrs = ds.attrs().clone();
-            entry.dim_names.clone_from(ds.dim_names());
+            meta.dataset_mut(ds.name())
+                .apply_import(ds.attrs(), ds.dim_names(), None);
         }
         if meta.file.is_none() && meta.datasets.is_empty() {
             return Ok(None);
@@ -395,15 +489,15 @@ impl TetWriterSession {
                     SessionDataset::InMemory(w) => w,
                     SessionDataset::Streaming(_) => unreachable!(),
                 };
-                RawArrayWrite {
-                    name: &d.name,
-                    dtype: d.dtype,
-                    shape: &d.shape,
-                    chunk_shape: &d.chunk_shape,
-                    chunk_codec: d.chunk_codec,
-                    data: &d.data,
-                    file_execution: self.file_execution,
-                }
+                RawArrayWrite::from_tensor(
+                    &d.name,
+                    d.dtype,
+                    &d.shape,
+                    &d.chunk_shape,
+                    d.chunk_codec,
+                    &d.data,
+                    self.file_execution,
+                )
             })
             .collect();
         let footer_metadata = self.build_footer_metadata()?;
@@ -445,114 +539,24 @@ impl TetWriterSession {
         }
 
         let footer_metadata = self.build_footer_metadata()?;
-
-        struct Prepared {
-            name: String,
-            dtype: u32,
-            shape: Vec<u64>,
-            chunk_shape: Vec<u64>,
-            data: Option<Vec<u8>>,
-        }
-
         let file_execution = self.file_execution;
-        let mut prepared: Vec<Prepared> = Vec::with_capacity(self.datasets.len());
-        for ds in std::mem::take(&mut self.datasets) {
-            match ds {
-                SessionDataset::InMemory(w) => prepared.push(Prepared {
-                    name: w.name,
-                    dtype: w.dtype,
-                    shape: w.shape,
-                    chunk_shape: w.chunk_shape,
-                    data: Some(w.data),
-                }),
-                SessionDataset::Streaming(s) => prepared.push(Prepared {
-                    name: s.name,
-                    dtype: s.dtype,
-                    shape: s.shape,
-                    chunk_shape: s.chunk_shape,
-                    data: None,
-                }),
-            }
-        }
-
-        let memory_specs: Vec<RawArrayWrite<'_>> = prepared
-            .iter()
-            .filter(|d| d.data.is_some())
-            .map(|d| RawArrayWrite {
-                name: &d.name,
-                dtype: d.dtype,
-                shape: &d.shape,
-                chunk_shape: &d.chunk_shape,
-                chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-                data: d.data.as_ref().expect("in-memory row"),
-                file_execution,
-            })
-            .collect();
-        let stream_metas: Vec<ArrayWriteMeta<'_>> = prepared
-            .iter()
-            .filter(|d| d.data.is_none())
-            .map(|d| ArrayWriteMeta {
-                name: &d.name,
-                dtype: d.dtype,
-                shape: &d.shape,
-                chunk_shape: &d.chunk_shape,
-                chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-                file_execution,
-            })
-            .collect();
-
+        let prepared = take_commit_prepared(std::mem::take(&mut self.datasets));
+        let memory_specs = memory_raw_writes(&prepared, file_execution);
+        let stream_metas = commit_array_metas(&prepared, file_execution, true);
         let fill_tile = |job: &StreamTileJob<'_>, buf: &mut [u8]| {
-            let ds = prepared.iter().find(|p| p.name == job.dataset_name).ok_or(
-                CatalogError::InvalidWriteSpec("unknown dataset in tile job"),
-            )?;
-            if let Some(data) = &ds.data {
-                let elem = ElementDtype::try_from_wire_tag(ds.dtype).ok_or(
-                    CatalogError::InvalidWriteSpec("unsupported dataset dtype tag"),
-                )?;
-                let tile = tile::extract_tile_row_major(
-                    data,
-                    &ds.shape,
-                    &ds.chunk_shape,
-                    &job.chunk_coord[..job.ndim],
-                    job.ndim,
-                    elem.elem_size(),
-                )?;
-                if tile.len() != buf.len() {
-                    return Err(CatalogError::InvalidWriteSpec(
-                        "in-memory tile length mismatch for chunk",
-                    ));
-                }
-                buf.copy_from_slice(&tile);
-                Ok(())
-            } else {
-                fill(job, buf)
-            }
+            fill_commit_prepared_tile(&prepared, job, buf, &fill)
         };
 
         match self.mode {
-            SessionMode::Create => {
-                let metas: Vec<ArrayWriteMeta<'_>> = prepared
-                    .iter()
-                    .map(|d| ArrayWriteMeta {
-                        name: &d.name,
-                        dtype: d.dtype,
-                        shape: &d.shape,
-                        chunk_shape: &d.chunk_shape,
-                        chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-                        file_execution,
-                    })
-                    .collect();
-                write_multi_raw_array_streaming(
-                    &self.path,
-                    &metas,
-                    parallel_jobs,
-                    fill_tile,
-                    None,
-                )?;
-            }
+            SessionMode::Create => write_multi_raw_array_streaming(
+                &self.path,
+                &commit_array_metas(&prepared, file_execution, false),
+                parallel_jobs,
+                fill_tile,
+                None,
+            )?,
             SessionMode::Append { .. } => {
                 append_multi_mixed(&self.path, &memory_specs, &stream_metas, fill_tile)?;
-                let _ = parallel_jobs;
             }
         }
         self.flush_footer(footer_metadata)?;

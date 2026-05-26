@@ -79,6 +79,38 @@ pub struct TetMetadataV1 {
     pub datasets: BTreeMap<String, DatasetMetadataV1>,
 }
 
+impl DatasetMetadataV1 {
+    /// True when there is nothing to persist for this dataset (convert or session import).
+    ///
+    /// `dim_names` / `coords` use `Option<&T>` so callers can pass `.as_ref()` on owned fields.
+    #[must_use]
+    pub fn import_is_empty(
+        attrs: &BTreeMap<String, String>,
+        dim_names: Option<&Vec<String>>,
+        coords: Option<&BTreeMap<String, CoordAxisV1>>,
+    ) -> bool {
+        attrs.is_empty() && dim_names.is_none() && coords.is_none()
+    }
+
+    /// Merge import-time fields from convert or the embedder session writer (present fields only).
+    pub fn apply_import(
+        &mut self,
+        attrs: &BTreeMap<String, String>,
+        dim_names: Option<&Vec<String>>,
+        coords: Option<&BTreeMap<String, CoordAxisV1>>,
+    ) {
+        if !attrs.is_empty() {
+            self.attrs.clone_from(attrs);
+        }
+        if let Some(names) = dim_names {
+            self.dim_names = Some(names.clone());
+        }
+        if let Some(c) = coords {
+            self.coords = Some(c.clone());
+        }
+    }
+}
+
 impl TetMetadataV1 {
     /// Metadata for one dataset, creating the map entry when missing.
     pub fn dataset_mut(&mut self, name: &str) -> &mut DatasetMetadataV1 {
@@ -146,14 +178,22 @@ impl TetMetadataV1 {
                     ));
                 }
                 for (axis, c) in coords {
-                    validate_attr_string(axis, "metadata coord axis name", limits.attr_string_bytes)?;
+                    validate_attr_string(
+                        axis,
+                        "metadata coord axis name",
+                        limits.attr_string_bytes,
+                    )?;
                     if c.labels.len() > limits.coord_labels_per_axis {
                         return Err(CatalogError::InvalidWriteSpec(
                             "metadata coord labels exceeds coord_labels_per_axis limit",
                         ));
                     }
                     for label in &c.labels {
-                        validate_attr_string(label, "metadata coord label", limits.attr_string_bytes)?;
+                        validate_attr_string(
+                            label,
+                            "metadata coord label",
+                            limits.attr_string_bytes,
+                        )?;
                     }
                 }
             }

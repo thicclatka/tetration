@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::catalog::{
-    CatalogError, CoordAxisV1, FileMetadataV1, FooterBlobV1, HistoryEventV1, MetadataLimitsV1,
-    TetMetadataV1, unix_timestamp_now, write_footer_blob,
+    CatalogError, CoordAxisV1, DatasetMetadataV1, FileMetadataV1, FooterBlobV1, HistoryEventV1,
+    MetadataLimitsV1, TetMetadataV1, unix_timestamp_now, write_footer_blob,
 };
 
 use super::shared::ImportPlan;
@@ -48,6 +48,7 @@ pub fn finish_convert_footer(
     Ok(vec![event])
 }
 
+/// Merge per-plan import fields into footer metadata (file tool stamp + dataset entries).
 fn build_convert_metadata(plans: &[ImportPlan]) -> Result<Option<TetMetadataV1>, CatalogError> {
     let mut meta = TetMetadataV1 {
         file: Some(FileMetadataV1 {
@@ -58,16 +59,18 @@ fn build_convert_metadata(plans: &[ImportPlan]) -> Result<Option<TetMetadataV1>,
         ..TetMetadataV1::default()
     };
     for plan in plans {
-        if plan.import_attrs.is_empty()
-            && plan.import_dim_names.is_none()
-            && plan.import_coords.is_none()
-        {
+        if DatasetMetadataV1::import_is_empty(
+            &plan.import_attrs,
+            plan.import_dim_names.as_ref(),
+            plan.import_coords.as_ref(),
+        ) {
             continue;
         }
-        let entry = meta.dataset_mut(&plan.name);
-        entry.attrs.clone_from(&plan.import_attrs);
-        entry.dim_names.clone_from(&plan.import_dim_names);
-        entry.coords.clone_from(&plan.import_coords);
+        meta.dataset_mut(&plan.name).apply_import(
+            &plan.import_attrs,
+            plan.import_dim_names.as_ref(),
+            plan.import_coords.as_ref(),
+        );
     }
     meta.validate()?;
     Ok(Some(meta))
@@ -122,7 +125,7 @@ pub(crate) fn netcdf_variable_attrs(var: &netcdf::Variable<'_>) -> BTreeMap<Stri
     let names: Vec<String> = var.attributes().map(|a| a.name().to_owned()).collect();
     import_named_attrs(&mut out, &names, |name| {
         var.attribute_value(name)
-            .and_then(|r| r.ok())
+            .and_then(Result::ok)
             .and_then(nc_attr_value_to_string)
     });
     out
@@ -133,7 +136,7 @@ pub(crate) fn netcdf_dim_names(var: &netcdf::Variable<'_>) -> Option<Vec<String>
     let names: Vec<String> = var
         .dimensions()
         .iter()
-        .map(|d| d.name())
+        .map(netcdf::Dimension::name)
         .filter(|n| !n.is_empty())
         .collect();
     if names.is_empty() {
@@ -233,43 +236,38 @@ fn hdf5_attr_string_fixed(
 }
 
 #[cfg(feature = "tetration-hdf5")]
-fn try_hdf5_fixed_ascii(reader: &hdf5_metno::Reader<'_>, cap: usize) -> Option<String> {
-    use hdf5_metno::types::FixedAscii;
-    macro_rules! try_cap {
-        ($($n:literal),+) => {
-            $(
-                if cap == $n {
-                    if let Ok(v) = reader.read_scalar::<FixedAscii<$n>>() {
-                        return Some(v.as_str().to_owned());
-                    }
+macro_rules! try_hdf5_fixed_string {
+    ($reader:expr, $cap:expr, $fixed:ident, $($n:literal),+ $(,)?) => {{
+        use hdf5_metno::types::$fixed;
+        $(
+            if $cap == $n {
+                if let Ok(v) = $reader.read_scalar::<$fixed<$n>>() {
+                    return Some(v.as_str().to_owned());
                 }
-            )+
-        };
-    }
-    try_cap!(
-        8, 16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 512, 1024, 2048, 4096
-    );
-    None
+            }
+        )+
+        None
+    }};
+}
+
+#[cfg(feature = "tetration-hdf5")]
+macro_rules! try_hdf5_fixed_caps {
+    ($reader:expr, $cap:expr, $fixed:ident) => {
+        try_hdf5_fixed_string!(
+            $reader, $cap, $fixed, 8, 16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 512,
+            1024, 2048, 4096
+        )
+    };
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn try_hdf5_fixed_ascii(reader: &hdf5_metno::Reader<'_>, cap: usize) -> Option<String> {
+    try_hdf5_fixed_caps!(reader, cap, FixedAscii)
 }
 
 #[cfg(feature = "tetration-hdf5")]
 fn try_hdf5_fixed_unicode(reader: &hdf5_metno::Reader<'_>, cap: usize) -> Option<String> {
-    use hdf5_metno::types::FixedUnicode;
-    macro_rules! try_cap {
-        ($($n:literal),+) => {
-            $(
-                if cap == $n {
-                    if let Ok(v) = reader.read_scalar::<FixedUnicode<$n>>() {
-                        return Some(v.as_str().to_owned());
-                    }
-                }
-            )+
-        };
-    }
-    try_cap!(
-        8, 16, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 512, 1024, 2048, 4096
-    );
-    None
+    try_hdf5_fixed_caps!(reader, cap, FixedUnicode)
 }
 
 #[cfg(feature = "tetration-hdf5")]
@@ -294,10 +292,7 @@ pub(crate) fn enrich_hdf5_cf_coordinates(file: &hdf5_metno::File, plans: &mut [I
 }
 
 #[cfg(feature = "tetration-hdf5")]
-fn resolve_hdf5_coord_dataset(
-    file: &hdf5_metno::File,
-    axis: &str,
-) -> Option<hdf5_metno::Dataset> {
+fn resolve_hdf5_coord_dataset(file: &hdf5_metno::File, axis: &str) -> Option<hdf5_metno::Dataset> {
     for path in [format!("coordinates/{axis}"), axis.to_owned()] {
         if let Ok(ds) = file.dataset(&path) {
             return Some(ds);
@@ -308,61 +303,59 @@ fn resolve_hdf5_coord_dataset(
 
 #[cfg(feature = "tetration-hdf5")]
 pub(crate) fn hdf5_1d_coord_labels(ds: &hdf5_metno::Dataset) -> Option<CoordAxisV1> {
-    use crate::utils::dtype::ElementDtype;
-
-    let dtype = map_hdf5_element_dtype(ds).ok()?;
     let shape = ds.shape();
     if shape.len() != 1 {
         return None;
     }
     let n = shape[0];
-    let limits = MetadataLimitsV1::DEFAULT;
-    if n == 0 || n > limits.coord_labels_per_axis {
+    if !coord_axis_len_ok(n) {
         return None;
     }
-    let labels = match dtype {
+    let dtype = super::hdf5_shared::element_dtype_from_hdf5_dataset(ds)?;
+    let labels = hdf5_read_1d_labels(ds, dtype)?;
+    coord_axis_from_labels(labels, n)
+}
+
+#[cfg(feature = "tetration-hdf5")]
+fn hdf5_read_1d_labels(
+    ds: &hdf5_metno::Dataset,
+    dtype: crate::utils::dtype::ElementDtype,
+) -> Option<Vec<String>> {
+    use crate::utils::dtype::ElementDtype;
+    Some(match dtype {
         ElementDtype::F32 => ds
             .read_raw::<f32>()
             .ok()?
             .into_iter()
-            .map(|v| trim_coord_label(&v.to_string()))
+            .map(label_from_display)
             .collect(),
         ElementDtype::F64 => ds
             .read_raw::<f64>()
             .ok()?
             .into_iter()
-            .map(|v| trim_coord_label(&v.to_string()))
+            .map(label_from_display)
             .collect(),
         ElementDtype::I32 => ds
             .read_raw::<i32>()
             .ok()?
             .into_iter()
-            .map(|v| v.to_string())
+            .map(label_from_display)
             .collect(),
         ElementDtype::I64 => ds
             .read_raw::<i64>()
             .ok()?
             .into_iter()
-            .map(|v| v.to_string())
+            .map(label_from_display)
             .collect(),
-    };
-    Some(CoordAxisV1 { labels })
+    })
 }
 
-#[cfg(feature = "tetration-hdf5")]
-fn map_hdf5_element_dtype(
-    ds: &hdf5_metno::Dataset,
-) -> Result<crate::utils::dtype::ElementDtype, ()> {
-    use crate::utils::dtype::ElementDtype;
-    use hdf5_metno::types::{FloatSize, IntSize, TypeDescriptor};
-    let desc = ds.dtype().map_err(|_| ())?.to_descriptor().map_err(|_| ())?;
-    match desc {
-        TypeDescriptor::Float(FloatSize::U4) => Ok(ElementDtype::F32),
-        TypeDescriptor::Float(FloatSize::U8) => Ok(ElementDtype::F64),
-        TypeDescriptor::Integer(IntSize::U4) => Ok(ElementDtype::I32),
-        TypeDescriptor::Integer(IntSize::U8) => Ok(ElementDtype::I64),
-        _ => Err(()),
-    }
+#[cfg(feature = "tetration-netcdf")]
+pub(crate) fn netcdf_self_import_coords(
+    name: &str,
+    var: &netcdf::Variable<'_>,
+) -> Option<BTreeMap<String, CoordAxisV1>> {
+    netcdf_inline_coord_labels(var).map(|c| coord_axis_map(name, c))
 }
 
 #[cfg(feature = "tetration-netcdf")]
@@ -372,34 +365,44 @@ pub(crate) fn netcdf_inline_coord_labels(var: &netcdf::Variable<'_>) -> Option<C
         return None;
     }
     let n = var.dimensions()[0].len();
-    let limits = MetadataLimitsV1::DEFAULT;
-    if n == 0 || n > limits.coord_labels_per_axis {
+    if !coord_axis_len_ok(n) {
         return None;
     }
     let labels: Vec<String> = match var.vartype() {
         NcVariableType::Float(FloatType::F32) => (0..n)
-            .filter_map(|i| {
-                var.get_value::<f32, _>(i)
-                    .ok()
-                    .map(|v| trim_coord_label(&v.to_string()))
-            })
+            .filter_map(|i| var.get_value::<f32, _>(i).ok().map(label_from_display))
             .collect(),
         NcVariableType::Float(FloatType::F64) => (0..n)
-            .filter_map(|i| {
-                var.get_value::<f64, _>(i)
-                    .ok()
-                    .map(|v| trim_coord_label(&v.to_string()))
-            })
+            .filter_map(|i| var.get_value::<f64, _>(i).ok().map(label_from_display))
             .collect(),
         NcVariableType::Int(netcdf::types::IntType::I32) => (0..n)
-            .filter_map(|i| var.get_value::<i32, _>(i).ok().map(|v| v.to_string()))
+            .filter_map(|i| var.get_value::<i32, _>(i).ok().map(label_from_display))
             .collect(),
         NcVariableType::Int(netcdf::types::IntType::I64) => (0..n)
-            .filter_map(|i| var.get_value::<i64, _>(i).ok().map(|v| v.to_string()))
+            .filter_map(|i| var.get_value::<i64, _>(i).ok().map(label_from_display))
             .collect(),
         _ => return None,
     };
-    (labels.len() == n).then_some(CoordAxisV1 { labels })
+    coord_axis_from_labels(labels, n)
+}
+
+fn coord_axis_map(name: &str, axis: CoordAxisV1) -> BTreeMap<String, CoordAxisV1> {
+    let mut m = BTreeMap::new();
+    m.insert(name.to_owned(), axis);
+    m
+}
+
+fn coord_axis_len_ok(n: usize) -> bool {
+    let limits = MetadataLimitsV1::DEFAULT;
+    n > 0 && n <= limits.coord_labels_per_axis
+}
+
+fn coord_axis_from_labels(labels: Vec<String>, expected_len: usize) -> Option<CoordAxisV1> {
+    (labels.len() == expected_len).then_some(CoordAxisV1 { labels })
+}
+
+fn label_from_display(v: impl std::fmt::Display) -> String {
+    trim_coord_label(&v.to_string())
 }
 
 fn trim_coord_label(s: &str) -> String {
@@ -415,7 +418,8 @@ fn json_attr_value_to_string(value: &serde_json::Value) -> Option<String> {
         serde_json::Value::String(s) => non_empty_string(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::Bool(b) => Some(b.to_string()),
-        serde_json::Value::Null => None,
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => None,
+        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            None
+        }
     }
 }

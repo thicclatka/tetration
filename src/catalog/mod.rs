@@ -1,10 +1,15 @@
 //! Dataset directory and chunk index (layout v1 extension).
 //!
 //! See `docs/layout_v1.md` for byte layout after the 32-byte superblock.
+//!
+//! Multi-dataset writers share geometry and file assembly via [`file_layout`] (chunk grid planning,
+//! index/payload layout, encoded chunk push). [`write`] and [`stream_write`] create new files;
+//! [`append`] extends an existing catalog in place.
 
 mod append;
 mod dataset;
 pub mod execution;
+mod file_layout;
 mod history;
 mod index;
 pub mod metadata;
@@ -20,7 +25,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::layout::{self, SuperblockV1};
-use crate::utils::wire;
+use crate::utils::{dtype::ElementDtype, wire};
 
 pub use append::{
     append_multi_mixed, append_multi_raw_array_file, append_multi_raw_array_streaming,
@@ -188,28 +193,78 @@ pub fn tensor_bytes_from_shape(shape: &[u64], dtype: u32) -> Option<u64> {
     crate::utils::dtype::ElementDtype::try_from_wire_tag(dtype)?.tensor_bytes_for_shape(shape)
 }
 
+/// Element size in bytes for a supported catalog wire `dtype` tag.
+///
+/// # Errors
+///
+/// Returns [`CatalogError::InvalidWriteSpec`] when `dtype` is not a supported v1 tag.
+pub fn elem_size_for_wire_tag(dtype: u32) -> Result<usize, CatalogError> {
+    crate::utils::dtype::ElementDtype::try_from_wire_tag(dtype)
+        .map(ElementDtype::elem_size)
+        .ok_or(CatalogError::InvalidWriteSpec(
+            "unsupported dataset dtype tag",
+        ))
+}
+
+/// Per-dataset chunk grid geometry for tile iteration during writes.
+///
+/// Produced by [`chunk_grid_plan`]; consumed by [`file_layout::push_raw_tiles_from_tensor`]
+/// and streaming index builders.
+pub(crate) struct ChunkGridPlan {
+    /// Tensor rank (`shape.len()`).
+    pub ndim: usize,
+    /// Chunks per axis: `ceil(shape[d] / chunk_shape[d])`.
+    pub counts: Vec<u64>,
+    /// `product(counts)` — linear tile index runs `0..n_chunks`.
+    pub n_chunks: u64,
+    /// Element size in bytes for `dtype`'s wire tag.
+    pub elem_size: usize,
+}
+
+/// Chunk grid counts, total tiles, and element size for a supported wire dtype.
+///
+/// # Errors
+///
+/// Returns [`CatalogError`] when the grid overflows or `dtype` is unsupported.
+pub(crate) fn chunk_grid_plan(
+    shape: &[u64],
+    chunk_shape: &[u64],
+    dtype: u32,
+) -> Result<ChunkGridPlan, CatalogError> {
+    let ndim = shape.len();
+    let counts = tile::chunk_grid_counts(shape, chunk_shape);
+    let n_chunks = tile::total_chunk_count(&counts)?;
+    let elem_size = elem_size_for_wire_tag(dtype)?;
+    Ok(ChunkGridPlan {
+        ndim,
+        counts,
+        n_chunks,
+        elem_size,
+    })
+}
+
 /// Typed helpers for callers that already know the element type.
 #[must_use]
 pub fn f32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    crate::utils::dtype::ElementDtype::F32.tensor_bytes_for_shape(shape)
+    ElementDtype::F32.tensor_bytes_for_shape(shape)
 }
 
 /// Element count × 8 for an `f64` tensor with `shape`.
 #[must_use]
 pub fn f64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    crate::utils::dtype::ElementDtype::F64.tensor_bytes_for_shape(shape)
+    ElementDtype::F64.tensor_bytes_for_shape(shape)
 }
 
 /// Element count × 4 for an `i32` tensor with `shape`.
 #[must_use]
 pub fn i32_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    crate::utils::dtype::ElementDtype::I32.tensor_bytes_for_shape(shape)
+    ElementDtype::I32.tensor_bytes_for_shape(shape)
 }
 
 /// Element count × 8 for an `i64` tensor with `shape`.
 #[must_use]
 pub fn i64_tensor_bytes_from_shape(shape: &[u64]) -> Option<u64> {
-    crate::utils::dtype::ElementDtype::I64.tensor_bytes_for_shape(shape)
+    ElementDtype::I64.tensor_bytes_for_shape(shape)
 }
 
 /// High-level view of a mapped `.tet` file (superblock + catalog).

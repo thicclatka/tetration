@@ -180,18 +180,11 @@ fn plan_zarr_array(
                 .collect()
         });
     let chunk_shape = chunk_shape_for_import(&shape, zarr_chunks);
-    Ok(ImportPlan {
-        name: name.to_owned(),
-        dtype,
-        shape,
-        chunk_shape,
-        cf: None,
-        zarr_array_rel: Some(array_rel.to_owned()),
-        zarr_zstd: zarr_chunk_payload_zstd(meta),
-        import_attrs: zarr_array_attrs(&meta.attributes),
-        import_dim_names: None,
-        import_coords: None,
-    })
+    Ok(
+        ImportPlan::new(name.to_owned(), dtype, shape, chunk_shape, None)
+            .with_zarr(array_rel.to_owned(), zarr_chunk_payload_zstd(meta))
+            .with_import(zarr_array_attrs(&meta.attributes), None, None),
+    )
 }
 
 fn map_zarr_dtype(

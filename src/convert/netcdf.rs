@@ -1,6 +1,5 @@
 //! `NetCDF` → `.tet` conversion (streaming, one chunk at a time).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -11,7 +10,7 @@ use crate::utils::dtype::ElementDtype;
 
 use super::cf::cf_from_netcdf;
 use super::import_metadata::{
-    finish_convert_footer, netcdf_dim_names, netcdf_inline_coord_labels, netcdf_variable_attrs,
+    finish_convert_footer, netcdf_dim_names, netcdf_self_import_coords, netcdf_variable_attrs,
 };
 use super::parallel::NetcdfParallelSource;
 use super::shared::{
@@ -150,22 +149,13 @@ fn plan_variable_at(name: &str, var: &Variable<'_>) -> Result<ImportPlan, Conver
     } else {
         chunk_shape_for_import(&shape, var.chunking().ok().flatten())
     };
-    Ok(ImportPlan {
-        name: name.to_owned(),
-        dtype,
-        shape,
-        chunk_shape,
-        cf,
-        zarr_array_rel: None,
-        zarr_zstd: false,
-        import_attrs: netcdf_variable_attrs(var),
-        import_dim_names: netcdf_dim_names(var),
-        import_coords: netcdf_inline_coord_labels(var).map(|c| {
-            let mut m = BTreeMap::new();
-            m.insert(name.to_owned(), c);
-            m
-        }),
-    })
+    Ok(
+        ImportPlan::new(name.to_owned(), dtype, shape, chunk_shape, cf).with_import(
+            netcdf_variable_attrs(var),
+            netcdf_dim_names(var),
+            netcdf_self_import_coords(name, var),
+        ),
+    )
 }
 
 fn map_netcdf_dtype(name: &str, ty: NcVariableType) -> Result<ElementDtype, ConvertError> {

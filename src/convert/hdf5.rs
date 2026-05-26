@@ -4,12 +4,12 @@ use std::path::Path;
 use std::time::Instant;
 
 use hdf5_metno::File;
-use hdf5_metno::types::{FloatSize, IntSize, TypeDescriptor};
-
-use crate::utils::dtype::ElementDtype;
 
 use super::cf::cf_from_hdf5;
-use super::import_metadata::{enrich_hdf5_cf_coordinates, finish_convert_footer, hdf5_dataset_attrs};
+use super::hdf5_shared::map_hdf5_element_dtype;
+use super::import_metadata::{
+    enrich_hdf5_cf_coordinates, finish_convert_footer, hdf5_dataset_attrs,
+};
 use super::parallel::H5ParallelSource;
 use super::shared::{
     ImportPlan, chunk_shape_for_import, ensure_non_empty, join_catalog_path, write_plans_streaming,
@@ -108,7 +108,7 @@ fn collect_h5_plans(
 }
 
 fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, ConvertError> {
-    let dtype = map_hdf5_dtype(ds, name)?;
+    let dtype = map_hdf5_element_dtype(ds, name)?;
     let shape: Vec<u64> = ds
         .shape()
         .iter()
@@ -126,35 +126,13 @@ fn plan_dataset(name: &str, ds: &hdf5_metno::Dataset) -> Result<ImportPlan, Conv
     } else {
         chunk_shape_for_import(&shape, hdf5_chunk_shape(ds))
     };
-    Ok(ImportPlan {
-        name: name.to_owned(),
-        dtype,
-        shape,
-        chunk_shape,
-        cf,
-        zarr_array_rel: None,
-        zarr_zstd: false,
-        import_attrs: hdf5_dataset_attrs(ds),
-        import_dim_names: None,
-        import_coords: None,
-    })
-}
-
-fn map_hdf5_dtype(ds: &hdf5_metno::Dataset, name: &str) -> Result<ElementDtype, ConvertError> {
-    let td = ds.dtype().map_err(|e| ConvertError::Hdf5(e.to_string()))?;
-    let desc = td
-        .to_descriptor()
-        .map_err(|e| ConvertError::Hdf5(e.to_string()))?;
-    match desc {
-        TypeDescriptor::Float(FloatSize::U4) => Ok(ElementDtype::F32),
-        TypeDescriptor::Float(FloatSize::U8) => Ok(ElementDtype::F64),
-        TypeDescriptor::Integer(IntSize::U4) => Ok(ElementDtype::I32),
-        TypeDescriptor::Integer(IntSize::U8) => Ok(ElementDtype::I64),
-        other => Err(ConvertError::UnsupportedDtype {
-            name: name.to_owned(),
-            detail: format!("{other:?}"),
-        }),
-    }
+    Ok(
+        ImportPlan::new(name.to_owned(), dtype, shape, chunk_shape, cf).with_import(
+            hdf5_dataset_attrs(ds),
+            None,
+            None,
+        ),
+    )
 }
 
 fn hdf5_chunk_shape(ds: &hdf5_metno::Dataset) -> Option<Vec<usize>> {

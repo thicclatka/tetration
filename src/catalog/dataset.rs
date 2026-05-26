@@ -26,6 +26,30 @@ pub struct RawArrayWrite<'a> {
     pub file_execution: Option<FileExecutionSettingsV1>,
 }
 
+impl<'a> RawArrayWrite<'a> {
+    /// Build a write spec from tensor geometry and row-major bytes (no validation).
+    #[must_use]
+    pub fn from_tensor(
+        name: &'a str,
+        dtype: u32,
+        shape: &'a [u64],
+        chunk_shape: &'a [u64],
+        chunk_codec: u32,
+        data: &'a [u8],
+        file_execution: Option<FileExecutionSettingsV1>,
+    ) -> Self {
+        Self {
+            name,
+            dtype,
+            shape,
+            chunk_shape,
+            chunk_codec,
+            data,
+            file_execution,
+        }
+    }
+}
+
 /// Parsed dataset record from the on-disk catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,13 +60,25 @@ pub struct DatasetRecordV1 {
     pub chunk_shape: Vec<u64>,
 }
 
-pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), CatalogError> {
-    if spec.shape.len() != spec.chunk_shape.len() {
+/// Rank, non-zero extents, supported dtype, and chunk grid bounds (no tensor buffer).
+///
+/// Shared by [`validate_raw_array_write`](validate_raw_array_write) and
+/// [`crate::catalog::validate_array_write_meta`].
+///
+/// # Errors
+///
+/// Returns [`CatalogError`] when geometry is invalid or the chunk grid overflows.
+pub(super) fn validate_tensor_geometry(
+    shape: &[u64],
+    chunk_shape: &[u64],
+    dtype: u32,
+) -> Result<(), CatalogError> {
+    if shape.len() != chunk_shape.len() {
         return Err(CatalogError::InvalidWriteSpec(
             "shape and chunk_shape must have the same rank",
         ));
     }
-    let ndim = spec.shape.len();
+    let ndim = shape.len();
     if ndim == 0 {
         return Err(CatalogError::InvalidWriteSpec(
             "tensor rank must be at least 1",
@@ -52,22 +88,26 @@ pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), C
         return Err(CatalogError::BadNdim { ndim });
     }
     for i in 0..ndim {
-        if spec.chunk_shape[i] == 0 || spec.shape[i] == 0 {
+        if chunk_shape[i] == 0 || shape[i] == 0 {
             return Err(CatalogError::InvalidWriteSpec(
                 "shape and chunk_shape entries must be non-zero",
             ));
         }
     }
-    if !DATASET_DTYPE_TAG_V1.is_supported(spec.dtype) {
+    if !DATASET_DTYPE_TAG_V1.is_supported(dtype) {
         return Err(CatalogError::InvalidWriteSpec(
             "only dataset dtype tags in DATASET_DTYPE_TAG_V1 (f32/f64/i32/i64) are supported",
         ));
     }
-    let _elems: u64 = spec
-        .shape
-        .iter()
-        .try_fold(1u64, |a, &b| a.checked_mul(b))
-        .ok_or(CatalogError::InvalidWriteSpec("element count overflow"))?;
+    let _ = super::tensor_bytes_from_shape(shape, dtype)
+        .ok_or(CatalogError::InvalidWriteSpec("payload size overflow"))?;
+    let counts = tile::chunk_grid_counts(shape, chunk_shape);
+    tile::total_chunk_count(&counts)?;
+    Ok(())
+}
+
+pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), CatalogError> {
+    validate_tensor_geometry(spec.shape, spec.chunk_shape, spec.dtype)?;
     let need = super::tensor_bytes_from_shape(spec.shape, spec.dtype)
         .ok_or(CatalogError::InvalidWriteSpec("payload size overflow"))?;
     if spec.data.len() as u64 != need {
@@ -75,8 +115,6 @@ pub(super) fn validate_raw_array_write(spec: &RawArrayWrite<'_>) -> Result<(), C
             "tensor data length must equal element_size * product(shape)",
         ));
     }
-    let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-    let _ = tile::total_chunk_count(&counts)?;
     if !CHUNK_PAYLOAD_CODEC_V1.is_supported(spec.chunk_codec) {
         return Err(CatalogError::UnsupportedCodec {
             codec: spec.chunk_codec,

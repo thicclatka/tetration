@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use super::cf::CfTransform;
 
 use crate::catalog::{
-    ArrayWriteMeta, CHUNK_PAYLOAD_CODEC_V1, CatalogError, CoordAxisV1, StreamTileJob,
-    StreamWriteProgress, write_multi_raw_array_streaming,
+    ArrayWriteMeta, CatalogError, CoordAxisV1, StreamTileJob, StreamWriteProgress,
+    write_multi_raw_array_streaming,
 };
 use crate::utils::dtype::ElementDtype;
 
@@ -26,7 +26,7 @@ pub(crate) struct ImportPlan {
     pub zarr_zstd: bool,
     /// Dataset attributes copied into footer `metadata.datasets[name].attrs`.
     pub import_attrs: BTreeMap<String, String>,
-    /// NetCDF dimension names → `metadata.datasets[name].dim_names`.
+    /// `NetCDF` dimension names → `metadata.datasets[name].dim_names`.
     pub import_dim_names: Option<Vec<String>>,
     /// Inline coordinate labels → `metadata.datasets[name].coords`.
     pub import_coords: Option<BTreeMap<String, CoordAxisV1>>,
@@ -52,6 +52,48 @@ pub(crate) struct ImportTileRead<'a> {
 }
 
 impl ImportPlan {
+    /// Numeric dataset geometry with empty import metadata and no Zarr path.
+    pub(crate) fn new(
+        name: String,
+        dtype: ElementDtype,
+        shape: Vec<u64>,
+        chunk_shape: Vec<u64>,
+        cf: Option<CfTransform>,
+    ) -> Self {
+        Self {
+            name,
+            dtype,
+            shape,
+            chunk_shape,
+            cf,
+            zarr_array_rel: None,
+            zarr_zstd: false,
+            import_attrs: BTreeMap::new(),
+            import_dim_names: None,
+            import_coords: None,
+        }
+    }
+
+    /// Attach Zarr v3 store path and whether on-disk chunk files are zstd-wrapped.
+    pub(crate) fn with_zarr(mut self, array_rel: String, zstd: bool) -> Self {
+        self.zarr_array_rel = Some(array_rel);
+        self.zarr_zstd = zstd;
+        self
+    }
+
+    /// Footer metadata fields copied into `THST` on convert finish.
+    pub(crate) fn with_import(
+        mut self,
+        attrs: BTreeMap<String, String>,
+        dim_names: Option<Vec<String>>,
+        coords: Option<BTreeMap<String, CoordAxisV1>>,
+    ) -> Self {
+        self.import_attrs = attrs;
+        self.import_dim_names = dim_names;
+        self.import_coords = coords;
+        self
+    }
+
     pub(crate) fn tile_read<'a>(&'a self, job: &'a StreamTileJob<'_>) -> ImportTileRead<'a> {
         ImportTileRead {
             dtype: self.dtype,
@@ -89,14 +131,13 @@ pub(crate) fn write_plans_streaming(
 ) -> Result<(), ConvertError> {
     let mut metas: Vec<ArrayWriteMeta<'_>> = Vec::with_capacity(plans.len());
     for plan in plans {
-        metas.push(ArrayWriteMeta {
-            name: &plan.name,
-            dtype: plan.dtype.wire_tag(),
-            shape: &plan.shape,
-            chunk_shape: &plan.chunk_shape,
-            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
-            file_execution: None,
-        });
+        metas.push(ArrayWriteMeta::row_major(
+            &plan.name,
+            plan.dtype.wire_tag(),
+            &plan.shape,
+            &plan.chunk_shape,
+            None,
+        ));
     }
     write_multi_raw_array_streaming(
         output,

@@ -6,15 +6,11 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::layout::{LAYOUT_VERSION_V1, SuperblockV1};
-use crate::utils::wire;
-
 use super::dataset::encode_dataset_blob;
 use super::execution::FileExecutionSettingsV1;
-use super::index::{self, ChunkIndexEntryV1};
+use super::index::ChunkIndexEntryV1;
 use super::tile;
-use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, DATASET_DTYPE_TAG_V1, MAX_NDIM, usize_from_u64};
-use crate::utils::dtype::ElementDtype;
+use super::{CHUNK_PAYLOAD_CODEC_V1, CatalogError, MAX_NDIM, usize_from_u64};
 
 /// Dataset metadata for streaming writes (no in-memory tensor buffer).
 #[derive(Debug, Clone)]
@@ -25,6 +21,27 @@ pub struct ArrayWriteMeta<'a> {
     pub chunk_shape: &'a [u64],
     pub chunk_codec: u32,
     pub file_execution: Option<FileExecutionSettingsV1>,
+}
+
+impl<'a> ArrayWriteMeta<'a> {
+    /// Streaming meta with raw chunk codec (**0**); used by convert and [`TetWriterSession`].
+    #[must_use]
+    pub fn row_major(
+        name: &'a str,
+        dtype: u32,
+        shape: &'a [u64],
+        chunk_shape: &'a [u64],
+        file_execution: Option<FileExecutionSettingsV1>,
+    ) -> Self {
+        Self {
+            name,
+            dtype,
+            shape,
+            chunk_shape,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution,
+        }
+    }
 }
 
 /// Progress hook: `(chunks_done, chunks_total, current_dataset_name)`.
@@ -47,36 +64,7 @@ pub struct StreamTileJob<'a> {
 ///
 /// Returns [`CatalogError`] when arguments are inconsistent.
 pub fn validate_array_write_meta(spec: &ArrayWriteMeta<'_>) -> Result<(), CatalogError> {
-    if spec.shape.len() != spec.chunk_shape.len() {
-        return Err(CatalogError::InvalidWriteSpec(
-            "shape and chunk_shape must have the same rank",
-        ));
-    }
-    let ndim = spec.shape.len();
-    if ndim == 0 {
-        return Err(CatalogError::InvalidWriteSpec(
-            "tensor rank must be at least 1",
-        ));
-    }
-    if ndim > MAX_NDIM {
-        return Err(CatalogError::BadNdim { ndim });
-    }
-    for i in 0..ndim {
-        if spec.chunk_shape[i] == 0 || spec.shape[i] == 0 {
-            return Err(CatalogError::InvalidWriteSpec(
-                "shape and chunk_shape entries must be non-zero",
-            ));
-        }
-    }
-    if !DATASET_DTYPE_TAG_V1.is_supported(spec.dtype) {
-        return Err(CatalogError::InvalidWriteSpec(
-            "only dataset dtype tags in DATASET_DTYPE_TAG_V1 (f32/f64/i32/i64) are supported",
-        ));
-    }
-    let _ = super::tensor_bytes_from_shape(spec.shape, spec.dtype)
-        .ok_or(CatalogError::InvalidWriteSpec("payload size overflow"))?;
-    let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-    let _ = tile::total_chunk_count(&counts)?;
+    super::dataset::validate_tensor_geometry(spec.shape, spec.chunk_shape, spec.dtype)?;
     if !CHUNK_PAYLOAD_CODEC_V1.is_raw(spec.chunk_codec) {
         return Err(CatalogError::InvalidWriteSpec(
             "streaming write supports raw chunk codec (0) only",
@@ -85,21 +73,14 @@ pub fn validate_array_write_meta(spec: &ArrayWriteMeta<'_>) -> Result<(), Catalo
     Ok(())
 }
 
-/// Total chunk count across all datasets in `specs`.
+/// Total chunk count across all datasets in `specs` (delegates to [`file_layout::sum_chunk_counts`]).
 ///
 /// # Errors
 ///
 /// Returns [`CatalogError::InvalidWriteSpec`] when a per-dataset chunk grid count overflows or
 /// the summed total exceeds `u64::MAX`.
 pub fn total_chunk_count_for_meta(specs: &[ArrayWriteMeta<'_>]) -> Result<u64, CatalogError> {
-    let mut total = 0u64;
-    for spec in specs {
-        let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-        total = total
-            .checked_add(tile::total_chunk_count(&counts)?)
-            .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    }
-    Ok(total)
+    super::file_layout::sum_chunk_counts(specs.iter().map(|s| (s.shape, s.chunk_shape)))
 }
 
 /// Write a `.tet` by filling one tile at a time via `fill_tile` (peak RAM ≈ one chunk).
@@ -133,21 +114,25 @@ pub fn write_multi_raw_array_streaming(
     let dataset_blob_len = blob.len() as u64;
     let n_chunks_total = total_chunk_count_for_meta(specs)?;
     let (index_base, chunk_index_length, payload_start) =
-        chunk_index_layout(dataset_blob_len, n_chunks_total)?;
+        super::file_layout::chunk_index_layout(dataset_blob_len, n_chunks_total)?;
     let (entries, jobs) = build_stream_index_and_jobs(specs, payload_start, n_chunks_total)?;
-    let sb = stream_superblock(specs, index_base, chunk_index_length)?;
+    let sb = super::file_layout::layout_superblock(specs.len(), index_base, chunk_index_length)?;
     let file_execution = specs[0]
         .file_execution
         .unwrap_or_else(FileExecutionSettingsV1::default_engine);
-    let index_bytes =
-        build_index_bytes(&entries, n_chunks_total, chunk_index_length, file_execution)?;
+    let index_bytes = super::file_layout::build_chunk_index_bytes(
+        &entries,
+        n_chunks_total,
+        chunk_index_length,
+        file_execution,
+    )?;
 
     let mut f = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(path)?;
-    write_file_preamble(&mut f, &sb, &blob, index_base, &index_bytes)?;
+    super::file_layout::write_file_preamble(&mut f, &sb, &blob, index_base, &index_bytes)?;
     let parallel_jobs = parallel_jobs.max(1);
     if parallel_jobs == 1 {
         write_filled_tiles_sequential(
@@ -291,22 +276,6 @@ fn encode_all_dataset_blobs(specs: &[ArrayWriteMeta<'_>]) -> Result<Vec<u8>, Cat
     Ok(blob)
 }
 
-fn chunk_index_layout(
-    dataset_blob_len: u64,
-    n_chunks_total: u64,
-) -> Result<(u64, u64, u64), CatalogError> {
-    let index_base = wire::align8_u64(40u64 + dataset_blob_len);
-    let index_header_len = index::CHUNK_INDEX_HEADER_V1.header_len as u64;
-    let entries_len_u64 = n_chunks_total
-        .checked_mul(ChunkIndexEntryV1::WIRE_LEN as u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    let chunk_index_length = index_header_len
-        .checked_add(entries_len_u64)
-        .ok_or(CatalogError::InvalidWriteSpec("chunk index size overflow"))?;
-    let payload_start = index_base + chunk_index_length;
-    Ok((index_base, chunk_index_length, payload_start))
-}
-
 fn build_stream_index_and_jobs<'a>(
     specs: &'a [ArrayWriteMeta<'_>],
     payload_start: u64,
@@ -317,29 +286,20 @@ fn build_stream_index_and_jobs<'a>(
     let mut jobs: Vec<StreamTileJob<'_>> = Vec::with_capacity(entries.capacity());
     let mut cursor = payload_start;
     for (dataset_id, spec) in specs.iter().enumerate() {
-        let ndim = spec.shape.len();
-        let counts = tile::chunk_grid_counts(spec.shape, spec.chunk_shape);
-        let n_chunks = tile::total_chunk_count(&counts)?;
-        let elem_size = element_size_for_dtype(spec.dtype)?;
+        let grid = super::chunk_grid_plan(spec.shape, spec.chunk_shape, spec.dtype)?;
 
-        for k in 0..n_chunks {
-            let coord = tile::chunk_coord_from_linear(k, &counts, ndim);
+        for k in 0..grid.n_chunks {
+            let coord = tile::chunk_coord_from_linear(k, &grid.counts, grid.ndim);
             let raw_len = tile::tile_raw_byte_len(
                 spec.shape,
                 spec.chunk_shape,
-                &coord[..ndim],
-                ndim,
-                elem_size,
+                &coord[..grid.ndim],
+                grid.ndim,
+                grid.elem_size,
             )?;
-            let mut chunk_index = [0u64; MAX_NDIM];
-            chunk_index[..ndim].copy_from_slice(&coord[..ndim]);
+            let chunk_index = ChunkIndexEntryV1::padded_chunk_index(&coord[..grid.ndim], grid.ndim);
             entries.push(ChunkIndexEntryV1 {
-                dataset_id: u64::try_from(dataset_id).map_err(|_| {
-                    CatalogError::TooLargeForPlatform {
-                        field: "dataset_id",
-                        value: u64::MAX,
-                    }
-                })?,
+                dataset_id: super::file_layout::wire_dataset_id(dataset_id)?,
                 chunk_index,
                 payload_offset: cursor,
                 raw_byte_len: raw_len,
@@ -351,7 +311,7 @@ fn build_stream_index_and_jobs<'a>(
                 dataset_name: spec.name,
                 chunk_k: k,
                 chunk_coord: chunk_index,
-                ndim,
+                ndim: grid.ndim,
                 raw_byte_len: raw_len,
             });
             cursor = cursor
@@ -360,62 +320,6 @@ fn build_stream_index_and_jobs<'a>(
         }
     }
     Ok((entries, jobs))
-}
-
-fn stream_superblock(
-    specs: &[ArrayWriteMeta<'_>],
-    index_base: u64,
-    chunk_index_length: u64,
-) -> Result<SuperblockV1, CatalogError> {
-    Ok(SuperblockV1 {
-        layout_version: LAYOUT_VERSION_V1,
-        dataset_count: u32::try_from(specs.len()).map_err(|_| {
-            CatalogError::TooLargeForPlatform {
-                field: "dataset_count",
-                value: specs.len() as u64,
-            }
-        })?,
-        flags: 0,
-        chunk_index_offset: index_base,
-        chunk_index_length,
-    })
-}
-
-fn build_index_bytes(
-    entries: &[ChunkIndexEntryV1],
-    n_chunks_total: u64,
-    chunk_index_length: u64,
-    file_execution: FileExecutionSettingsV1,
-) -> Result<Vec<u8>, CatalogError> {
-    let mut index_bytes = Vec::with_capacity(usize_from_u64(
-        "chunk_index_byte_length",
-        chunk_index_length,
-    )?);
-    index::write_chunk_index_header(&mut index_bytes, n_chunks_total, file_execution);
-    for e in entries {
-        index_bytes.extend_from_slice(&e.to_bytes());
-    }
-    debug_assert_eq!(index_bytes.len() as u64, chunk_index_length);
-    Ok(index_bytes)
-}
-
-fn write_file_preamble(
-    f: &mut std::fs::File,
-    sb: &SuperblockV1,
-    blob: &[u8],
-    index_base: u64,
-    index_bytes: &[u8],
-) -> Result<(), CatalogError> {
-    f.write_all(&sb.to_bytes())?;
-    f.write_all(&(blob.len() as u64).to_le_bytes())?;
-    f.write_all(blob)?;
-    let after_blob = 40usize + blob.len();
-    let pad = usize_from_u64("chunk_index_base", index_base)?.saturating_sub(after_blob);
-    if pad > 0 {
-        f.write_all(&vec![0u8; pad])?;
-    }
-    f.write_all(index_bytes)?;
-    Ok(())
 }
 
 fn entries_are_sequential(entries: &[ChunkIndexEntryV1]) -> bool {
@@ -433,21 +337,4 @@ fn prepare_tile_buffer(tile_buf: &mut Vec<u8>, raw_byte_len: u64) -> Result<(), 
         tile_buf.set_len(len);
     }
     Ok(())
-}
-
-fn element_size_for_dtype(dtype: u32) -> Result<usize, CatalogError> {
-    let tags = DATASET_DTYPE_TAG_V1;
-    if tags.is_f32(dtype) {
-        Ok(ElementDtype::F32.elem_size())
-    } else if tags.is_f64(dtype) {
-        Ok(ElementDtype::F64.elem_size())
-    } else if tags.is_i32(dtype) {
-        Ok(ElementDtype::I32.elem_size())
-    } else if tags.is_i64(dtype) {
-        Ok(ElementDtype::I64.elem_size())
-    } else {
-        Err(CatalogError::InvalidWriteSpec(
-            "unsupported dtype for tile extraction",
-        ))
-    }
 }

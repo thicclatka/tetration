@@ -41,6 +41,14 @@ pub struct ChunkIndexEntryV1 {
 }
 
 impl ChunkIndexEntryV1 {
+    /// Copy `coord` into a fixed `MAX_NDIM` index slot (unused axes stay zero).
+    #[must_use]
+    pub(crate) fn padded_chunk_index(coord: &[u64], ndim: usize) -> [u64; MAX_NDIM] {
+        let mut chunk_index = [0u64; MAX_NDIM];
+        chunk_index[..ndim].copy_from_slice(&coord[..ndim]);
+        chunk_index
+    }
+
     /// On-disk byte length of one chunk index entry (little-endian).
     pub const WIRE_LEN: usize = 8 + MAX_NDIM * 8 + 8 + 8 + 8 + 4 + 4;
     /// Byte offset of `payload_offset` within a wire entry.
