@@ -336,6 +336,18 @@ fn convert_small_h5_cf_3d_decodes_temperature() {
     );
     let got = read_dataset_payload_le_bytes(&mmap, "temperature");
     assert_f32_payload_eq(&got, &want, "temperature CF decode");
+
+    let temp_meta = summary.metadata.datasets.get("temperature").unwrap();
+    assert_eq!(
+        temp_meta.attrs.get("long_name").map(String::as_str),
+        Some("sea surface temperature")
+    );
+    assert_eq!(temp_meta.attrs.get("units").map(String::as_str), Some("K"));
+    assert!(
+        temp_meta.attrs.contains_key("scale_factor"),
+        "expected scale_factor in imported attrs: {:?}",
+        temp_meta.attrs
+    );
 }
 
 #[test]
@@ -476,6 +488,7 @@ fn convert_small_netcdf_cf_3d_decodes_temperature() {
     let output = dir.path().join("cf_3d.tet");
     convert_netcdf_to_tet_with_progress(&input, &output, 1, None::<fn(_)>).unwrap();
     let mmap = mmap_file_read(&output).unwrap();
+    let summary = read_tet_summary_v1(&mmap).unwrap();
 
     let src = netcdf::open(&input).unwrap();
     for name in FIXTURE_DTYPES {
@@ -491,6 +504,14 @@ fn convert_small_netcdf_cf_3d_decodes_temperature() {
     let want = cf_temperature_physical_le_bytes(&stored);
     let got = read_dataset_payload_le_bytes(&mmap, "temperature");
     assert_f32_payload_eq(&got, &want, "temperature CF decode");
+
+    let temp_meta = summary.metadata.datasets.get("temperature").unwrap();
+    assert_eq!(
+        temp_meta.attrs.get("long_name").map(String::as_str),
+        Some("sea surface temperature")
+    );
+    let dim_names = temp_meta.dim_names.as_ref().expect("nc dim_names");
+    assert_eq!(dim_names.len(), 3);
 }
 
 #[test]

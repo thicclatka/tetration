@@ -1,5 +1,6 @@
 //! Zarr v3 directory store → `.tet` conversion.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -8,6 +9,7 @@ use serde::Deserialize;
 
 use crate::utils::dtype::ElementDtype;
 
+use super::import_metadata::finish_convert_footer;
 use super::parallel::ZarrParallelSource;
 use super::shared::{
     ImportPlan, ImportTileRead, chunk_shape_for_import, ensure_non_empty, join_catalog_path,
@@ -15,7 +17,6 @@ use super::shared::{
 };
 use super::tile_io::tile_axis_ranges;
 use super::{ConvertError, ConvertProgress, ConvertReport, report};
-use crate::catalog::append_convert_history;
 
 /// Import supported numeric arrays from a Zarr v3 directory store into one `.tet`.
 ///
@@ -71,7 +72,7 @@ pub fn convert_zarr_to_tet_with_progress(
         |job, buf| source.fill_tile(job, buf),
         Some(&mut progress_bridge as &mut dyn FnMut(u64, u64, &str)),
     )?;
-    let history = append_convert_history(output, "zarr")?;
+    let history = finish_convert_footer(output, "zarr", &plans)?;
 
     Ok(report(
         input,
@@ -188,6 +189,8 @@ fn plan_zarr_array(
         cf: None,
         zarr_array_rel: Some(array_rel.to_owned()),
         zarr_zstd: zarr_chunk_payload_zstd(meta),
+        import_attrs: BTreeMap::new(),
+        import_dim_names: None,
     })
 }
 

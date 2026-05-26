@@ -151,7 +151,7 @@ tet info data.tet --json | jq '.summary.datasets'
 - [ ] **Richer history events** — versioned event schema beyond `(op, source, ts)`: transforms, parent dataset refs, parameters, operator identity; forward-compatible unknown-field skip.
 - [ ] **Session / writer API** — accumulate metadata and history during a write session; flush to footer (or metadata chunk) on `commit` / `close`; backs the Rust embedder create path above (Phase 10 bindings wrap the same API).
 - [ ] **Size policy** — caps on header/history size; spill overflow to **metadata chunks** when the inline footer would grow too large.
-- [ ] **Import preservation** — carry selected HDF5/NetCDF/Zarr attrs into dataset metadata on convert.
+- [x] **Import preservation (baseline)** — HDF5/NetCDF scalar attrs → footer `metadata.datasets` on `tet convert` (`units`, `long_name`, CF numeric attrs, …); NetCDF `dim_names` from dimension names; Zarr attrs deferred.
 
 ## Phase 8 — Query ops & interchange (later)
 

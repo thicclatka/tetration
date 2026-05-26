@@ -1,5 +1,7 @@
 //! Shared helpers for foreign-format import.
 
+use std::collections::BTreeMap;
+
 use super::cf::CfTransform;
 
 use crate::catalog::{
@@ -22,6 +24,10 @@ pub(crate) struct ImportPlan {
     pub zarr_array_rel: Option<String>,
     /// When importing Zarr: chunk files on disk are zstd-compressed (`bytes` + `zstd` codecs).
     pub zarr_zstd: bool,
+    /// Dataset attributes copied into footer `metadata.datasets[name].attrs`.
+    pub import_attrs: BTreeMap<String, String>,
+    /// NetCDF dimension names → `metadata.datasets[name].dim_names`.
+    pub import_dim_names: Option<Vec<String>>,
 }
 
 pub(crate) fn join_catalog_path(prefix: &str, name: &str) -> String {

@@ -9,6 +9,7 @@ use crate::catalog::CatalogError;
 mod cf;
 #[cfg(feature = "tetration-hdf5")]
 mod hdf5;
+mod import_metadata;
 #[cfg(feature = "tetration-netcdf")]
 mod netcdf;
 mod parallel;

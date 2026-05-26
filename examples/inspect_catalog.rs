@@ -32,6 +32,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         summary.history.len()
     );
 
+    if let Some(file) = &summary.metadata.file {
+        println!("file metadata:");
+        if let Some(tool) = &file.tool {
+            println!("  tool: {tool}");
+        }
+        if let Some(ver) = &file.library_version {
+            println!("  library_version: {ver}");
+        }
+    }
+
     for ds in &summary.datasets {
         let shape = ds
             .shape
@@ -40,6 +50,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
             .join("×");
         println!("  {}  dtype={}  shape={shape}", ds.name, ds.dtype);
+        if let Some(meta) = summary.metadata.datasets.get(&ds.name) {
+            if let Some(dim_names) = &meta.dim_names {
+                println!("       dim_names: {}", dim_names.join(", "));
+            }
+            for (k, v) in &meta.attrs {
+                println!("       {k}: {v}");
+            }
+        }
     }
 
     if !summary.history.is_empty() {
