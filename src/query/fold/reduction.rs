@@ -1049,6 +1049,57 @@ pub(crate) struct ScalarReductionResult {
 }
 
 impl ScalarReductionResult {
+    /// Combine partial results from disjoint chunk device (or host) reduces.
+    #[allow(dead_code)]
+    pub(crate) fn merge_partial(&mut self, part: &Self, kind: ReductionKind) {
+        if part.element_count == 0 {
+            return;
+        }
+        self.element_count += part.element_count;
+        match kind {
+            ReductionKind::Sum | ReductionKind::Mean => {
+                let acc = self.sum_scalar.get_or_insert(0.0);
+                *acc += part.sum_scalar.unwrap_or(0.0);
+            }
+            ReductionKind::Min => {
+                let p = part.min_scalar.expect("partial min");
+                match self.min_scalar {
+                    Some(m) => self.min_scalar = Some(m.min(p)),
+                    None => self.min_scalar = Some(p),
+                }
+            }
+            ReductionKind::Max => {
+                let p = part.max_scalar.expect("partial max");
+                match self.max_scalar {
+                    Some(m) => self.max_scalar = Some(m.max(p)),
+                    None => self.max_scalar = Some(p),
+                }
+            }
+            ReductionKind::Var | ReductionKind::Std => {
+                unreachable!("var/std use ValueAccum streaming, not ScalarReductionResult merge")
+            }
+            _ => {}
+        }
+    }
+
+    /// Set derived fields after all chunk partials are merged.
+    #[allow(dead_code)]
+    pub(crate) fn finalize_merged(self, kind: ReductionKind) -> Self {
+        let mut out = self;
+        match kind {
+            ReductionKind::Mean if out.element_count > 0 => {
+                let sum = out.sum_scalar.unwrap_or(0.0);
+                out.mean_scalar = Some(sum / out.element_count as f64);
+            }
+            ReductionKind::Count => {
+                out.sum_scalar = None;
+                out.mean_scalar = None;
+            }
+            _ => {}
+        }
+        out
+    }
+
     pub(crate) fn default_fields(element_count: usize) -> Self {
         Self {
             element_count,

@@ -5,6 +5,7 @@
 use crate::query::fold::reduction::ReductionKind;
 use crate::query::types::{ExecutionDeviceHint, ExecutionHints, Operation, ReadPlan};
 use crate::utils::dtype::ElementDtype;
+#[cfg(any(feature = "tetration-gpu", feature = "tetration-metal"))]
 use crate::utils::host_memory;
 
 /// Minimum logical selection size for `device: auto` to consider GPU (when enabled).
@@ -26,8 +27,9 @@ pub fn host_materialize_exceeds(logical_bytes: u64, host_available: Option<u64>)
     logical_bytes > limit
 }
 
-/// Whether the GPU scalar path may allocate a dense host buffer for this selection.
+/// Whether the GPU dense path may allocate a full-selection host buffer (streaming fold when false).
 #[must_use]
+#[cfg(any(feature = "tetration-gpu", feature = "tetration-metal"))]
 pub(crate) fn host_materialize_fits(logical_bytes: u64) -> bool {
     !host_materialize_exceeds(logical_bytes, host_memory::available_memory_bytes())
 }
@@ -39,7 +41,11 @@ pub struct DeviceRoute {
     pub used: &'static str,
     pub fallback_reason: Option<&'static str>,
     pub gpu_reduce: bool,
-    /// CUDA device index when [`Self::used`] is `"cuda"`.
+    /// Decode/GPU overlap (streaming pipeline).
+    pub gpu_pipeline: bool,
+    /// Chunk shards across multiple devices (`cuda:multi` / `rocm:multi`).
+    pub gpu_multi: bool,
+    /// CUDA/ROCm device index when [`Self::used`] is `"cuda"` / `"rocm"`.
     pub cuda_device: Option<usize>,
 }
 
@@ -51,6 +57,8 @@ impl DeviceRoute {
             used: "cpu",
             fallback_reason: None,
             gpu_reduce: false,
+            gpu_pipeline: false,
+            gpu_multi: false,
             cuda_device: None,
         }
     }
@@ -65,6 +73,8 @@ impl DeviceRoute {
             used: "cpu",
             fallback_reason: Some(reason),
             gpu_reduce: false,
+            gpu_pipeline: false,
+            gpu_multi: false,
             cuda_device: None,
         }
     }
@@ -75,6 +85,16 @@ pub fn cuda_backend_available() -> bool {
     cfg!(feature = "tetration-gpu")
 }
 
+#[must_use]
+pub fn rocm_backend_available() -> bool {
+    cfg!(feature = "tetration-rocm")
+}
+
+#[must_use]
+pub fn driver_backend_available() -> bool {
+    cuda_backend_available() || rocm_backend_available()
+}
+
 /// Apple Metal path (`tetration-metal`, macOS only).
 #[must_use]
 pub fn metal_backend_available() -> bool {
@@ -83,7 +103,7 @@ pub fn metal_backend_available() -> bool {
 
 #[must_use]
 pub fn gpu_backend_available() -> bool {
-    cuda_backend_available() || metal_backend_available()
+    driver_backend_available() || metal_backend_available()
 }
 
 /// Pick host vs device reduction for this execute.
@@ -114,11 +134,13 @@ pub fn resolve_device_route(
             used: "cpu",
             fallback_reason: None,
             gpu_reduce: false,
+            gpu_pipeline: false,
+            gpu_multi: false,
             cuda_device: None,
         };
     }
 
-    if dtype != ElementDtype::F32 {
+    if !matches!(dtype, ElementDtype::F32 | ElementDtype::F16) {
         return DeviceRoute::cpu_fallback(Some(requested), "gpu_unsupported_dtype");
     }
 
@@ -151,13 +173,31 @@ pub fn resolve_device_route(
             if !metal_backend_available() {
                 return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
             }
-            gpu_scalar_route(Some(requested), "metal", None, logical_bytes)
+            gpu_scalar_route(Some(requested), "metal", None, false)
         }
         ExecutionDeviceHint::Cuda(idx) => {
             if !cuda_backend_available() {
                 return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
             }
-            gpu_scalar_route(Some(requested), "cuda", Some(idx), logical_bytes)
+            gpu_scalar_route(Some(requested), "cuda", Some(idx), false)
+        }
+        ExecutionDeviceHint::CudaMulti => {
+            if !cuda_backend_available() {
+                return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
+            }
+            gpu_scalar_route(Some(requested), "cuda:multi", None, true)
+        }
+        ExecutionDeviceHint::Rocm(idx) => {
+            if !rocm_backend_available() {
+                return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
+            }
+            gpu_scalar_route(Some(requested), "rocm", Some(idx), false)
+        }
+        ExecutionDeviceHint::RocmMulti => {
+            if !rocm_backend_available() {
+                return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
+            }
+            gpu_scalar_route(Some(requested), "rocm:multi", None, true)
         }
         ExecutionDeviceHint::Auto => auto_device_route(Some(requested), logical_bytes),
         ExecutionDeviceHint::Cpu => unreachable!("handled above"),
@@ -167,13 +207,16 @@ pub fn resolve_device_route(
 /// `device: auto` — Metal on macOS when enabled, else CUDA when enabled.
 fn auto_device_route(
     requested: Option<ExecutionDeviceHint>,
-    logical_bytes: Option<u64>,
+    _logical_bytes: Option<u64>,
 ) -> DeviceRoute {
     if metal_backend_available() {
-        return gpu_scalar_route(requested, "metal", None, logical_bytes);
+        return gpu_scalar_route(requested, "metal", None, false);
     }
     if cuda_backend_available() {
-        return gpu_scalar_route(requested, "cuda", Some(0), logical_bytes);
+        return gpu_scalar_route(requested, "cuda", Some(0), false);
+    }
+    if rocm_backend_available() {
+        return gpu_scalar_route(requested, "rocm", Some(0), false);
     }
     DeviceRoute::cpu_fallback(requested, "gpu_feature_disabled")
 }
@@ -182,18 +225,16 @@ fn gpu_scalar_route(
     requested: Option<ExecutionDeviceHint>,
     used: &'static str,
     cuda_device: Option<usize>,
-    logical_bytes: Option<u64>,
+    multi: bool,
 ) -> DeviceRoute {
-    if let Some(bytes) = logical_bytes
-        && !host_materialize_fits(bytes)
-    {
-        return DeviceRoute::cpu_fallback(requested, "gpu_host_materialize_exceeded");
-    }
+    // Oversized selections use per-chunk streaming GPU fold (see `gpu/streaming_fold.rs`).
     DeviceRoute {
         requested,
         used,
         fallback_reason: None,
         gpu_reduce: true,
+        gpu_pipeline: false,
+        gpu_multi: multi,
         cuda_device,
     }
 }
@@ -221,4 +262,6 @@ pub(crate) fn attach_device_fields(
     preview.device_used = Some(route.used);
     preview.device_fallback_reason = route.fallback_reason.map(str::to_string);
     preview.device_gpu_reduce = Some(route.gpu_reduce);
+    preview.device_gpu_pipeline = Some(route.gpu_pipeline);
+    preview.device_gpu_multi = Some(route.gpu_multi);
 }

@@ -239,6 +239,10 @@ pub struct QueryExecutionPreview {
     pub device_fallback_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_gpu_reduce: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_gpu_pipeline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_gpu_multi: Option<bool>,
     /// Shape after reducing along `operation.axes` (decimal dimension indices); row-major flattened payloads follow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_shape: Option<Vec<u64>>,

@@ -256,6 +256,9 @@ pub enum ExecutionDeviceHint {
     Auto,
     Metal,
     Cuda(usize),
+    CudaMulti,
+    Rocm(usize),
+    RocmMulti,
 }
 
 impl ExecutionDeviceHint {
@@ -283,6 +286,9 @@ impl ExecutionDeviceHint {
         if t.eq_ignore_ascii_case("cuda") {
             return Ok(Self::Cuda(0));
         }
+        if t.eq_ignore_ascii_case("cuda:multi") {
+            return Ok(Self::CudaMulti);
+        }
         if let Some(rest) = t.strip_prefix("cuda:") {
             let idx = rest.parse::<usize>().map_err(|_| {
                 TetError::Validation(format!(
@@ -291,8 +297,22 @@ impl ExecutionDeviceHint {
             })?;
             return Ok(Self::Cuda(idx));
         }
+        if t.eq_ignore_ascii_case("rocm") {
+            return Ok(Self::Rocm(0));
+        }
+        if t.eq_ignore_ascii_case("rocm:multi") {
+            return Ok(Self::RocmMulti);
+        }
+        if let Some(rest) = t.strip_prefix("rocm:") {
+            let idx = rest.parse::<usize>().map_err(|_| {
+                TetError::Validation(format!(
+                    "invalid device `{token}` (expected rocm:N with non-negative N)"
+                ))
+            })?;
+            return Ok(Self::Rocm(idx));
+        }
         Err(TetError::Validation(format!(
-            "unknown device `{token}` (expected cpu, auto, metal, cuda, or cuda:N)"
+            "unknown device `{token}` (expected cpu, auto, metal, cuda[:N| :multi], or rocm[:N| :multi])"
         )))
     }
 
@@ -303,10 +323,16 @@ impl ExecutionDeviceHint {
             Self::Auto => "auto",
             Self::Metal => "metal",
             Self::Cuda(0) => "cuda:0",
+            Self::CudaMulti => "cuda:multi",
+            Self::Rocm(0) => "rocm:0",
+            Self::RocmMulti => "rocm:multi",
             Self::Cuda(n) => {
-                // Stable tokens for JSON; cuda:1+ formatted at serialize time in wire layer.
                 let _ = n;
                 "cuda"
+            }
+            Self::Rocm(n) => {
+                let _ = n;
+                "rocm"
             }
         }
     }
@@ -320,6 +346,10 @@ impl ExecutionDeviceHint {
             Self::Metal => "metal".to_string(),
             Self::Cuda(0) => "cuda".to_string(),
             Self::Cuda(n) => format!("cuda:{n}"),
+            Self::CudaMulti => "cuda:multi".to_string(),
+            Self::Rocm(0) => "rocm".to_string(),
+            Self::Rocm(n) => format!("rocm:{n}"),
+            Self::RocmMulti => "rocm:multi".to_string(),
         }
     }
 }

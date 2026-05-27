@@ -41,7 +41,22 @@ fn execution_device_hint_parse_tokens() {
         ExecutionDeviceHint::parse("metal").unwrap(),
         ExecutionDeviceHint::Metal
     );
-    assert!(ExecutionDeviceHint::parse("rocm").is_err());
+    assert_eq!(
+        ExecutionDeviceHint::parse("cuda:multi").unwrap(),
+        ExecutionDeviceHint::CudaMulti
+    );
+    assert_eq!(
+        ExecutionDeviceHint::parse("rocm").unwrap(),
+        ExecutionDeviceHint::Rocm(0)
+    );
+    assert_eq!(
+        ExecutionDeviceHint::parse("rocm:multi").unwrap(),
+        ExecutionDeviceHint::RocmMulti
+    );
+    assert_eq!(
+        ExecutionDeviceHint::parse("rocm:2").unwrap(),
+        ExecutionDeviceHint::Rocm(2)
+    );
 }
 
 #[test]
@@ -164,7 +179,7 @@ fn resolve_device_auto_large_prefers_metal_when_enabled() {
 }
 
 #[test]
-fn resolve_device_auto_huge_selection_stays_cpu_when_host_too_small() {
+fn resolve_device_auto_huge_selection_still_routes_gpu_for_streaming_fold() {
     use crate::query::types::ReadPlan;
     use crate::utils::host_memory;
 
@@ -202,6 +217,11 @@ fn resolve_device_auto_huge_selection_stays_cpu_when_host_too_small() {
         ElementDtype::F32,
         doc.operation.as_ref(),
     );
-    assert_eq!(route.used, "cpu");
-    assert_eq!(route.fallback_reason, Some("gpu_host_materialize_exceeded"));
+    assert!(route.gpu_reduce);
+    assert!(
+        route.used == "metal" || route.used == "cuda",
+        "expected GPU backend, got {}",
+        route.used
+    );
+    assert!(route.fallback_reason.is_none());
 }

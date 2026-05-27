@@ -104,7 +104,7 @@ GPU scalar paths need a dense host buffer of size `logical_f32_bytes`. Routing r
 - logical bytes **>** **85%** of probed host RAM (`MemAvailable` / macOS free+inactive), or
 - logical bytes **>** **8 GiB** when RAM cannot be probed.
 
-Fallback: **`device_used: cpu`**, **`device_fallback_reason: gpu_host_materialize_exceeded`** — CPU streaming fold runs (typical for **~20 GiB** extra-large bench tensors).
+When the selection exceeds the host materialize budget, the engine uses **per-chunk streaming GPU fold** (decode one tile → device reduce → merge) instead of a dense `vec![f32; n]`. If GPU is disabled or fails at runtime, execution falls back to CPU streaming fold (`gpu_host_materialize_exceeded` is no longer a route-time refusal when GPU features are enabled).
 
 Constants: [`GPU_HOST_MATERIALIZE_RAM_FRACTION`](../src/query/device.rs), [`GPU_HOST_MATERIALIZE_UNKNOWN_HOST_CAP_BYTES`](../src/query/device.rs).
 
@@ -140,11 +140,46 @@ Default crate features do **not** link GPU backends.
 
 Use **`mise run bench:cpu`** for apples-to-apples CPU timing; **`bench:metal`** / **`bench:gpu`** to exercise device routing.
 
+### Device tokens (Phase 10)
+
+| Token | Meaning |
+| ----- | ------- |
+| `cpu` | Host streaming fold only. |
+| `auto` | Metal (macOS) or CUDA device 0 when features enabled; skips GPU &lt; 64 MiB. |
+| `metal` | Apple GPU. |
+| `cuda` / `cuda:N` | NVIDIA GPU *N*. |
+| `cuda:multi` | Shard chunks across all visible CUDA devices (Rayon + merge). |
+| `rocm` / `rocm:N` / `rocm:multi` | ROCm build (`tetration-rocm`); same kernel path as CUDA today. |
+
+Execution preview: `device_gpu_pipeline`, `device_gpu_multi`.
+
 ### Not implemented (Phase 10)
 
-- Streaming GPU reduce without full host materialize.
-- GPU tier-C ops, non-`f32` dtypes, ROCm (**10d**).
+- GPU tier-C ops, dtypes other than **`f32`** / **`f16`** (promoted to `f32` on device).
 - Meaningful speedup over CPU streaming on unified-memory Macs for full-tensor tier-A/B ops (current architecture).
+
+## Scalability: read-many and Phase 10
+
+**Deployment model (v1):** [README — Concurrency and scale](../README.md#concurrency-and-scale), [layout v1 — Concurrency](layout_v1.md#concurrency-informative).
+
+```text
+Write (once)  →  seal .tet  →  N readers (mmap, independent queries)
+                                    │
+                    CPU: parallel chunk fold / linear scan (today)
+                    GPU: dense or streaming per-chunk partials
+                         cuda:multi / rocm:multi shard across devices
+```
+
+| Milestone                  | What                                                                                           | Unlocks                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **A — read-many contract** | Document + test sealed-file concurrent readers                                                 | Many CPU workers / hosts on one `.tet` without format changes |
+| **B — streaming GPU fold** | Per-chunk decode + device partials ([`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)) | Large `f32` tier-A/B without full-RAM `vec![f32; n]` — **done** |
+| **C — overlap I/O**        | Decode ∥ GPU pipeline in [`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)             | Throughput — **done**                                         |
+| **D — multi-GPU**          | `cuda:multi` / `rocm:multi` chunk shards ([`multi.rs`](../src/query/gpu/multi.rs))             | Machine-scale throughput — **done**                             |
+
+**A** does not require GPU. **B–D** reuse the CPU fold merge algebra on the host.
+
+Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_query.rs) (library threads + optional `tet query` process smoke).
 
 ## Module map
 

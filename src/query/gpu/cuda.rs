@@ -1,4 +1,4 @@
-//! CUDA scalar reductions via NVRTC + block tree reduce.
+//! CUDA / ROCm scalar reductions via NVRTC + block tree reduce (`tetration-gpu` or `tetration-rocm`).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -86,6 +86,17 @@ struct GpuState {
 }
 
 static GPU_STATES: OnceLock<Mutex<HashMap<usize, GpuState>>> = OnceLock::new();
+
+static VISIBLE_DEVICES: OnceLock<usize> = OnceLock::new();
+
+/// Number of visible accelerator devices (cached probe).
+#[must_use]
+pub(crate) fn visible_device_count() -> usize {
+    *VISIBLE_DEVICES.get_or_init(|| {
+        let n = (0..16).filter(|i| CudaContext::new(*i).is_ok()).count();
+        n.max(1)
+    })
+}
 
 fn with_gpu_state<R>(
     device_index: usize,

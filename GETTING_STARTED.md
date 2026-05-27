@@ -18,7 +18,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Superblock + bootstrap:** fixed **32-byte** `TETR` block; `chunk_index_offset` / `chunk_index_length`; empty-file rules.
 - [x] **Dataset record:** `name`, `dtype`, `shape`, `chunk_shape` (v1 reference writers; see spec tables).
 - [x] **Chunk index entry:** grid coords → `payload_offset`, `raw_byte_len`, `stored_byte_len`, `codec`, reserved.
-- [x] **Concurrency** (informative): documented in `docs/layout_v1.md` + README (exclusive create, no v1 locking spec).
+- [x] **Concurrency** (informative): read-many / write-once in [`README.md`](README.md#concurrency-and-scale), [`docs/layout_v1.md`](docs/layout_v1.md#concurrency-informative), [`docs/query_engine.md`](docs/query_engine.md#scalability-read-many-and-phase-10); concurrent query smoke in [`src/tests/concurrent_query.rs`](src/tests/concurrent_query.rs).
 
 **Verify:** `src/tests/layout_roundtrip.rs`; `tet info` on empty or single-chunk files.
 
@@ -243,25 +243,27 @@ Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_
 
 - [x] **`tetration-gpu`** — `cudarc` block-reduce for scalar tier-A/B **`f32`** **sum / mean / min / max / count** ([`gpu/cuda.rs`](src/query/gpu/cuda.rs)).
 - [x] **`var` / `std`** — host **`f64` SIMD** after materialize (same as CPU fold; GPU f32 sumsq was wrong at bench scale).
-- [ ] **Batched host→device copy** — overlap decode with async H2D.
-- [ ] **Multi-GPU** — `cuda:N` device selection beyond routing.
+- [x] **Decode ∥ GPU pipeline** — worker-thread decode while prior chunk reduces ([`streaming_fold.rs`](src/query/gpu/streaming_fold.rs)); `device_gpu_pipeline` in execution preview.
+- [x] **Multi-GPU** — `cuda:multi` / `rocm:multi` chunk sharding + host merge ([`gpu/multi.rs`](src/query/gpu/multi.rs)).
 
 ### Phase 10c — Metal (Apple)
 
 - [x] **`tetration-metal`** — Metal block-reduce for **sum / mean / min / max / count** on macOS ([`gpu/metal.rs`](src/query/gpu/metal.rs)); `device: metal` or `auto` when built with `--features tetration-metal`.
 - [x] **`var` / `std`** — host **`f64` SIMD** ([`gpu/mod.rs`](src/query/gpu/mod.rs) `host_f32_population_variance`).
-- [ ] **Async command buffers** — overlap decode with GPU queue.
+- [x] **Async / pipelined queue** — decode ∥ GPU via pipeline thread (Metal command buffers still sync per kernel tree).
 
-### Phase 10d — ROCm / AMD (later)
+### Phase 10d — ROCm / AMD
 
-- [ ] **`device: rocm`** (or `hip`) — AMD GPUs on Linux; separate backend like CUDA/Metal.
+- [x] **`device: rocm` / `rocm:N` / `rocm:multi`** — routes to same NVRTC path as CUDA when built with **`tetration-rocm`** (mutually exclusive with `tetration-gpu`; native HIP in cudarc when upstream adds it).
+- [x] **`f16` GPU** — wire tag `f16` chunks promoted to `f32` per tile for device reduce (var/std on host Welford per chunk).
 
 ### Shared (all backends)
 
 - [x] **VRAM guardrails (v1)** — best-effort budget check before upload; CPU fallback `gpu_vram_exceeded`.
 - [x] **Bench tasks** — `mise run bench:auto` / `bench:cpu` / `bench:metal` / `bench:gpu` ([`.mise.toml`](.mise.toml), [`fixtures/README.md`](fixtures/README.md)).
-- [ ] **Streaming GPU fold** — per-chunk device accumulators without full-RAM `vec![f32; n]`.
-- [ ] **Alignment / dtype notes** — row-major `f16` fast paths.
+- [x] **Read-many contract (docs + test)** — sealed `.tet`, many mmap readers / workers; see [Scalability](docs/query_engine.md#scalability-read-many-and-phase-10).
+- [x] **Streaming GPU fold** — per-chunk decode + device partials + host merge ([`gpu/streaming_fold.rs`](src/query/gpu/streaming_fold.rs)); dense materialize when host RAM allows; `var`/`std` stream on host per chunk.
+- [ ] **Native HIP kernels** — when cudarc exposes ROCm without CUDA-compat layer.
 
 ## Phase 11 — Bindings (Python & C ABI)
 

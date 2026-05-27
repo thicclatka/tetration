@@ -134,6 +134,8 @@ fn push_execution_io_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPrev
         ex.device_fallback_reason.as_deref(),
     );
     opt_bool(map, "device_gpu_reduce", ex.device_gpu_reduce);
+    opt_bool(map, "device_gpu_pipeline", ex.device_gpu_pipeline);
+    opt_bool(map, "device_gpu_multi", ex.device_gpu_multi);
 }
 
 fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPreview) {

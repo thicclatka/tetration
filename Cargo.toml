@@ -24,6 +24,8 @@ tetration-netcdf = ["dep:netcdf"]
 tetration-hdf5 = ["dep:hdf5-metno"]
 # Phase 10b: CUDA scalar f32 reductions (Linux/Windows + NVIDIA).
 tetration-gpu = ["dep:cudarc"]
+# Phase 10d: ROCm / HIP scalar f32 reductions (Linux + AMD; do not enable with `tetration-gpu`).
+tetration-rocm = ["dep:cudarc"]
 # Phase 10c: Metal scalar f32 reductions (macOS + Apple GPU; build on macOS only).
 tetration-metal = ["dep:metal"]
 
@@ -74,13 +76,16 @@ cudarc = { version = "0.19.7", optional = true, default-features = false, featur
   "fallback-dynamic-loading",
   "cuda-12080",
 ] }
-metal = { version = "0.29.0", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.102"
 log = "0.4.29"
 proptest = "1.9.0"
 tempfile = "3.23.0"
+
+# Metal uses macOS frameworks; must not be in [dependencies] on Linux CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.29.0", optional = true }
 
 [profile.release]
 codegen-units = 1

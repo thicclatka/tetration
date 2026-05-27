@@ -1,6 +1,8 @@
 //! Bulk variance accumulators vs elementwise Welford reference.
 
-use crate::query::fold::reduction::{ReductionKind, ValueAccum, WelfordAccum};
+use crate::query::fold::reduction::{
+    ReductionKind, ScalarReductionResult, ValueAccum, WelfordAccum,
+};
 use crate::query::fold::variance_simd;
 
 fn var_from(vals: &[f32]) -> f64 {
@@ -33,6 +35,51 @@ fn f32_population_variance_large_slice_matches_welford() {
     );
     // Uniform on [0, 1] → population variance 1/12.
     assert!((simd_var - 1.0 / 12.0).abs() < 0.01, "simd={simd_var}");
+}
+
+#[test]
+fn scalar_reduction_merge_partial_sum_and_mean() {
+    let mut acc = ScalarReductionResult::default_fields(0);
+    acc.merge_partial(
+        &ScalarReductionResult {
+            element_count: 3,
+            sum_scalar: Some(6.0),
+            ..ScalarReductionResult::default_fields(3)
+        },
+        ReductionKind::Sum,
+    );
+    acc.merge_partial(
+        &ScalarReductionResult {
+            element_count: 3,
+            sum_scalar: Some(15.0),
+            ..ScalarReductionResult::default_fields(3)
+        },
+        ReductionKind::Sum,
+    );
+    let done = acc.finalize_merged(ReductionKind::Sum);
+    assert_eq!(done.element_count, 6);
+    assert!((done.sum_scalar.unwrap() - 21.0).abs() < 1e-9);
+
+    let mut mean_acc = ScalarReductionResult::default_fields(0);
+    mean_acc.merge_partial(
+        &ScalarReductionResult {
+            element_count: 2,
+            sum_scalar: Some(3.0),
+            ..ScalarReductionResult::default_fields(2)
+        },
+        ReductionKind::Mean,
+    );
+    mean_acc.merge_partial(
+        &ScalarReductionResult {
+            element_count: 2,
+            sum_scalar: Some(7.0),
+            ..ScalarReductionResult::default_fields(2)
+        },
+        ReductionKind::Mean,
+    );
+    let mean_done = mean_acc.finalize_merged(ReductionKind::Mean);
+    assert_eq!(mean_done.element_count, 4);
+    assert!((mean_done.mean_scalar.unwrap() - 2.5).abs() < 1e-9);
 }
 
 #[test]

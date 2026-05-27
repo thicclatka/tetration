@@ -197,6 +197,22 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON/TOML is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
+## Concurrency and scale
+
+**Read-many / write-once** is the supported scale model for v1:
+
+| Role          | Contract                                                                                                                                                                                                                                                                            |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Writer**    | One process (or coordinated [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html) / `tet convert`) finishes the file before readers rely on it. v1 defines **no** file locking or live append protocol.                             |
+| **Reader**    | Any number of processes or hosts may **mmap read-only** the same sealed `.tet` and run independent queries. The OS shares cold pages via the page cache; each query touches only chunks in its [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html). |
+| **Per query** | Tier-A/B folds merge **chunk-local** partials (parallel Rayon when in-core; linear scan when out-of-core). Temp spills use unique paths (`pid` + timestamp); export **`spill`** paths must differ per worker.                                                                       |
+
+**Not supported without extra coordination:** multiple writers on one file, read-while-write, or two workers writing the same export spill path.
+
+**CPU workers:** scale out with **N processes × independent queries** (or datasets), not by sharding one query inside the engine today. **Phase 10 GPU** uses the same chunk-parallel shape: **streaming device fold** when the selection does not fit a dense host buffer ([`gpu/streaming_fold.rs`](src/query/gpu/streaming_fold.rs)); multi-GPU chunk scheduling is next — see [query engine — scalability](docs/query_engine.md#scalability-read-many-and-phase-10).
+
+Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrency-informative).
+
 **Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. **Phase 10 (experimental):** optional Metal/CUDA scalar **`f32`** ops after host materialize — CPU streaming fold stays the default for large tensors; see [`GETTING_STARTED.md`](GETTING_STARTED.md#phase-10--gpu-experimental) and [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental). **Phases 8–9** are **done**. **Next:** Phase 11 Python wheels + narrow C ABI; the layout spec is the portable floor.
 
 ## Library use
