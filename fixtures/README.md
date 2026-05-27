@@ -4,14 +4,14 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 
 ## By phase
 
-| Phase   | Role of fixtures                                                                                                             |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **1–3** | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                           |
-| **4**   | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                   |
-| **5**   | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only). |
-| **6**   | Bench harness (`benchmark/`, `spec.json`); future query-format golden cases and CLI UX smoke.                                |
-| **7**   | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.              |
-| **10**  | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.              |
+| Phase   | Role of fixtures                                                                                                                                                          |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1–3** | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                                                                        |
+| **4**   | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                                                                |
+| **5**   | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).                                              |
+| **6**   | Bench harness (`benchmark/`, `spec.json`); [`queries/`](queries/) JSON/TOML golden profiles; [`bench_results/latest.md`](bench_results/latest.md) for local perf reports. |
+| **7**   | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.                                                           |
+| **10**  | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                                                           |
 
 ## Layout
 
@@ -72,7 +72,7 @@ mise run fixtures:clean-extra-large
 | `src/tests/convert.rs`            | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
 | `src/tests/small_tet_fixtures.rs` | Committed **`small/tet/*.tet`** — `tet verify` / `--deep` / `tet repair` / query sum\|var; see [`small/tet/README.md`](small/tet/README.md)          |
 | `src/tests/query_fixtures.rs`     | **`fixtures/queries/`** JSON/TOML pairs parse to equivalent documents                                                                                |
-| Manual / bench                    | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks); **`small/tet/`** for quick CLI smoke                                   |
+| Manual / bench                    | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks); **`queries/`** + **`small/tet/`** for CLI/query smoke                  |
 
 Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --lib tests::convert`.
 

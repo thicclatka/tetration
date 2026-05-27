@@ -7,7 +7,7 @@
 
 [_For those who are more cur..._](https://bookshop.org/p/books/book-of-numbers-a-novel-joshua-cohen/af5aa739b0fac506?ean=9780812986655&next=t)
 
-**_STILL IN DEVELOPMENT — layout v1 and query JSON may change before 1.0._**
+**_STILL IN DEVELOPMENT — layout v1 and query JSON/TOML may change before 1.0._**
 
 **HDF5-shaped** persistence (many large arrays in one durable file), **Zarr-shaped** chunking (regular grid, per-chunk compression, parallel I/O)—in a **single mmap-friendly `.tet` file`**, not a directory of shard blobs.
 
@@ -15,7 +15,7 @@
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
-- **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
+- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import / export** — `tet convert` from HDF5, NetCDF, Zarr v3; **`tet export`** back to Zarr v3 (stored chunk bytes, nested groups).
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
@@ -72,33 +72,34 @@ tet export volume.tet volume.zarr/      # .tet → Zarr v3 directory (empty or n
 tet info volume.tet
 tet verify volume.tet
 tet verify --deep volume.tet -q    # full chunk decode (large files sample 128 by default)
-tet query '{"dataset":"<name>","mean":[]}' -t volume.tet -x -q   # <name> from info output
+tet query fixtures/queries/mean_temperature.toml -t volume.tet -x -q   # after convert; <name> from info
 tet query '{"dataset":"<name>","inf_count":[]}' -t volume.tet -x -q
 ```
 
 **Daily driver:** plan + execute with readable stdout:
 
 ```bash
-tet query q.json -t data.tet -x -q              # one-line aggregate
-tet query q.json -t data.tet -x --format stats  # slim JSON (no chunk list)
-tet query q.json -t data.tet --format plan      # catalog + read_plan only
+tet query fixtures/queries/mean_temperature.toml -t data.tet -x -q
+tet query q.json -t data.tet -x --format stats              # slim JSON (no chunk list)
+tet query q.toml -t data.tet -x --format table --preview 6  # ASCII tables + slice grid
+tet query q.json -t data.tet --format plan                  # catalog + read_plan only
 ```
 
-Query JSON is **flat** (e.g. `"mean": []`, `"spill": "slice.bin"`); nested `"operation"` objects are rejected. Details: [query document](docs/query_engine.md#query-document-json).
+Query documents are **flat** JSON or TOML (e.g. `"mean": []` / `mean = []`, `"spill": "slice.bin"`); nested `"operation"` objects are rejected. Details: [query document](docs/query_engine.md#query-document-json-and-toml).
 
 ## `tet` commands
 
 Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the installed binary).
 
-| Command                                            | Alias  | Role                                                       |
-| -------------------------------------------------- | ------ | ---------------------------------------------------------- |
-| [`tet info`](#tet-info) `<path.tet>`               | —      | Summarize a file (default: dataset table)                  |
-| [`tet verify`](#tet-verify) `<path.tet>`           | —      | Layout health check (exit 1 on failure); `--json` / `-q`   |
-| [`tet repair`](#tet-repair) `<path.tet>`           | —      | Plan or apply safe in-place fixes (e.g. bad footer)        |
-| [`tet query`](#tet-query) `[QUERY]`                | `q`    | Validate JSON; optional catalog + execute against `-t`     |
-| [`tet qhist`](#tet-qhist) `[list\|run]`            | `hist` | Recent queries (platform cache; **not** the `.tet` footer) |
-| [`tet convert`](#tet-convert) `<in> <out.tet>`     | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                           |
-| [`tet export`](#tet-export) `<in.tet> <out.zarr/>` | —      | `.tet` → Zarr v3 directory store                           |
+| Command                                            | Alias  | Role                                                        |
+| -------------------------------------------------- | ------ | ----------------------------------------------------------- |
+| [`tet info`](#tet-info) `<path.tet>`               | —      | Summarize a file (default: dataset table)                   |
+| [`tet verify`](#tet-verify) `<path.tet>`           | —      | Layout health check (exit 1 on failure); `--json` / `-q`    |
+| [`tet repair`](#tet-repair) `<path.tet>`           | —      | Plan or apply safe in-place fixes (e.g. bad footer)         |
+| [`tet query`](#tet-query) `[QUERY]`                | `q`    | Validate JSON/TOML; optional catalog + execute against `-t` |
+| [`tet qhist`](#tet-qhist) `[list\|run]`            | `hist` | Recent queries (platform cache; **not** the `.tet` footer)  |
+| [`tet convert`](#tet-convert) `<in> <out.tet>`     | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                            |
+| [`tet export`](#tet-export) `<in.tet> <out.zarr/>` | —      | `.tet` → Zarr v3 directory store                            |
 
 ### `tet info`
 
@@ -135,7 +136,7 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 
 ### `tet query`
 
-`QUERY`: path to `.json`, inline JSON, `-` for stdin, or omit to read stdin.
+`QUERY`: path to `.json` / `.toml`, inline JSON/TOML, `-` for stdin, or omit to read stdin. Leading `{` → JSON; `.toml` extension → TOML.
 
 | Flag                | Effect                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -188,13 +189,13 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 | [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, [Rust API by phase](GETTING_STARTED.md#rust-api-by-phase), library/roadmap summary in [README](README.md#library-use) |
 | [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                                                                    |
 | [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                                                                          |
-| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`small/tet/`](fixtures/small/tet/) verify/query smoke                                                  |
+| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`queries/`](fixtures/queries/) JSON/TOML profiles, [`small/tet/`](fixtures/small/tet/) verify smoke    |
 
 ## Design stance (short)
 
 **Partial I/O is the default case** — mmap payload regions, touch only chunks that intersect the selection, parallel decode across disjoint tiles. Full-array loads into RAM are not required for planning or tier-A/B aggregates.
 
-**JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
+**JSON/TOML is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
 **Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phases 8–9** are **done** (verify/repair, wire dtypes through **`u64`/`f16`**, named axes, coord labels, histogram edges, QC counts, covariance/correlation, **`tet export`**). **Next:** Phase 10 GPU hooks, Phase 11 Python wheels + narrow C ABI; the layout spec is the portable floor.
 
@@ -207,22 +208,22 @@ tetration = "0.1"
 
 ```rust
 use tetration::prelude::*;
-// TetWriterSession, TetFile, parse_query_json, execute_query_json, verify_tet_file, …
+// TetWriterSession, TetFile, parse_query_json, parse_query_toml, execute_query_json, verify_tet_file, …
 ```
 
 ### Roadmap at a glance
 
-| Area                                                                                                                                                                                                                       | Status                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Phases **0–3** (layout, writers, `ReadPlan`, zstd)                                                                                                                                                                         | **Done**                                                  |
-| Phase **4** (query execute: fold, spill, tier-C, SIMD)                                                                                                                                                                     | **Done** — [`docs/query_engine.md`](docs/query_engine.md) |
-| Phase **5** (`tet convert` import)                                                                                                                                                                                         | **Done**                                                  |
-| Phase **6** (CLI UX: `--format`, `qhist`, `tet info` table)                                                                                                                                                                | **Done** — JSON + **TOML** query profiles (see below)     |
-| Phase **7** ([`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html) / [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), footer metadata) | **Done**                                                  |
-| Phase **8** (`tet verify` / `repair`, dtypes **`f32`–`u64`**)                                                                                                                                                              | **Done**                                                  |
-| Phase **9** (named axes, coord labels, QC counts, `tet export`)                                                                                                                                                            | **Done**                                                  |
-| Phase **10** (GPU hooks)                                                                                                                                                                                                   | _Later_                                                   |
-| Phase **11** (Python bindings)                                                                                                                                                                                             | _Later_                                                   |
+| Area                                                                                                                                                                                                                       | Status                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Phases **0–3** (layout, writers, `ReadPlan`, zstd)                                                                                                                                                                         | **Done**                                                                                            |
+| Phase **4** (query execute: fold, spill, tier-C, SIMD)                                                                                                                                                                     | **Done** — [`docs/query_engine.md`](docs/query_engine.md)                                           |
+| Phase **5** (`tet convert` import)                                                                                                                                                                                         | **Done**                                                                                            |
+| Phase **6** (CLI UX: `--format`, `qhist`, `tet info` table)                                                                                                                                                                | **Done** — JSON + **TOML** profiles, **`--format table`**, [`fixtures/queries/`](fixtures/queries/) |
+| Phase **7** ([`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html) / [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), footer metadata) | **Done**                                                                                            |
+| Phase **8** (`tet verify` / `repair`, dtypes **`f32`–`u64`**)                                                                                                                                                              | **Done**                                                                                            |
+| Phase **9** (named axes, coord labels, QC counts, `tet export`)                                                                                                                                                            | **Done**                                                                                            |
+| Phase **10** (GPU hooks)                                                                                                                                                                                                   | _Later_                                                                                             |
+| Phase **11** (Python bindings)                                                                                                                                                                                             | _Later_                                                                                             |
 
 Checklist + per-phase Rust paths: [`GETTING_STARTED.md`](GETTING_STARTED.md). Agent handoff: [`AGENTS.md`](AGENTS.md).
 

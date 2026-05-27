@@ -1,8 +1,8 @@
 # Getting started — Tetration
 
-Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON query** control plane with **read planning** and **execution** (`tet query … -t … -x`), and **`tet convert`** from **HDF5 / NetCDF / Zarr v3** (extension or directory sniff, streaming + parallel chunk import).
+Use this as a working checklist. The repo today has a **v1 `.tet` layout** (superblock + dataset directory + chunk index + payloads), **catalog mmap I/O**, a **JSON/TOML query** control plane with **read planning** and **execution** (`tet query … -t … -x`), and **`tet convert`** from **HDF5 / NetCDF / Zarr v3** (extension or directory sniff, streaming + parallel chunk import).
 
-**Fixtures:** tracked import tensors and generators live in [`fixtures/README.md`](fixtures/README.md) (Phase 5 convert tests + local 20 GiB stress). Tracked **`.tet`** smoke files for verify/repair/query: [`fixtures/small/tet/README.md`](fixtures/small/tet/README.md) (`mise run fixtures:small-tet` to regenerate).
+**Fixtures:** tracked import tensors and generators live in [`fixtures/README.md`](fixtures/README.md) (Phase 5 convert tests + local 20 GiB stress). Tracked **`.tet`** smoke: [`fixtures/small/tet/README.md`](fixtures/small/tet/README.md); shared query profiles (JSON + TOML): [`fixtures/queries/README.md`](fixtures/queries/README.md) (`mise run fixtures:small-tet` to regenerate `.tet` files).
 
 ## Environment
 
@@ -95,33 +95,34 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 
 ## Phase 6 — CLI & query UX
 
-**Goal:** make **`tet`** the polished daily driver — readable output, dependable history, and a query document format that is easier to author than raw JSON. The library keeps accepting JSON today; CLI improvements can add alternate front-end formats without breaking embedders.
+**Goal:** make **`tet`** the polished daily driver — readable output, dependable history, and query documents that are easy to author (JSON or TOML). The library accepts both; embedders can use [`parse_query_json`](src/query/document.rs) / [`parse_query_toml`](src/query/document_toml.rs) / [`parse_query_text`](src/query/document.rs) (auto-detect).
 
 ### Baseline (done)
 
 - [x] **`tet query`** — validate, plan, optional **`-x` / `--execute`**; default stdout is pretty full **`QueryResponse`** (`--format full`).
-- [x] **Focused query output** — **`--format full|json|stats|quiet`** (or **`-q`** for quiet); library **`format_query_response`** in **`src/query/cli/output/`**; **`src/tests/cli_output.rs`**.
+- [x] **Focused query output** — **`--format full|json|stats|plan|quiet|table`** (or **`-q`** for quiet); library **`format_query_response`** in **`src/query/cli/output/`** (incl. [`table.rs`](src/query/cli/output/table.rs)); **`src/tests/cli_output.rs`**.
 - [x] **`tet qhist`** — platform query cache (`query_history.jsonl`); **`hist`** alias; **`--clear`**, **`TET_NO_QUERY_HISTORY`**, **`TET_QUERY_HISTORY_FILE`** (see [CLI query history](#cli-query-history-tet-qhist)).
 - [x] **`tet info` / `tet convert`** — default dataset table; `--json` full dump; `--grep` / `--dataset`; sections (`--layout`, `--chunks`, `--history`, `--all`); `-q` one-liner.
 
-### Phase 6 focus (next)
+### Phase 6 additions (done)
 
 - [x] **Query history list / run** — `tet qhist list` (default), `--all` for all retained rows; `tet qhist run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
 - [x] **History extras** — `list` filters (`--dataset`, `--tet`, `--mode`, `--grep`); indices match filtered view for `run N` (not in `.tet`).
-- [x] **Flat query JSON (v1 wire)** — top-level op keys (`mean: 0`, `quantile: { q, axis }`); nested `"operation"` rejected; see [`docs/query_engine.md`](docs/query_engine.md#query-document-json).
+- [x] **Flat query JSON (v1 wire)** — top-level op keys (`mean: 0`, `quantile: { q, axis }`); nested `"operation"` rejected; see [`docs/query_engine.md`](docs/query_engine.md#query-document-json-and-toml).
 - [x] **TOML query profile** — `.toml` path or non-JSON stdin/inline → same `QueryDocument` as JSON ([`parse_query_toml`](src/query/document_toml.rs)); line-oriented profile still later.
 - [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
 - [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
 - [x] **`tet info` UX** — table + filters; **`--history`** = on-disk footer (not `qhist`).
 - [x] **`--format table`** — ASCII tables for query summary, read plan, aggregates, preview sample ([`table.rs`](src/query/cli/output/table.rs)).
 
-**Verify:** spawn-`tet` smoke in `src/tests/cli_info.rs`; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
+**Verify:** spawn-`tet` smoke in `src/tests/cli_info.rs`; [`fixtures/queries/`](fixtures/queries/) JSON/TOML pairs + `src/tests/query_fixtures.rs`; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
 
 **Examples:**
 
 ```bash
-tet query q.json -t data.tet              # plan (full JSON)
-tet query q.json -t data.tet -x -q        # execute, one-line stdout
+Q=fixtures/queries
+tet query $Q/mean_temperature.toml -t data.tet -x -q
+tet query $Q/slice_full_temperature.json -t data.tet -x --preview 6 --format table
 tet query q.json -t data.tet --format plan
 tet query q.json -t data.tet -x --format stats
 tet query q.json -t data.tet -x --format json | jq .
@@ -278,8 +279,8 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 
 ## Ongoing hygiene
 
-- [x] Integration tests: temp `.tet`, mmap, catalog (`src/tests/catalog.rs`), query (`src/tests/query.rs`), fold policy (`src/tests/fold.rs`), SIMD/reduction refs (`src/tests/variance_simd.rs`, `src/tests/reduction.rs`), convert (`src/tests/convert.rs`), layout (`src/tests/layout_roundtrip.rs`), CLI output/history/info (`src/tests/cli_output.rs`, `src/tests/cli_history.rs`, `src/tests/cli_info.rs`); shared builders in `src/tests/fixture.rs`. Run with **`cargo test --lib`**.
-- [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`fixtures/README.md`**, and this file aligned when layout, codecs, convert, or query JSON change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
+- [x] Integration tests: temp `.tet`, mmap, catalog (`src/tests/catalog.rs`), query (`src/tests/query.rs`), query fixtures (`src/tests/query_fixtures.rs`), fold policy (`src/tests/fold.rs`), SIMD/reduction refs (`src/tests/variance_simd.rs`, `src/tests/reduction.rs`), convert (`src/tests/convert.rs`), layout (`src/tests/layout_roundtrip.rs`), CLI output/history/info (`src/tests/cli_output.rs`, `src/tests/cli_history.rs`, `src/tests/cli_info.rs`); shared builders + [`fixtures/queries/`](fixtures/queries/) loaders in `src/tests/fixture.rs`. Run with **`cargo test --lib`**.
+- [ ] Keep **README**, **`docs/layout_v1.md`**, **`docs/query_engine.md`**, **`fixtures/README.md`**, and this file aligned when layout, codecs, convert, or query JSON/TOML change. Prefer **`src/utils/`** for small shared non-domain code (see `utils/mod.rs`).
 - [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `src/tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
@@ -289,16 +290,16 @@ Quick map for embedders and contributors. **Phases 0–9** are **done** unless m
 
 ### Roadmap at a glance
 
-| Area            | Status                                                            |
-| --------------- | ----------------------------------------------------------------- |
-| Phases **0–3**  | **Done** — layout, writers, `ReadPlan`, zstd                      |
-| Phase **4**     | **Done** — query execute                                          |
-| Phase **5**     | **Done** — `tet convert`                                          |
-| Phase **6**     | **Done** — CLI UX; JSON + TOML query profiles → `QueryDocument` |
-| Phase **7**     | **Done** — `TetWriterSession` / `TetFile`, footer metadata        |
-| Phase **8**     | **Done** — verify/repair, dtypes                                  |
-| Phase **9**     | **Done** — named axes, coord labels, export                       |
-| Phase **10–11** | _Later_ — GPU, Python bindings                                    |
+| Area            | Status                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| Phases **0–3**  | **Done** — layout, writers, `ReadPlan`, zstd                                                        |
+| Phase **4**     | **Done** — query execute                                                                            |
+| Phase **5**     | **Done** — `tet convert`                                                                            |
+| Phase **6**     | **Done** — CLI UX; JSON + TOML profiles, `--format table`, [`fixtures/queries/`](fixtures/queries/) |
+| Phase **7**     | **Done** — `TetWriterSession` / `TetFile`, footer metadata                                          |
+| Phase **8**     | **Done** — verify/repair, dtypes                                                                    |
+| Phase **9**     | **Done** — named axes, coord labels, export                                                         |
+| Phase **10–11** | _Later_ — GPU, Python bindings                                                                      |
 
 ### Per-phase Rust / CLI
 
@@ -310,7 +311,7 @@ Quick map for embedders and contributors. **Phases 0–9** are **done** unless m
 | **3**  | Done    | Per-chunk zstd + index robustness                   | [`ChunkPayloadCodecV1`](src/catalog/mod.rs), [`src/tests/catalog.rs`](src/tests/catalog.rs)                                                                                                        |
 | **4**  | Done    | Query plan + execute (fold, spill, tier-C)          | [`build_execution_preview`](src/query/engine/run.rs), [`src/query/`](src/query/); CLI `tet query … -x`                                                                                             |
 | **5**  | Done    | HDF5 / NetCDF / Zarr v3 import                      | [`src/convert/`](src/convert/), CLI `tet convert`                                                                                                                                                  |
-| **6**  | Done    | CLI stdout modes + query history; JSON/TOML queries | [`format_query_response`](src/query/cli/output/mod.rs), `tet qhist`, [`parse_query_toml`](src/query/document_toml.rs)                                                                             |
+| **6**  | Done    | CLI stdout modes + query history; JSON/TOML queries | [`format_query_response`](src/query/cli/output/mod.rs) (`table`), `tet qhist`, [`parse_query_toml`](src/query/document_toml.rs), [`fixtures/queries/`](fixtures/queries/)                          |
 | **7**  | Done    | **`TetWriterSession` / `TetFile`** embedder API     | [`src/catalog/session.rs`](src/catalog/session.rs), [`execute_query_*`](src/query/execute.rs), [`prelude`](src/lib.rs); examples + [`src/tests/session.rs`](src/tests/session.rs)                  |
 | **8**  | Done    | `tet verify` / `tet repair`, dtypes **`f32`–`u64`** | [`src/verify/`](src/verify/), [`src/repair/`](src/repair/)                                                                                                                                         |
 | **9**  | Done    | Named axes, coord labels, QC counts, `tet export`   | [`resolve_axes.rs`](src/query/resolve_axes.rs), [`resolve_selection.rs`](src/query/resolve_selection.rs), [`src/export/`](src/export/)                                                             |
@@ -343,8 +344,8 @@ mean = []
 2. ~~**Convert (Phase 5):** HDF5 + NetCDF + Zarr → `.tet` with streaming + parallel import; groups, CF decode, `src/tests/convert.rs`, [`fixtures/`](fixtures/README.md).~~ **Done**
 3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel/`](src/query/fold/parallel/mod.rs).
 4. ~~**Adaptive out-of-core fold:** linear scan + SIMD bulk tier-A/B when data oversubscribes RAM.~~ **Done** — [PR #7](https://github.com/thicclatka/tetration/pull/7); see [`fold_policy.rs`](src/query/fold/fold_policy.rs), [`linear_scan.rs`](src/query/fold/linear_scan.rs).
-5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
-6. ~~**Query TOML front-end:** `.toml` → `QueryDocument`.~~ **Done** — optional line-oriented profile + golden files still open.
+5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — incl. **`--format table`**; see Phase 6 above.
+6. ~~**Query TOML front-end:** `.toml` → `QueryDocument`.~~ **Done** — [`fixtures/queries/`](fixtures/queries/) golden pairs; optional line-oriented profile still open.
 7. ~~**Rust embedder workflows (Phase 7):** examples + session API.~~ **Done**
 8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**

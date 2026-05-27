@@ -55,7 +55,7 @@ flowchart TD
     end
 ```
 
-**CLI mapping:** `tet query [QUERY]` reads **`.json` / `.toml`**, inline JSON/TOML, or stdin (`-` or omit). Format: file extension **`.json` / `.toml`**, else leading **`{`** → JSON, otherwise TOML ([`detect_query_input_format`](../src/query/document.rs)). Then `validate_query` and `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export. **`tet qhist`** still stores query JSON in the platform cache, not TOML.
+**CLI mapping:** `tet query [QUERY]` reads **`.json` / `.toml`**, inline JSON/TOML, or stdin (`-` or omit). Format: file extension **`.json` / `.toml`**, else leading **`{`** → JSON, otherwise TOML ([`detect_query_input_format`](../src/query/document.rs)). Then `validate_query` and `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet|table`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export. **`tet qhist`** still stores query JSON in the platform cache, not TOML.
 
 Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
 
@@ -542,7 +542,7 @@ The query control plane (JSON or TOML input) is a **declarative document**, not 
 | **`.tet` mmap**        | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))                     |
 | **Query JSON out**     | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                               |
 | **Binary payloads**    | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                                       |
-| **Spill path**         | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs)           |
+| **Spill path**         | `"spill"` string in query JSON/TOML                      | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs)           |
 
 The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
 

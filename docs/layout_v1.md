@@ -33,7 +33,7 @@ Byte offsets increase left → right. All integers are **little-endian**.
 - Bytes `0..4` must be ASCII **`TETR`**.
 - Bytes `4..8` are **`layout_version`** (`u32` LE). Only **`1`** is defined today.
 
-This matches the optional `layout_version` field in JSON query documents (`tetration::query::QueryDocument`).
+This matches the optional `layout_version` field in JSON/TOML query documents (`tetration::query::QueryDocument`).
 
 ## Superblock v1 (32 bytes)
 
@@ -95,7 +95,7 @@ v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis name
 
 Do **not** conflate them:
 
-- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON instead of `"mean": 0`.
+- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` (JSON/TOML) instead of `"mean": 0`.
 - **Coordinate label** — “index 42 along **time** is **2024-03-15**” → enables slice/filter by value, alignment across datasets, and (with extra ops) group-by keys.
 
 **Analogues:** NetCDF dimension name vs coordinate variable; pandas `Index.name` vs `Index` values; xarray `dims` vs `coords`.
