@@ -1,20 +1,20 @@
 # Query engine
 
-The **query engine** (`src/query/`) turns a validated JSON [`QueryDocument`](../src/query/types/document.rs) into a [`QueryResponse`](../src/query/types/response.rs): catalog resolution, a chunk-level **read plan**, and optionally mmap-backed decode plus **`operation`** aggregates.
+The **query engine** (`src/query/`) turns a validated [`QueryDocument`](../src/query/types/document.rs) into a [`QueryResponse`](../src/query/types/response.rs): catalog resolution, a chunk-level **read plan**, and optionally mmap-backed decode plus **`operation`** aggregates.
 
-Flat JSON parsing lives in **`document_wire.rs`**; size/depth limits and **`validate_query`** live in **`document.rs`**. Wire types live in **`types/`** (`document`, `plan`, `response`, `error`). Planning and decode live in **`plan/`** and **`decode/`**; materialize, fold, and dtype routing in **`materialize/`**, **`fold/`**, and **`dispatch.rs`**; orchestration in **`engine/`** (`run`, `operations`, `budget`, `spill_policy`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
+**Input:** flat **JSON** or **TOML** profiles (`parse_query_json`, [`parse_query_toml`](../src/query/document_toml.rs), [`parse_query_text`](../src/query/document.rs) with auto-detect). TOML is converted to a JSON value tree, then the same wire parser runs. The canonical wire shape is defined in **`document_wire.rs`**; size/depth limits and **`validate_query`** live in **`document.rs`**. Wire types live in **`types/`** (`document`, `plan`, `response`, `error`). Planning and decode live in **`plan/`** and **`decode/`**; materialize, fold, and dtype routing in **`materialize/`**, **`fold/`**, and **`dispatch.rs`**; orchestration in **`engine/`** (`run`, `operations`, `budget`, `spill_policy`). The engine assumes a parsed, validated document and a mmap’d `.tet` byte slice when planning against a file.
 
-See [JSON security (input and output)](#json-security-input-and-output) for trust boundaries and hardening notes.
+See [JSON security (input and output)](#json-security-input-and-output) for trust boundaries and hardening notes (apply to TOML input as well).
 
 ## End-to-end flow
 
 ```mermaid
 flowchart TD
     subgraph control["Control plane outside engine"]
-        JSON["Query JSON"]
-        Parse["parse_query_json"]
+        In["Query JSON or TOML"]
+        Parse["parse_query_text / parse_query_json / parse_query_toml"]
         Validate["validate_query"]
-        JSON --> Parse --> Validate
+        In --> Parse --> Validate
     end
 
     subgraph entry["engine run.rs"]
@@ -55,7 +55,7 @@ flowchart TD
     end
 ```
 
-**CLI mapping:** `tet query [QUERY]` calls `validate_query` then `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export.
+**CLI mapping:** `tet query [QUERY]` reads **`.json` / `.toml`**, inline JSON/TOML, or stdin (`-` or omit). Format: file extension **`.json` / `.toml`**, else leading **`{`** → JSON, otherwise TOML ([`detect_query_input_format`](../src/query/document.rs)). Then `validate_query` and `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export. **`tet qhist`** still stores query JSON in the platform cache, not TOML.
 
 Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
 
@@ -66,6 +66,7 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `stats`          | —     | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays                              |
 | `plan`           | —     | Slim JSON: catalog + `read_plan` summary only (no `chunks[]`, no `execution`; **`-x`** still runs decode — use without **`-x`** for plan-only) |
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                                                 |
+| `table`          | —     | ASCII tables: query summary, `read_plan`, execution I/O, scalar/partial **result**, optional **preview** sample (like `tet info`)              |
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
 
@@ -327,9 +328,11 @@ Each **query document** names **one dataset** in the `.tet` file (`"dataset": "t
 
 **Append vs join:** growing one dataset over time is a **writer** concern (Phase 7 session writer). Combining two datasets on shared coordinates is **join** semantics — metadata helps **alignment checks**, not automatic join in the query engine.
 
-## Query document (JSON)
+## Query document (JSON and TOML)
 
-The wire format is **flat**: one top-level reduction key per document (`mean`, `sum`, …). Nested `"operation": { … }` is **rejected** at parse time.
+The wire format is **flat**: one top-level reduction key per document (`mean`, `sum`, …). Nested `"operation": { … }` is **rejected** at parse time. **TOML** uses the same keys and semantics after conversion to JSON (see examples below).
+
+### JSON examples
 
 | Write                                                           | Meaning (internal `operation.axes`)                                               |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -351,6 +354,36 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 `memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis specs accept **non-negative decimals** (`0`) or **dimension names** (`"time"`) when `dim_names` is in footer metadata — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels).
 
 At most **one** reduction key per document. Unknown top-level fields are rejected (`deny_unknown_fields` style in [`parse_query_value`](../src/query/document_wire.rs)).
+
+### TOML examples
+
+Equivalent TOML for the same wire (parametric ops use inline tables; `selection` uses `[[selection]]` array-of-tables):
+
+| TOML                                                      | Same as JSON                                            |
+| --------------------------------------------------------- | ------------------------------------------------------- |
+| `dataset = "temperature"` / `mean = []`                   | `"dataset": "temperature", "mean": []`                  |
+| `mean = 0`                                                | `"mean": 0`                                             |
+| `sum = [0, 1]`                                            | `"sum": [0, 1]`                                         |
+| `[quantile]` / `q = 0.95` / `axis = 0`                    | `"quantile": { "q": 0.95, "axis": 0 }`                  |
+| `[execution]` / `memory_budget_percent = 40`              | `"execution": { "memory_budget_percent": 40 }`          |
+| `spill = "slice.bin"`                                     | `"spill": "slice.bin"`                                  |
+| `[[selection]]` / `start = 0` / `stop = 100` / `step = 2` | `"selection": [{ "start": 0, "stop": 100, "step": 2 }]` |
+
+```toml
+dataset = "temperature"
+mean = []
+
+[[selection]]
+start = 0
+stop = 100
+step = 2
+```
+
+```bash
+tet query q.toml -t data.tet -x -q
+```
+
+**Not supported in TOML:** nested `"operation"` / `"output"` objects (same rejection as JSON). Line-oriented query profiles remain a possible later front-end.
 
 ## Operations (shipped in v1)
 
@@ -499,17 +532,17 @@ When adding an op, update this table, [`Operation`](../src/query/types/document.
 
 ## JSON security (input and output)
 
-The JSON query plane is a **declarative control document**, not executable code. There is no query language interpreter, SQL engine, or “run this string from the JSON” path. Security still matters in **both directions**: untrusted input must not drive memory-unsafe or out-of-policy behavior, and untrusted consumers must not treat output JSON as shell/HTML/SQL without encoding.
+The query control plane (JSON or TOML input) is a **declarative document**, not executable code. There is no query language interpreter, SQL engine, or “run this string from the payload” path. Security still matters in **both directions**: untrusted input must not drive memory-unsafe or out-of-policy behavior, and untrusted consumers must not treat output JSON as shell/HTML/SQL without encoding.
 
 ### Threat model (v1)
 
-| Surface             | Source                                                   | Risk if mishandled                                                                                        |
-| ------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Query JSON in**   | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep JSON), logic abuse (absurd selection), confused deputy (if a host passes paths from JSON)  |
-| **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))           |
-| **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                     |
-| **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                             |
-| **Spill path**      | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs) |
+| Surface                | Source                                                   | Risk if mishandled                                                                                                  |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Query JSON/TOML in** | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep payload), logic abuse (absurd selection), confused deputy (if a host passes paths from the document) |
+| **`.tet` mmap**        | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))                     |
+| **Query JSON out**     | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                               |
+| **Binary payloads**    | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                                       |
+| **Spill path**         | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs)           |
 
 The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
 
@@ -524,9 +557,9 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 5. **Non-empty `dataset`** — Whitespace-only names rejected.
 6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/plan/selection.rs)); JSON cannot name chunk file offsets directly.
 7. **No `.tet` path in query JSON** — Opening a `.tet` file uses the **host** path (`--tet`, API argument), not a field inside the query document. Spill **output** paths _are_ in JSON today; deployments should allowlist or rewrite them.
-8. **Size and shape caps** — [`parse_query_json`](../src/query/document.rs) rejects payloads over [`QueryLimits::DEFAULT.max_json_bytes`](../src/query/document.rs) (1 MiB) and nesting depth over [`QueryLimits::DEFAULT.max_json_depth`](../src/query/document.rs) (64). [`validate_query`](../src/query/document.rs) caps `dataset` length, `selection` rank and `operation.axes` count (≤ [`MAX_NDIM`](../src/catalog/mod.rs)), and per-axis label length via **`QueryLimits::DEFAULT`**.
-9. **`deny_unknown_fields`** — [`QueryDocument`](../src/query/types/document.rs) and nested input types reject unexpected JSON keys at parse time.
-10. **Fuzz / property tests** — `src/tests/query.rs` proptest: random UTF-8 must not panic in `parse_query_json` / `validate_query`.
+8. **Size and shape caps** — [`parse_query_json`](../src/query/document.rs) / [`parse_query_toml`](../src/query/document_toml.rs) reject payloads over [`QueryLimits::DEFAULT.max_json_bytes`](../src/query/document.rs) (1 MiB) and nesting depth over [`QueryLimits::DEFAULT.max_json_depth`](../src/query/document.rs) (64) on the converted JSON tree. [`validate_query`](../src/query/document.rs) caps `dataset` length, `selection` rank and `operation.axes` count (≤ [`MAX_NDIM`](../src/catalog/mod.rs)), and per-axis label length via **`QueryLimits::DEFAULT`**.
+9. **`deny_unknown_fields`** — [`QueryDocument`](../src/query/types/document.rs) and nested input types reject unexpected keys at parse time (after TOML→JSON conversion).
+10. **Fuzz / property tests** — `src/tests/query.rs` proptest: random UTF-8 must not panic in `parse_query_json` / `validate_query`; TOML covered by unit tests on representative profiles.
 
 **Not enforced yet (deployments should add limits):**
 
@@ -542,10 +575,10 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ### Caller responsibilities (either direction)
 
-#### Ingesting query JSON
+#### Ingesting query JSON or TOML
 
 - Cap input size and parse time; reject documents above policy limits before calling the library.
-- Do not build shell commands, SQL, or file paths by string-concatenating raw JSON fields.
+- Do not build shell commands, SQL, or file paths by string-concatenating raw document fields.
 - Keep the `.tet` path under caller control (allowlist directories, no user-supplied absolute paths in multi-tenant services unless intended).
 - For **`spill`**, validate or rewrite the path before execution (path traversal, writable location, quota).
 
@@ -564,7 +597,8 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 | Dataset / axis length caps                 | In        | **Done** in `validate_query` via `QueryLimits`                                                              |
 | Spill path allowlist                       | In/out    | **Done** — `SpillPathAllowlist`, `plan_query_with_tet_mmap_ex`, CLI `--spill-allow`                         |
 | Response schema version + stability        | Out       | Document breaking changes                                                                                   |
-| Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `src/tests/query.rs`                                                                  |
+| Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `src/tests/query.rs`; TOML smoke in same module                                       |
+| TOML query front-end                       | In        | **Done** — [`parse_query_toml`](../src/query/document_toml.rs), CLI `.toml` + auto-detect                   |
 | Redaction mode for echoed fields           | Out       | Multi-tenant logging                                                                                        |
 | Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical`                                             |
 | Parallel streaming fold (tier A/B ops)     | In        | **Done** — Rayon over chunks when in-core; see [Adaptive fold I/O](#adaptive-fold-io)                       |
@@ -587,4 +621,4 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - Filter-by-value and **group-by** on coordinate labels remain deferred; **`operation.axes`** accepts decimal indices or **dimension names** (`dim_names`), not coordinate values — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels).
 - Spill path must lie under default roots (canonical **`.tet` parent** and descendants + platform `…/tetration` cache dirs) or `--spill-allow`; relative **`"spill"`** paths resolve against the **`.tet` directory** (not shell cwd).
 - Integer and narrow float dtypes (`u8`–`u64`, `f16`) are supported in writers, convert, and query execution (tier-A/B aggregates promote to `f64` for fold paths).
-- JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy is enforced via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).
+- Query hardening (JSON and TOML): byte size, depth, `deny_unknown_fields`, and string/rank caps via **`QueryLimits`**; spill path policy via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).

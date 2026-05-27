@@ -36,12 +36,12 @@ where
     out
 }
 
-fn sample_query_json() -> &'static str {
-    r#"{"dataset":"temperature","layout_version":1}"#
+fn sample_query_json() -> String {
+    super::fixture::query_files::read("slice_full_temperature", "json")
 }
 
-fn mean_query_json() -> &'static str {
-    r#"{"dataset":"temperature","mean":[]}"#
+fn mean_query_json() -> String {
+    super::fixture::query_files::read("mean_temperature", "json")
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn cli_query_history_append_trim_and_list() {
         }
         let max = cli_query_history_max();
         assert_eq!(max, 10);
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         validate_query(&doc).unwrap();
         for i in 0..12 {
             append_cli_query_history(&doc, Some(&format!("/data/{i}.tet")), i % 2 == 0).unwrap();
@@ -83,7 +83,7 @@ fn cli_query_history_append_trim_and_list() {
 #[test]
 fn cli_query_history_dedupes_consecutive_duplicate() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
         append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
         append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
@@ -101,7 +101,7 @@ fn cli_query_history_max_env_trims() {
             env::set_var("TET_QUERY_HISTORY_MAX", "3");
         }
         assert_eq!(cli_query_history_max(), 3);
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         for i in 0..5 {
             append_cli_query_history(&doc, Some(&format!("/data/{i}.tet")), false).unwrap();
         }
@@ -115,7 +115,7 @@ fn cli_query_history_max_env_trims() {
 #[test]
 fn format_history_list_text_shows_index_and_dataset() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         append_cli_query_history(&doc, Some("target/demo/x.tet"), true).unwrap();
         let entries = list_cli_query_history(10, false, None).unwrap();
         let text = format_history_list_text(&entries, None, &HistorySettings::default(), None);
@@ -135,7 +135,7 @@ fn format_history_list_text_shows_index_and_dataset() {
 #[test]
 fn format_history_list_json_includes_mode() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         append_cli_query_history(&doc, Some("a.tet"), true).unwrap();
         append_cli_query_history(&doc, None, false).unwrap();
         let entries = list_cli_query_history(10, true, None).unwrap();
@@ -151,7 +151,7 @@ fn format_history_list_json_includes_mode() {
 #[test]
 fn cli_query_history_list_all_flag() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         for i in 0..5 {
             append_cli_query_history(&doc, Some(&format!("/data/{i}.tet")), false).unwrap();
         }
@@ -163,7 +163,7 @@ fn cli_query_history_list_all_flag() {
 #[test]
 fn cli_query_history_get_entry_by_index() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         append_cli_query_history(&doc, Some("/a.tet"), true).unwrap();
         append_cli_query_history(&doc, Some("/b.tet"), false).unwrap();
         let newest = get_cli_query_history_entry(1, None).unwrap();
@@ -180,7 +180,7 @@ fn cli_query_history_get_entry_by_index() {
 #[test]
 fn cli_query_history_clear() {
     with_history_file(|| {
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         validate_query(&doc).unwrap();
         append_cli_query_history(&doc, None, false).unwrap();
         assert_eq!(list_cli_query_history(10, false, None).unwrap().len(), 1);
@@ -195,7 +195,7 @@ fn cli_query_history_disabled_by_env() {
         unsafe {
             env::set_var("TET_NO_QUERY_HISTORY", "1");
         }
-        let doc = parse_query_json(sample_query_json()).unwrap();
+        let doc = parse_query_json(&sample_query_json()).unwrap();
         append_cli_query_history(&doc, None, false).unwrap();
         assert!(list_cli_query_history(10, false, None).unwrap().is_empty());
         unsafe {
@@ -207,8 +207,8 @@ fn cli_query_history_disabled_by_env() {
 #[test]
 fn history_list_filter_dataset_and_mode() {
     with_history_file(|| {
-        let temp = parse_query_json(sample_query_json()).unwrap();
-        let mean = parse_query_json(mean_query_json()).unwrap();
+        let temp = parse_query_json(&sample_query_json()).unwrap();
+        let mean = parse_query_json(&mean_query_json()).unwrap();
         append_cli_query_history(&temp, Some("/cf_3d.tet"), true).unwrap();
         append_cli_query_history(&mean, Some("/tensor_3d.tet"), false).unwrap();
         append_cli_query_history(&temp, Some("/other.tet"), false).unwrap();

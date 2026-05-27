@@ -1,0 +1,11 @@
+layout_version = 1
+dataset = "temperature"
+mean = []
+
+[[selection]]
+start = 0
+stop = 100
+step = 2
+
+[[selection]]
+step = 1

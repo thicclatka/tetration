@@ -12,7 +12,7 @@ fn format_full_and_json_include_operation_fields() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fmt.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
+    let doc = super::fixture::query_files::json("mean_a");
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -30,7 +30,7 @@ fn format_stats_omits_chunk_rows_and_previews() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("stats.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
+    let doc = super::fixture::query_files::json("sum_a");
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(8)).unwrap();
@@ -47,7 +47,7 @@ fn format_quiet_scalar_mean() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
+    let doc = super::fixture::query_files::json("mean_a");
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -66,7 +66,7 @@ fn format_quiet_partial_sum_along_axis() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet_partial.tet");
     fixture::write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","sum":0}"#).unwrap();
+    let doc = super::fixture::query_files::json("sum_axis0_a");
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
@@ -123,7 +123,7 @@ fn format_plan_omits_chunks_and_execution() {
     assert!(!planned.contains("\"chunks\""));
     assert!(!planned.contains("\"execution\""));
 
-    let doc_op = parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
+    let doc_op = super::fixture::query_files::json("mean_a");
     validate_query(&doc_op).unwrap();
     let executed = plan_query_with_tet_mmap(&doc_op, None, &mmap, Some(0)).unwrap();
     let planned_exec = format_query_response(&executed, QueryOutputFormat::Plan).unwrap();
@@ -158,6 +158,56 @@ fn format_quiet_validated_without_tet() {
     let line = format_query_response(&response, QueryOutputFormat::Quiet).unwrap();
     assert!(line.contains("validated"));
     assert!(line.contains("hint=pass --tet"));
+}
+
+#[test]
+fn format_table_scalar_mean() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("table.tet");
+    fixture::write_multichunk_2x3_tiles(&path, "a");
+    let doc = super::fixture::query_files::json("mean_a");
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+
+    let text = format_query_response(&response, QueryOutputFormat::Table).unwrap();
+    assert!(text.contains("query:"));
+    assert!(text.contains("result:"));
+    assert!(text.contains("mean"));
+    assert!(text.contains("3.5"));
+    assert!(text.contains("read_plan:"));
+}
+
+#[test]
+fn format_table_partial_sum() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("table_partial.tet");
+    fixture::write_multichunk_2x3_tiles(&path, "a");
+    let doc = super::fixture::query_files::json("sum_axis0_a");
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+
+    let text = format_query_response(&response, QueryOutputFormat::Table).unwrap();
+    assert!(text.contains("reduced_shape=3"));
+    assert!(text.contains("    0  5"));
+    assert!(text.contains("    1  7"));
+}
+
+#[test]
+fn format_table_slice_grid_2x3() {
+    let path = fixture::tracked_small_tet_dir().join("sample.tet");
+    let doc = super::fixture::query_files::json("slice_full_temperature");
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(6)).unwrap();
+
+    let text = format_query_response(&response, QueryOutputFormat::Table).unwrap();
+    assert!(text.contains("slice (f32, shape=2×3)"));
+    assert!(text.contains("c0"));
+    assert!(text.contains("r0"));
+    assert!(text.contains("1"));
+    assert!(text.contains("6"));
 }
 
 #[test]

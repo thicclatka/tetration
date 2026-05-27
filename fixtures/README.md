@@ -24,6 +24,7 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 | `small/h5/`, `small/netcdf/` | **`cf_3d`** — coords (**time/lat/lon**), **`temperature`** with **scale_factor / add_offset / \_FillValue**, plus root **f32…i64**                                     |
 | `small/zarr/`                | **`tensor_{3,4,5}d`** directory stores; **`groups_3d`** with **`primary/`** subgroup                                                                                   |
 | `small/tet/`                 | Tracked **`.tet`** for **`tet verify`**, **`tet verify --deep`**, **`tet repair`**, and **query** on **u8/u32/f16** — see [`small/tet/README.md`](small/tet/README.md) |
+| `queries/`                   | Paired **JSON + TOML** query profiles for CLI smoke and `src/tests` — see [`queries/README.md`](queries/README.md)                                                     |
 
 | File        | Shape              | Notes                                  |
 | ----------- | ------------------ | -------------------------------------- |
@@ -70,6 +71,7 @@ mise run fixtures:clean-extra-large
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/tests/convert.rs`            | `tet convert` on **`tensor_*`**, **`groups_3d`**, **`cf_3d`**, and **Zarr** stores; byte equality vs source; parallel `--jobs 4` smoke; format sniff |
 | `src/tests/small_tet_fixtures.rs` | Committed **`small/tet/*.tet`** — `tet verify` / `--deep` / `tet repair` / query sum\|var; see [`small/tet/README.md`](small/tet/README.md)          |
+| `src/tests/query_fixtures.rs`     | **`fixtures/queries/`** JSON/TOML pairs parse to equivalent documents                                                                                |
 | Manual / bench                    | `fixtures/large/*`, `fixtures/extra_large/*` — see [Benchmarks](#benchmarks); **`small/tet/`** for quick CLI smoke                                   |
 
 Regenerate tracked small files after changing the `generate/` package, then re-run `cargo test --lib tests::convert`.

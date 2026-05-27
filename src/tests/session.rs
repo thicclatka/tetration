@@ -72,7 +72,7 @@ fn writer_session_commit_and_query() {
     assert_eq!(row_coords.labels, ["r0", "r1"]);
 
     let file = TetFile::open(&path).unwrap();
-    let doc = parse_query_json(r#"{"dataset":"temperature","mean":[]}"#).unwrap();
+    let doc = super::fixture::query_files::json("mean_temperature");
     validate_query(&doc).unwrap();
     let response = execute_query_document(
         &doc,

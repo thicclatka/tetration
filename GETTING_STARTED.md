@@ -109,11 +109,11 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 - [x] **Query history list / run** — `tet qhist list` (default), `--all` for all retained rows; `tet qhist run N` (1 = newest); `TET_QUERY_HISTORY_MAX` caps rotation on append.
 - [x] **History extras** — `list` filters (`--dataset`, `--tet`, `--mode`, `--grep`); indices match filtered view for `run N` (not in `.tet`).
 - [x] **Flat query JSON (v1 wire)** — top-level op keys (`mean: 0`, `quantile: { q, axis }`); nested `"operation"` rejected; see [`docs/query_engine.md`](docs/query_engine.md#query-document-json).
-- [ ] **Optional alternate front-ends** — TOML or line-oriented profile → same `QueryDocument` (later).
+- [x] **TOML query profile** — `.toml` path or non-JSON stdin/inline → same `QueryDocument` as JSON ([`parse_query_toml`](src/query/document_toml.rs)); line-oriented profile still later.
 - [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
 - [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
 - [x] **`tet info` UX** — table + filters; **`--history`** = on-disk footer (not `qhist`).
-- [ ] **Optional stdout modes** — human **`preview`** table for query execute (defer unless needed).
+- [x] **`--format table`** — ASCII tables for query summary, read plan, aggregates, preview sample ([`table.rs`](src/query/cli/output/table.rs)).
 
 **Verify:** spawn-`tet` smoke in `src/tests/cli_info.rs`; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
 
@@ -283,6 +283,58 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 - [x] JSON hardening: [`QueryLimits::DEFAULT`](../src/query/document.rs) (`max_json_bytes`, `max_json_depth`, dataset/axis caps), `deny_unknown_fields`, proptest in `src/tests/query.rs` ([query engine — JSON security](docs/query_engine.md#json-security-input-and-output)).
 - [ ] When the format stabilizes: publish **docs.rs** examples that match on-disk guarantees.
 
+## Rust API by phase
+
+Quick map for embedders and contributors. **Phases 0–9** are **done** unless marked _later_. User-facing summary: [README — Library use](README.md#library-use) (roadmap table + JSON/TOML query notes).
+
+### Roadmap at a glance
+
+| Area            | Status                                                            |
+| --------------- | ----------------------------------------------------------------- |
+| Phases **0–3**  | **Done** — layout, writers, `ReadPlan`, zstd                      |
+| Phase **4**     | **Done** — query execute                                          |
+| Phase **5**     | **Done** — `tet convert`                                          |
+| Phase **6**     | **Done** — CLI UX; JSON + TOML query profiles → `QueryDocument` |
+| Phase **7**     | **Done** — `TetWriterSession` / `TetFile`, footer metadata        |
+| Phase **8**     | **Done** — verify/repair, dtypes                                  |
+| Phase **9**     | **Done** — named axes, coord labels, export                       |
+| Phase **10–11** | _Later_ — GPU, Python bindings                                    |
+
+### Per-phase Rust / CLI
+
+| Phase  | Status  | You get                                             | Primary Rust / CLI                                                                                                                                                                                 |
+| ------ | ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0**  | Done    | Layout v1 wire spec                                 | [`docs/layout_v1.md`](docs/layout_v1.md)                                                                                                                                                           |
+| **1**  | Done    | **Write `.tet` bytes** (no session type)            | [`create_empty_v1_file`](src/layout.rs), [`write_raw_array_file`](src/catalog/write.rs), [`write_one_chunk_raw_file`](src/catalog/write.rs); tests: [`src/tests/fixture.rs`](src/tests/fixture.rs) |
+| **2**  | Done    | Slice → chunk coords → `ReadPlan`                   | [`plan_query_with_tet_mmap`](src/query/engine/run.rs), [`catalog/tile.rs`](src/catalog/tile.rs)                                                                                                    |
+| **3**  | Done    | Per-chunk zstd + index robustness                   | [`ChunkPayloadCodecV1`](src/catalog/mod.rs), [`src/tests/catalog.rs`](src/tests/catalog.rs)                                                                                                        |
+| **4**  | Done    | Query plan + execute (fold, spill, tier-C)          | [`build_execution_preview`](src/query/engine/run.rs), [`src/query/`](src/query/); CLI `tet query … -x`                                                                                             |
+| **5**  | Done    | HDF5 / NetCDF / Zarr v3 import                      | [`src/convert/`](src/convert/), CLI `tet convert`                                                                                                                                                  |
+| **6**  | Done    | CLI stdout modes + query history; JSON/TOML queries | [`format_query_response`](src/query/cli/output/mod.rs), `tet qhist`, [`parse_query_toml`](src/query/document_toml.rs)                                                                             |
+| **7**  | Done    | **`TetWriterSession` / `TetFile`** embedder API     | [`src/catalog/session.rs`](src/catalog/session.rs), [`execute_query_*`](src/query/execute.rs), [`prelude`](src/lib.rs); examples + [`src/tests/session.rs`](src/tests/session.rs)                  |
+| **8**  | Done    | `tet verify` / `tet repair`, dtypes **`f32`–`u64`** | [`src/verify/`](src/verify/), [`src/repair/`](src/repair/)                                                                                                                                         |
+| **9**  | Done    | Named axes, coord labels, QC counts, `tet export`   | [`resolve_axes.rs`](src/query/resolve_axes.rs), [`resolve_selection.rs`](src/query/resolve_selection.rs), [`src/export/`](src/export/)                                                             |
+| **10** | _Later_ | GPU materialize hooks                               | —                                                                                                                                                                                                  |
+| **11** | _Later_ | Python bindings repo                                | —                                                                                                                                                                                                  |
+
+**Typical embedder path:** Phase **7** on top of **1** (bytes) and **4** (query engine):
+
+1. `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming).
+2. `TetFile::open` → `execute_query_json` → `QueryResponse`.
+
+```bash
+cargo run --example create_and_query
+cargo run --example session_write
+cargo test --lib tests::session
+```
+
+**Query input:** JSON or TOML (`tet query q.toml -t data.tet -x`):
+
+```toml
+dataset = "temperature"
+mean = []
+```
+
 ---
 
 **Suggested next PR-sized slices (pick one):**
@@ -292,7 +344,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 3. ~~**Parallel streaming fold:** Rayon over chunks for tier-A/B ops.~~ **Done** — see [`parallel/`](src/query/fold/parallel/mod.rs).
 4. ~~**Adaptive out-of-core fold:** linear scan + SIMD bulk tier-A/B when data oversubscribes RAM.~~ **Done** — [PR #7](https://github.com/thicclatka/tetration/pull/7); see [`fold_policy.rs`](src/query/fold/fold_policy.rs), [`linear_scan.rs`](src/query/fold/linear_scan.rs).
 5. ~~**CLI focused output (Phase 6):** `--format` / `-q`, `format_query_response`.~~ **Done** — see Phase 6 baseline above.
-6. **Query front-end spike (Phase 6+):** optional TOML or line-oriented profile → same `QueryDocument`; golden files in repo.
+6. ~~**Query TOML front-end:** `.toml` → `QueryDocument`.~~ **Done** — optional line-oriented profile + golden files still open.
 7. ~~**Rust embedder workflows (Phase 7):** examples + session API.~~ **Done**
 8. ~~**Metadata + history (Phase 7):** footer JSON, structured history, spill.~~ **Done**
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**

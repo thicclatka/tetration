@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use crate::args::QueryStdoutFormat;
-use tetration::query::QueryOutputFormat;
+use tetration::query::{QueryInputFormat, QueryOutputFormat, detect_query_input_format};
 
 pub(crate) fn cli_error(message: impl std::fmt::Display) -> String {
     format!("error: {message}")
@@ -25,18 +25,24 @@ pub(crate) fn read_stdin_string() -> io::Result<String> {
     Ok(buf)
 }
 
-/// Read query JSON from a positional arg (file path or inline JSON) or stdin.
-pub(crate) fn read_query_payload(query: Option<&str>) -> io::Result<String> {
+/// Read query document text from a positional arg (file path or inline) or stdin.
+pub(crate) fn read_query_payload(query: Option<&str>) -> io::Result<(String, Option<String>)> {
     let Some(arg) = query else {
-        return read_stdin_string();
+        return read_stdin_string().map(|s| (s, None));
     };
     if arg == "-" {
-        return read_stdin_string();
+        return read_stdin_string().map(|s| (s, None));
     }
     let path = Path::new(arg);
     if path.is_file() {
-        fs::read_to_string(path)
+        let text = fs::read_to_string(path)?;
+        Ok((text, Some(arg.to_owned())))
     } else {
-        Ok(arg.to_owned())
+        Ok((arg.to_owned(), None))
     }
+}
+
+/// JSON vs TOML for a payload read by [`read_query_payload`].
+pub(crate) fn query_input_format(path_hint: Option<&str>, text: &str) -> QueryInputFormat {
+    detect_query_input_format(path_hint, text)
 }

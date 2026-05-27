@@ -5,6 +5,7 @@ mod hints;
 mod plan;
 mod quiet;
 mod stats;
+mod table;
 
 use crate::query::types::QueryResponse;
 
@@ -22,6 +23,8 @@ pub enum QueryOutputFormat {
     Plan,
     /// One human-readable line on stdout.
     Quiet,
+    /// ASCII tables (summary, plan, result, optional preview).
+    Table,
 }
 
 impl std::str::FromStr for QueryOutputFormat {
@@ -34,8 +37,9 @@ impl std::str::FromStr for QueryOutputFormat {
             "stats" => Ok(Self::Stats),
             "plan" => Ok(Self::Plan),
             "quiet" => Ok(Self::Quiet),
+            "table" => Ok(Self::Table),
             other => Err(format!(
-                "unknown output format {other:?}; expected full, json, stats, plan, or quiet"
+                "unknown output format {other:?}; expected full, json, stats, plan, quiet, or table"
             )),
         }
     }
@@ -59,6 +63,7 @@ pub fn format_query_response(
         QueryOutputFormat::Stats => stats::format_stats_json(response),
         QueryOutputFormat::Plan => plan::format_plan_json(response),
         QueryOutputFormat::Quiet => quiet::format_quiet_line(response),
+        QueryOutputFormat::Table => table::format_table_text(response),
     }
 }
 

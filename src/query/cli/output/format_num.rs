@@ -3,7 +3,7 @@
 pub(super) const QUIET_VEC_INLINE_MAX: usize = 12;
 
 pub(super) fn missing_field(field: &str) -> String {
-    format!("quiet output: missing execution.{field} after --execute")
+    format!("table/quiet output: missing execution.{field} after --execute")
 }
 
 pub(super) fn fmt_f64(v: f64) -> String {

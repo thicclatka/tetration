@@ -37,7 +37,10 @@ pub(crate) fn resolve_execute_preview_limit(
     }
     Ok(Some(explicit.unwrap_or(match stdout {
         QueryOutputFormat::Full | QueryOutputFormat::Json => QUERY_PREVIEW_DEFAULT,
-        QueryOutputFormat::Stats | QueryOutputFormat::Plan | QueryOutputFormat::Quiet => 0,
+        QueryOutputFormat::Stats
+        | QueryOutputFormat::Plan
+        | QueryOutputFormat::Quiet
+        | QueryOutputFormat::Table => 0,
     })))
 }
 

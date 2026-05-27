@@ -1,4 +1,4 @@
-//! Parse and validate JSON query documents.
+//! Parse and validate query documents (flat JSON wire; TOML front-end).
 //!
 //! Security boundaries and deployment guidance: see `docs/query_engine.md` (section
 //! “JSON security (input and output)”).
@@ -7,6 +7,16 @@ use crate::catalog::MAX_NDIM;
 
 use super::document_wire::parse_query_value;
 use super::types::{AxisSlice, Operation, QueryDocument, TetError};
+
+/// How [`parse_query_text`] chooses a parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueryInputFormat {
+    /// `.json` / `{…}` → JSON; `.toml` / otherwise → TOML.
+    #[default]
+    Auto,
+    Json,
+    Toml,
+}
 
 /// Input limits enforced by [`parse_query_json`] and [`validate_query`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +54,71 @@ fn json_composite_depth(value: &serde_json::Value) -> usize {
     }
 }
 
+pub(crate) fn check_query_payload_size(text: &str) -> Result<(), TetError> {
+    let limits = QueryLimits::DEFAULT;
+    if text.len() > limits.max_json_bytes {
+        return Err(TetError::Validation(format!(
+            "query document exceeds maximum size ({} bytes, limit {})",
+            text.len(),
+            limits.max_json_bytes
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_query_value_depth(value: &serde_json::Value) -> Result<(), TetError> {
+    let limits = QueryLimits::DEFAULT;
+    let depth = json_composite_depth(value);
+    if depth > limits.max_json_depth {
+        return Err(TetError::Validation(format!(
+            "query document nesting depth {depth} exceeds maximum {}",
+            limits.max_json_depth
+        )));
+    }
+    Ok(())
+}
+
+/// Infer JSON vs TOML from an optional file path and payload text.
+#[must_use]
+pub fn detect_query_input_format(path_hint: Option<&str>, text: &str) -> QueryInputFormat {
+    if let Some(path) = path_hint {
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        return match ext {
+            "json" => QueryInputFormat::Json,
+            "toml" => QueryInputFormat::Toml,
+            _ => detect_query_input_format(None, text),
+        };
+    }
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') {
+        QueryInputFormat::Json
+    } else {
+        QueryInputFormat::Toml
+    }
+}
+
+/// Parse a query document from JSON or TOML.
+///
+/// # Errors
+///
+/// Same as [`parse_query_json`] / [`super::document_toml::parse_query_toml`].
+pub fn parse_query_text(text: &str, format: QueryInputFormat) -> Result<QueryDocument, TetError> {
+    match format {
+        QueryInputFormat::Json => parse_query_json(text),
+        QueryInputFormat::Toml => super::document_toml::parse_query_toml(text),
+        QueryInputFormat::Auto => {
+            if text.trim_start().starts_with('{') {
+                parse_query_json(text)
+            } else {
+                super::document_toml::parse_query_toml(text)
+            }
+        }
+    }
+}
+
 /// Parse a JSON query document from `text`.
 ///
 /// # Errors
@@ -52,22 +127,9 @@ fn json_composite_depth(value: &serde_json::Value) -> usize {
 /// Returns [`TetError::InvalidJson`] when `text` is not valid JSON or does not deserialize into a
 /// [`QueryDocument`] (including unknown object keys).
 pub fn parse_query_json(text: &str) -> Result<QueryDocument, TetError> {
-    let limits = QueryLimits::DEFAULT;
-    if text.len() > limits.max_json_bytes {
-        return Err(TetError::Validation(format!(
-            "query JSON exceeds maximum size ({} bytes, limit {})",
-            text.len(),
-            limits.max_json_bytes
-        )));
-    }
+    check_query_payload_size(text)?;
     let value: serde_json::Value = serde_json::from_str(text)?;
-    let depth = json_composite_depth(&value);
-    if depth > limits.max_json_depth {
-        return Err(TetError::Validation(format!(
-            "query JSON nesting depth {depth} exceeds maximum {}",
-            limits.max_json_depth
-        )));
-    }
+    check_query_value_depth(&value)?;
     parse_query_value(&value)
 }
 

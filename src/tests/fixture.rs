@@ -410,3 +410,36 @@ pub fn write_tracked_small_tet_fixtures(dir: &Path) {
 pub fn tracked_small_tet_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/small/tet")
 }
+
+/// Load paired query documents from `fixtures/queries/{stem}.{json|toml}`.
+pub mod query_files {
+    use std::path::PathBuf;
+
+    use crate::query::{QueryDocument, parse_query_json, parse_query_toml};
+
+    #[must_use]
+    pub fn dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/queries")
+    }
+
+    #[must_use]
+    pub fn path(stem: &str, ext: &str) -> PathBuf {
+        dir().join(format!("{stem}.{ext}"))
+    }
+
+    #[must_use]
+    pub fn read(stem: &str, ext: &str) -> String {
+        let path = path(stem, ext);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    #[must_use]
+    pub fn json(stem: &str) -> QueryDocument {
+        parse_query_json(&read(stem, "json")).unwrap()
+    }
+
+    #[must_use]
+    pub fn toml(stem: &str) -> QueryDocument {
+        parse_query_toml(&read(stem, "toml")).unwrap()
+    }
+}

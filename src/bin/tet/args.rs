@@ -68,11 +68,12 @@ pub enum Commands {
     ///   tet query '{"dataset":"f32","mean":[]}' -t data.tet -x
     #[command(
         visible_alias = "q",
-        after_help = "QUERY: path to .json, inline JSON, or `-` for stdin; omit QUERY to read stdin. \
+        after_help = "QUERY: path to .json / .toml, inline JSON or TOML, or `-` for stdin; omit QUERY to read stdin. \
+                      Leading `{` selects JSON; otherwise TOML. Extension `.json` / `.toml` overrides. \
                       -x decodes chunks (requires -t). -q is --format quiet; else default full."
     )]
     Query {
-        /// Query document: `.json` path, inline JSON, or `-` for stdin.
+        /// Query document: `.json` / `.toml` path, inline JSON/TOML, or `-` for stdin.
         #[arg(value_name = "QUERY")]
         query: Option<String>,
         /// `.tet` file (catalog + optional execute).
@@ -235,6 +236,8 @@ pub enum QueryStdoutFormat {
     Plan,
     /// One human-readable line (`dataset=… op=… mean=…`).
     Quiet,
+    /// ASCII tables (summary, plan, aggregates, optional preview sample).
+    Table,
 }
 
 impl From<QueryStdoutFormat> for QueryOutputFormat {
@@ -245,6 +248,7 @@ impl From<QueryStdoutFormat> for QueryOutputFormat {
             QueryStdoutFormat::Stats => Self::Stats,
             QueryStdoutFormat::Plan => Self::Plan,
             QueryStdoutFormat::Quiet => Self::Quiet,
+            QueryStdoutFormat::Table => Self::Table,
         }
     }
 }
