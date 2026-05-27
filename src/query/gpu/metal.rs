@@ -2,12 +2,10 @@
 
 use std::sync::OnceLock;
 
-use metal::{
-    CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
-};
+use metal::{CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 
 use crate::query::fold::reduction::{ReductionKind, ScalarReductionResult};
-use crate::query::gpu::GPU_VRAM_BUFFER_FRACTION;
+use crate::query::gpu::{self, GPU_VRAM_BUFFER_FRACTION};
 
 const BLOCK_THREADS: u64 = 256;
 const MSL_SRC: &str = r#"
@@ -29,34 +27,6 @@ kernel void block_reduce_sum(
     uint stride = BLOCK_SIZE * grid_dim;
     for (uint i = bid * BLOCK_SIZE + tid; i < n; i += stride) {
         acc += in[i];
-    }
-    sdata[tid] = acc;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint offset = BLOCK_SIZE / 2; offset > 0; offset >>= 1) {
-        if (tid < offset) {
-            sdata[tid] += sdata[tid + offset];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (tid == 0) {
-        out[bid] = sdata[0];
-    }
-}
-
-kernel void block_reduce_sumsq(
-    device const float* in [[buffer(0)]],
-    device float* out [[buffer(1)]],
-    constant uint& n [[buffer(2)]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint bid [[threadgroup_position_in_grid]],
-    uint grid_dim [[threadgroups_per_grid]]
-) {
-    threadgroup float sdata[BLOCK_SIZE];
-    float acc = 0.f;
-    uint stride = BLOCK_SIZE * grid_dim;
-    for (uint i = bid * BLOCK_SIZE + tid; i < n; i += stride) {
-        float v = in[i];
-        acc += v * v;
     }
     sdata[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -128,7 +98,6 @@ kernel void block_reduce_max(
 
 struct MetalKernels {
     sum: ComputePipelineState,
-    sumsq: ComputePipelineState,
     min: ComputePipelineState,
     max: ComputePipelineState,
 }
@@ -156,7 +125,6 @@ fn init_metal() -> Result<MetalState, String> {
         .map_err(|e| format!("{e}"))?;
     let kernels = MetalKernels {
         sum: pipeline(&device, &library, "block_reduce_sum")?,
-        sumsq: pipeline(&device, &library, "block_reduce_sumsq")?,
         min: pipeline(&device, &library, "block_reduce_min")?,
         max: pipeline(&device, &library, "block_reduce_max")?,
     };
@@ -202,6 +170,20 @@ pub(crate) fn reduce_f32_scalar(
             ..ScalarReductionResult::default_fields(0)
         });
     }
+    if matches!(kind, ReductionKind::Var | ReductionKind::Std) {
+        let var = gpu::host_f32_population_variance(host);
+        return Ok(ScalarReductionResult {
+            element_count: n,
+            var_scalar: Some(var),
+            std_scalar: if matches!(kind, ReductionKind::Std) {
+                Some(var.sqrt())
+            } else {
+                None
+            },
+            ..ScalarReductionResult::default_fields(n)
+        });
+    }
+
     let state = metal_state().map_err(|e| e.to_string())?;
     let in_buf = state.device.new_buffer_with_data(
         host.as_ptr().cast(),
@@ -241,24 +223,6 @@ pub(crate) fn reduce_f32_scalar(
             Ok(ScalarReductionResult {
                 element_count: n,
                 max_scalar: Some(f64::from(v)),
-                ..ScalarReductionResult::default_fields(n)
-            })
-        }
-        ReductionKind::Var | ReductionKind::Std => {
-            let sum = block_tree_reduce_f32(state, &state.kernels.sum, &in_buf, n)?;
-            let sumsq = block_tree_reduce_f32(state, &state.kernels.sumsq, &in_buf, n)?;
-            let nf = n as f64;
-            let mean = f64::from(sum) / nf;
-            let var = (f64::from(sumsq) / nf) - mean * mean;
-            let var = var.max(0.0);
-            Ok(ScalarReductionResult {
-                element_count: n,
-                var_scalar: Some(var),
-                std_scalar: if matches!(kind, ReductionKind::Std) {
-                    Some(var.sqrt())
-                } else {
-                    None
-                },
                 ..ScalarReductionResult::default_fields(n)
             })
         }

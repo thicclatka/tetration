@@ -3,11 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use cudarc::driver::{CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+};
 use cudarc::nvrtc::compile_ptx;
 
-use crate::query::fold::reduction::{ReductionKind, ScalarReductionResult};
 use super::GPU_VRAM_BUFFER_FRACTION;
+use crate::query::fold::reduction::{ReductionKind, ScalarReductionResult};
 
 const BLOCK_THREADS: u32 = 256;
 const PTX_SRC: &str = r#"
@@ -17,27 +19,6 @@ extern "C" __global__ void block_reduce_sum(const float* in, float* out, int n) 
     float acc = 0.f;
     for (int i = blockIdx.x * blockDim.x + tid; i < n; i += blockDim.x * gridDim.x) {
         acc += in[i];
-    }
-    sdata[tid] = acc;
-    __syncthreads();
-    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
-        if (tid < offset) {
-            sdata[tid] += sdata[tid + offset];
-        }
-        __syncthreads();
-    }
-    if (tid == 0) {
-        out[blockIdx.x] = sdata[0];
-    }
-}
-
-extern "C" __global__ void block_reduce_sumsq(const float* in, float* out, int n) {
-    __shared__ float sdata[256];
-    int tid = threadIdx.x;
-    float acc = 0.f;
-    for (int i = blockIdx.x * blockDim.x + tid; i < n; i += blockDim.x * gridDim.x) {
-        float v = in[i];
-        acc += v * v;
     }
     sdata[tid] = acc;
     __syncthreads();
@@ -95,7 +76,6 @@ extern "C" __global__ void block_reduce_max(const float* in, float* out, int n) 
 
 struct GpuKernels {
     sum: CudaFunction,
-    sumsq: CudaFunction,
     min: CudaFunction,
     max: CudaFunction,
 }
@@ -132,9 +112,6 @@ fn init_gpu(device_index: usize) -> Result<GpuState, String> {
     let kernels = GpuKernels {
         sum: module
             .load_function("block_reduce_sum")
-            .map_err(|e| format!("{e}"))?,
-        sumsq: module
-            .load_function("block_reduce_sumsq")
             .map_err(|e| format!("{e}"))?,
         min: module
             .load_function("block_reduce_min")
@@ -177,6 +154,19 @@ pub(crate) fn reduce_f32_scalar(
             ..ScalarReductionResult::default_fields(0)
         });
     }
+    if matches!(kind, ReductionKind::Var | ReductionKind::Std) {
+        let var = super::host_f32_population_variance(host);
+        return Ok(ScalarReductionResult {
+            element_count: n,
+            var_scalar: Some(var),
+            std_scalar: if matches!(kind, ReductionKind::Std) {
+                Some(var.sqrt())
+            } else {
+                None
+            },
+            ..ScalarReductionResult::default_fields(n)
+        });
+    }
     with_gpu_state(device_index, |state| {
         let stream = state.ctx.default_stream();
         let device_buf = stream.clone_htod(host).map_err(|e| format!("{e}"))?;
@@ -213,24 +203,6 @@ pub(crate) fn reduce_f32_scalar(
                 Ok(ScalarReductionResult {
                     element_count: n,
                     max_scalar: Some(f64::from(v)),
-                    ..ScalarReductionResult::default_fields(n)
-                })
-            }
-            ReductionKind::Var | ReductionKind::Std => {
-                let sum = block_tree_reduce_f32(&stream, &state.kernels.sum, &device_buf, n)?;
-                let sumsq = block_tree_reduce_f32(&stream, &state.kernels.sumsq, &device_buf, n)?;
-                let nf = n as f64;
-                let mean = f64::from(sum) / nf;
-                let var = (f64::from(sumsq) / nf) - mean * mean;
-                let var = var.max(0.0);
-                Ok(ScalarReductionResult {
-                    element_count: n,
-                    var_scalar: Some(var),
-                    std_scalar: if matches!(kind, ReductionKind::Std) {
-                        Some(var.sqrt())
-                    } else {
-                        None
-                    },
                     ..ScalarReductionResult::default_fields(n)
                 })
             }

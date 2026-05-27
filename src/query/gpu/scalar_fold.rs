@@ -29,10 +29,14 @@ pub(crate) fn try_scalar_f32_fold_cuda(
 ) -> Result<(FoldPlanOutcome, DeviceRoute), &'static str> {
     let device_index = route.cuda_device.unwrap_or(0);
     let n = plan.logical_f32_element_count;
-    let logical_bytes = n
-        .checked_mul(4)
-        .ok_or("gpu_logical_bytes_overflow")?;
-    if let Err(reason) = cuda::vram_check(device_index, logical_bytes) {
+    let logical_bytes = u64::try_from(n.checked_mul(4).ok_or("gpu_logical_bytes_overflow")?)
+        .map_err(|_| "gpu_logical_bytes_overflow")?;
+    if !crate::query::device::host_materialize_fits(logical_bytes) {
+        return Err("gpu_host_materialize_exceeded");
+    }
+    let logical_bytes_usize =
+        usize::try_from(logical_bytes).map_err(|_| "gpu_logical_bytes_overflow")?;
+    if let Err(reason) = cuda::vram_check(device_index, logical_bytes_usize) {
         return Err(reason);
     }
 
@@ -64,10 +68,14 @@ pub(crate) fn try_scalar_f32_fold_metal(
     route: DeviceRoute,
 ) -> Result<(FoldPlanOutcome, DeviceRoute), &'static str> {
     let n = plan.logical_f32_element_count;
-    let logical_bytes = n
-        .checked_mul(4)
-        .ok_or("gpu_logical_bytes_overflow")?;
-    if let Err(reason) = metal::vram_check(logical_bytes) {
+    let logical_bytes = u64::try_from(n.checked_mul(4).ok_or("gpu_logical_bytes_overflow")?)
+        .map_err(|_| "gpu_logical_bytes_overflow")?;
+    if !crate::query::device::host_materialize_fits(logical_bytes) {
+        return Err("gpu_host_materialize_exceeded");
+    }
+    let logical_bytes_usize =
+        usize::try_from(logical_bytes).map_err(|_| "gpu_logical_bytes_overflow")?;
+    if let Err(reason) = metal::vram_check(logical_bytes_usize) {
         return Err(reason);
     }
 
@@ -127,11 +135,7 @@ fn build_gpu_fold_outcome(
 }
 
 #[cfg(any(feature = "tetration-gpu", feature = "tetration-metal"))]
-fn materialize_host_f32(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    dst: &mut [f32],
-) -> Result<u64, TetError> {
+fn materialize_host_f32(mmap: &[u8], plan: &ReadPlan, dst: &mut [f32]) -> Result<u64, TetError> {
     if plan.chunks.len() > 1 {
         parallel::materialize_read_plan_f32_le_into_parallel(mmap, plan, None, dst)?;
     } else {

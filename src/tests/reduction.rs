@@ -1,6 +1,7 @@
 //! Bulk variance accumulators vs elementwise Welford reference.
 
 use crate::query::fold::reduction::{ReductionKind, ValueAccum, WelfordAccum};
+use crate::query::fold::variance_simd;
 
 fn var_from(vals: &[f32]) -> f64 {
     let mut acc = ValueAccum::default();
@@ -14,6 +15,24 @@ fn var_elementwise(vals: &[f32]) -> f64 {
         w.push(f64::from(v));
     }
     w.population_variance()
+}
+
+#[test]
+fn f32_population_variance_large_slice_matches_welford() {
+    // Bench-scale element count; f32 GPU tree reduce was wrong here, f64 SIMD must hold.
+    let n = 2_000_000usize;
+    let vals: Vec<f32> = (0..n).map(|i| (i % 1000) as f32 / 999.0).collect();
+    let (sum, sumsq) = variance_simd::f32_sum_sumsq(&vals);
+    let nf = n as f64;
+    let mean = sum / nf;
+    let simd_var = (sumsq / nf - mean * mean).max(0.0);
+    let welford_var = var_elementwise(&vals);
+    assert!(
+        (simd_var - welford_var).abs() < 1e-9,
+        "simd={simd_var} welford={welford_var}"
+    );
+    // Uniform on [0, 1] → population variance 1/12.
+    assert!((simd_var - 1.0 / 12.0).abs() < 0.01, "simd={simd_var}");
 }
 
 #[test]

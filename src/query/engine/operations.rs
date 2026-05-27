@@ -157,17 +157,32 @@ fn fold_outcome_to_preview(
     preview
 }
 
-fn try_gpu_scalar_fold_or_cpu(
-    mmap: &[u8],
-    plan: &types::ReadPlan,
+struct GpuScalarFoldInput<'a> {
+    mmap: &'a [u8],
+    plan: &'a types::ReadPlan,
     max_preview: usize,
     kind: fold::reduction::ReductionKind,
     dtype: ElementDtype,
-    policy: &fold::fold_policy::FoldIoPolicy,
-    tet_path: Option<&Path>,
-    execution: Option<&types::ExecutionHints>,
-    op: &types::Operation,
+    policy: &'a fold::fold_policy::FoldIoPolicy,
+    tet_path: Option<&'a Path>,
+    execution: Option<&'a types::ExecutionHints>,
+    op: &'a types::Operation,
+}
+
+fn try_gpu_scalar_fold_or_cpu(
+    input: &GpuScalarFoldInput<'_>,
 ) -> Result<(fold::FoldPlanOutcome, device::DeviceRoute), types::TetError> {
+    let GpuScalarFoldInput {
+        mmap,
+        plan,
+        max_preview,
+        kind,
+        dtype,
+        policy,
+        tet_path,
+        execution,
+        op,
+    } = *input;
     let route = device::resolve_device_route(execution, plan, dtype, Some(op));
     if route.gpu_reduce && dtype == ElementDtype::F32 {
         match gpu::try_scalar_f32_fold(mmap, plan, max_preview, kind, route) {
@@ -405,17 +420,17 @@ fn build_operation_preview(
     }
     let fold_policy = fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
-        let (folded, device_route) = try_gpu_scalar_fold_or_cpu(
+        let (folded, device_route) = try_gpu_scalar_fold_or_cpu(&GpuScalarFoldInput {
             mmap,
             plan,
             max_preview,
             kind,
             dtype,
-            &fold_policy,
+            policy: &fold_policy,
             tet_path,
             execution,
             op,
-        )?;
+        })?;
         return Ok(fold_outcome_to_preview(
             folded,
             budget::MemoryStrategy::StreamingFold,

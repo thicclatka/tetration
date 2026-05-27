@@ -3,10 +3,21 @@
 use super::fixture;
 use crate::layout::mmap_file_read;
 use crate::query::{
-    ExecutionDeviceHint, cuda_backend_available, metal_backend_available,
-    plan_query_with_tet_mmap, resolve_device_route, validate_query,
+    ExecutionDeviceHint, GPU_HOST_MATERIALIZE_RAM_FRACTION, cuda_backend_available,
+    host_materialize_exceeds, metal_backend_available, plan_query_with_tet_mmap,
+    resolve_device_route, validate_query,
 };
 use crate::utils::dtype::ElementDtype;
+
+#[test]
+fn host_materialize_exceeds_when_buffer_larger_than_host_budget() {
+    let gib = 1024_u64.pow(3);
+    assert!(!host_materialize_exceeds(gib, Some(8 * gib)));
+    let limit = ((8 * gib) as f64 * GPU_HOST_MATERIALIZE_RAM_FRACTION) as u64;
+    assert!(host_materialize_exceeds(limit + 1, Some(8 * gib)));
+    assert!(!host_materialize_exceeds(gib, None));
+    assert!(host_materialize_exceeds(20 * gib, None));
+}
 
 #[test]
 fn execution_device_hint_parse_tokens() {
@@ -120,8 +131,8 @@ fn resolve_device_metal_falls_back_without_metal_feature() {
 #[cfg(all(feature = "tetration-metal", target_os = "macos"))]
 #[test]
 fn resolve_device_auto_large_prefers_metal_when_enabled() {
-    use crate::query::types::ReadPlan;
     use crate::query::GPU_AUTO_MIN_LOGICAL_BYTES;
+    use crate::query::types::ReadPlan;
 
     let doc = crate::query::parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
     validate_query(&doc).unwrap();
@@ -150,4 +161,47 @@ fn resolve_device_auto_large_prefers_metal_when_enabled() {
     );
     assert_eq!(route.used, "metal");
     assert!(route.gpu_reduce);
+}
+
+#[test]
+fn resolve_device_auto_huge_selection_stays_cpu_when_host_too_small() {
+    use crate::query::types::ReadPlan;
+    use crate::utils::host_memory;
+
+    if !metal_backend_available() && !cuda_backend_available() {
+        return;
+    }
+
+    let gib = 1024_u64.pow(3);
+    let logical_bytes = 20 * gib;
+    if !host_materialize_exceeds(logical_bytes, host_memory::available_memory_bytes()) {
+        return;
+    }
+
+    let doc = crate::query::parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
+    let elems = (logical_bytes / 4) as usize;
+    let plan = ReadPlan {
+        chunk_touch_policy: "dense",
+        chunk_count: 0,
+        total_stored_bytes: 0,
+        chunks: vec![],
+        dataset_shape: vec![elems as u64],
+        chunk_shape: vec![elems as u64],
+        selection_box_start: vec![0],
+        selection_box_stop_exclusive: vec![elems as u64],
+        selection_step: vec![1],
+        logical_selection_shape: vec![elems as u64],
+        logical_f32_element_count: elems,
+    };
+    let route = resolve_device_route(
+        Some(&crate::query::ExecutionHints {
+            device: Some(ExecutionDeviceHint::Auto),
+            ..Default::default()
+        }),
+        &plan,
+        ElementDtype::F32,
+        doc.operation.as_ref(),
+    );
+    assert_eq!(route.used, "cpu");
+    assert_eq!(route.fallback_reason, Some("gpu_host_materialize_exceeded"));
 }
