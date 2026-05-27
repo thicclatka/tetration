@@ -5,7 +5,8 @@ use rayon::prelude::*;
 
 #[cfg(any(feature = "tetration-gpu", feature = "tetration-rocm"))]
 use super::streaming_fold::{
-    StreamingGpuBackend, collect_planned_chunk_values, streaming_fold_partial_driver,
+    StreamingFoldRequest, StreamingGpuBackend, collect_planned_chunk_values,
+    streaming_fold_partial_driver,
 };
 #[cfg(any(feature = "tetration-gpu", feature = "tetration-rocm"))]
 use crate::query::device::DeviceRoute;
@@ -57,17 +58,17 @@ pub(crate) fn try_multi_driver_fold(
     if n_devices <= 1 {
         let device_index = 0;
         let backend = driver_backend(device_index)?;
-        return super::streaming_fold::try_streaming_f32_fold(
+        return super::streaming_fold::try_streaming_f32_fold(StreamingFoldRequest {
             backend,
             used,
-            Some(device_index),
+            cuda_device: Some(device_index),
             mmap,
             plan,
             max_preview,
             kind,
             route,
             f16_input,
-        );
+        });
     }
 
     let n = plan.logical_f32_element_count;

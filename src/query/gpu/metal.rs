@@ -122,7 +122,7 @@ fn init_metal() -> Result<MetalState, String> {
     let queue = device.new_command_queue();
     let library = device
         .new_library_with_source(MSL_SRC, &CompileOptions::new())
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| e.to_string())?;
     let kernels = MetalKernels {
         sum: pipeline(&device, &library, "block_reduce_sum")?,
         min: pipeline(&device, &library, "block_reduce_min")?,
@@ -142,10 +142,10 @@ fn pipeline(
 ) -> Result<ComputePipelineState, String> {
     let function = library
         .get_function(name, None)
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| e.to_string())?;
     device
         .new_compute_pipeline_state_with_function(&function)
-        .map_err(|e| format!("{e}"))
+        .map_err(|e| e.to_string())
 }
 
 /// Best-effort unified-memory budget check before host→GPU upload.
@@ -187,7 +187,7 @@ pub(crate) fn reduce_f32_scalar(
     let state = metal_state().map_err(|e| e.to_string())?;
     let in_buf = state.device.new_buffer_with_data(
         host.as_ptr().cast(),
-        (n * std::mem::size_of::<f32>()) as u64,
+        u64::try_from(std::mem::size_of_val(host)).map_err(|_| "gpu_logical_bytes_overflow")?,
         MTLResourceOptions::StorageModeShared,
     );
 

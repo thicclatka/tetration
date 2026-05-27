@@ -61,7 +61,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Reductions (flat JSON):** top-level keys `sum`, `mean`, … — scalar **`"mean": []`**, partial **`"mean": 0`** or **`"sum": [0,1]`** → **`operation_*`** / **`operation_reduced_*`**; population **`var` / `std`**, `ddof = 0`.
 - [x] **Streaming reductions** — scalar and partial-axis folds without full logical tensor allocation; **`memory_strategy: streaming_fold`**.
 - [x] **Adaptive fold I/O** — [`FoldIoPolicy`](src/query/fold/fold_policy.rs): **in-core** parallel chunk fold (Rayon); **out-of-core** sequential **linear scan** over contiguous raw payloads ([`linear_scan.rs`](src/query/fold/linear_scan.rs), 64 MiB windows, file `read` when **`-t`** is set). Query **`execution.fold_parallel`** hint; stats **`io_regime`**, **`fold_linear_scan`**, **`fold_parallel`**.
-- [x] **SIMD bulk folds** — [`variance_simd.rs`](src/query/fold/variance_simd.rs): tier-A/B slab paths for all supported float/integer wire tags (`f32`/`f16`, `i32`, `u8`/`u16`, `u32`/`i64`/`u64` on SSE2; NEON for `f32`/`i32` on aarch64).
+- [x] **SIMD bulk folds** — [`variance_simd/`](src/query/fold/variance_simd/mod.rs): tier-A/B slab paths for all supported float/integer wire tags (`f32`/`f16`, `i32`, `u8`/`u16`, `u32`/`i64`/`u64` on SSE2; NEON for `f32`/`i32` on aarch64).
 - [x] **Memory budget** — `ExecutionBudget::resolve` (query `execution.*` → TIDX header → default **25%** host RAM); per-file settings via **`RawArrayWrite::file_execution`**.
 - [x] **Mmap spill** — top-level `"spill": "path"` → dtype-native spill paths (`memory_strategy: mmap_spill`); preview cap **`0`** (default for **`stats`/`quiet`**) still exports when **`spill`** is set.
 - [x] **Capped preview** without full logical-buffer allocation when `max_elements < logical`.
@@ -183,7 +183,7 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (`5`), **`u16`** (`6
 - [x] **Query** — materialize, streaming fold, tier-A/B/C, spill, dtype-matched previews (`u8_preview`, `u16_preview`, `i16_preview`).
 - [x] **Tests** — catalog roundtrip, query sum/preview, verify fixture gate per tag.
 - [x] **More dtypes (`u32`, `f16`, `u64`)** — wire tags `8`/`9`/`10`; query materialize/fold, convert (Zarr `float16`/`uint32`/`uint64`, HDF5 unsigned `U4`/`U8`), verify fixtures.
-- [x] **Integer SIMD (bulk sum/var/min-max)** — [`variance_simd.rs`](src/query/fold/variance_simd.rs): `f32`/`f16` (via `f32` chunks), `i32` (SSE2/NEON), `u8`/`u16` (SSE2 unpack), `u32`/`i64`/`u64` (SSE2 pairs); slab [`push_*_le_bytes`](src/query/fold/reduction.rs) + [`linear_scan.rs`](src/query/fold/linear_scan.rs) for all wire integer/float tags on tier-A/B ops.
+- [x] **Integer SIMD (bulk sum/var/min-max)** — [`variance_simd/`](src/query/fold/variance_simd/mod.rs): `f32`/`f16` (via `f32` chunks), `i32` (SSE2/NEON), `u8`/`u16` (SSE2 unpack), `u32`/`i64`/`u64` (SSE2 pairs); slab [`push_*_le_bytes`](src/query/fold/reduction/value_accum.rs) + [`linear_scan.rs`](src/query/fold/linear_scan.rs) for all wire integer/float tags on tier-A/B ops.
 
 ## Phase 9 — Query ops & interchange
 

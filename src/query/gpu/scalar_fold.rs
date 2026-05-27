@@ -45,7 +45,7 @@ use super::cuda;
     feature = "tetration-rocm",
     feature = "tetration-metal"
 ))]
-use super::streaming_fold::{StreamingGpuBackend, try_streaming_f32_fold};
+use super::streaming_fold::{StreamingFoldRequest, StreamingGpuBackend, try_streaming_f32_fold};
 
 #[cfg(all(feature = "tetration-metal", target_os = "macos"))]
 use super::metal;
@@ -75,33 +75,33 @@ pub(crate) fn try_scalar_f32_fold_cuda(
     let logical_bytes = u64::try_from(n.checked_mul(4).ok_or("gpu_logical_bytes_overflow")?)
         .map_err(|_| "gpu_logical_bytes_overflow")?;
     if !crate::query::device::host_materialize_fits(logical_bytes) {
-        return try_streaming_f32_fold(
-            StreamingGpuBackend::Cuda(device_index),
-            "cuda",
-            Some(device_index),
+        return try_streaming_f32_fold(StreamingFoldRequest {
+            backend: StreamingGpuBackend::Cuda(device_index),
+            used: "cuda",
+            cuda_device: Some(device_index),
             mmap,
             plan,
             max_preview,
             kind,
             route,
             f16_input,
-        );
+        });
     }
     let logical_bytes_usize =
         usize::try_from(logical_bytes).map_err(|_| "gpu_logical_bytes_overflow")?;
     if let Err(reason) = cuda::vram_check(device_index, logical_bytes_usize) {
         if reason == "gpu_vram_exceeded" {
-            return try_streaming_f32_fold(
-                StreamingGpuBackend::Cuda(device_index),
-                "cuda",
-                Some(device_index),
+            return try_streaming_f32_fold(StreamingFoldRequest {
+                backend: StreamingGpuBackend::Cuda(device_index),
+                used: "cuda",
+                cuda_device: Some(device_index),
                 mmap,
                 plan,
                 max_preview,
                 kind,
                 route,
                 f16_input,
-            );
+            });
         }
         return Err(reason);
     }
@@ -113,17 +113,17 @@ pub(crate) fn try_scalar_f32_fold_cuda(
     let scalar =
         cuda::reduce_f32_scalar(&host, kind, device_index).map_err(|_| "gpu_runtime_error")?;
 
-    build_gpu_fold_outcome(
+    build_gpu_fold_outcome(DenseGpuFoldResult {
         route,
-        "cuda",
-        Some(device_index),
+        used: "cuda",
+        cuda_device: Some(device_index),
         host,
         max_preview,
         n,
         total_bytes_read_from_disk,
-        scalar.into(),
-        true,
-    )
+        operation: scalar.into(),
+        dense_materialize: true,
+    })
 }
 
 #[cfg(feature = "tetration-rocm")]
@@ -151,33 +151,33 @@ pub(crate) fn try_scalar_f32_fold_rocm(
     let logical_bytes = u64::try_from(n.checked_mul(4).ok_or("gpu_logical_bytes_overflow")?)
         .map_err(|_| "gpu_logical_bytes_overflow")?;
     if !crate::query::device::host_materialize_fits(logical_bytes) {
-        return try_streaming_f32_fold(
-            StreamingGpuBackend::Rocm(device_index),
-            "rocm",
-            Some(device_index),
+        return try_streaming_f32_fold(StreamingFoldRequest {
+            backend: StreamingGpuBackend::Rocm(device_index),
+            used: "rocm",
+            cuda_device: Some(device_index),
             mmap,
             plan,
             max_preview,
             kind,
             route,
             f16_input,
-        );
+        });
     }
     let logical_bytes_usize =
         usize::try_from(logical_bytes).map_err(|_| "gpu_logical_bytes_overflow")?;
     if let Err(reason) = cuda::vram_check(device_index, logical_bytes_usize) {
         if reason == "gpu_vram_exceeded" {
-            return try_streaming_f32_fold(
-                StreamingGpuBackend::Rocm(device_index),
-                "rocm",
-                Some(device_index),
+            return try_streaming_f32_fold(StreamingFoldRequest {
+                backend: StreamingGpuBackend::Rocm(device_index),
+                used: "rocm",
+                cuda_device: Some(device_index),
                 mmap,
                 plan,
                 max_preview,
                 kind,
                 route,
                 f16_input,
-            );
+            });
         }
         return Err(reason);
     }
@@ -189,17 +189,17 @@ pub(crate) fn try_scalar_f32_fold_rocm(
     let scalar =
         cuda::reduce_f32_scalar(&host, kind, device_index).map_err(|_| "gpu_runtime_error")?;
 
-    build_gpu_fold_outcome(
+    build_gpu_fold_outcome(DenseGpuFoldResult {
         route,
-        "rocm",
-        Some(device_index),
+        used: "rocm",
+        cuda_device: Some(device_index),
         host,
         max_preview,
         n,
         total_bytes_read_from_disk,
-        scalar.into(),
-        true,
-    )
+        operation: scalar.into(),
+        dense_materialize: true,
+    })
 }
 
 #[cfg(all(feature = "tetration-metal", target_os = "macos"))]
@@ -215,33 +215,33 @@ pub(crate) fn try_scalar_f32_fold_metal(
     let logical_bytes = u64::try_from(n.checked_mul(4).ok_or("gpu_logical_bytes_overflow")?)
         .map_err(|_| "gpu_logical_bytes_overflow")?;
     if !crate::query::device::host_materialize_fits(logical_bytes) {
-        return try_streaming_f32_fold(
-            StreamingGpuBackend::Metal,
-            "metal",
-            None,
+        return try_streaming_f32_fold(StreamingFoldRequest {
+            backend: StreamingGpuBackend::Metal,
+            used: "metal",
+            cuda_device: None,
             mmap,
             plan,
             max_preview,
             kind,
             route,
             f16_input,
-        );
+        });
     }
     let logical_bytes_usize =
         usize::try_from(logical_bytes).map_err(|_| "gpu_logical_bytes_overflow")?;
     if let Err(reason) = metal::vram_check(logical_bytes_usize) {
         if reason == "gpu_vram_exceeded" {
-            return try_streaming_f32_fold(
-                StreamingGpuBackend::Metal,
-                "metal",
-                None,
+            return try_streaming_f32_fold(StreamingFoldRequest {
+                backend: StreamingGpuBackend::Metal,
+                used: "metal",
+                cuda_device: None,
                 mmap,
                 plan,
                 max_preview,
                 kind,
                 route,
                 f16_input,
-            );
+            });
         }
         return Err(reason);
     }
@@ -252,17 +252,34 @@ pub(crate) fn try_scalar_f32_fold_metal(
 
     let scalar = metal::reduce_f32_scalar(&host, kind).map_err(|_| "gpu_runtime_error")?;
 
-    build_gpu_fold_outcome(
+    build_gpu_fold_outcome(DenseGpuFoldResult {
         route,
-        "metal",
-        None,
+        used: "metal",
+        cuda_device: None,
         host,
         max_preview,
         n,
         total_bytes_read_from_disk,
-        scalar.into(),
-        true,
-    )
+        operation: scalar.into(),
+        dense_materialize: true,
+    })
+}
+
+#[cfg(any(
+    feature = "tetration-gpu",
+    feature = "tetration-rocm",
+    feature = "tetration-metal"
+))]
+pub(crate) struct DenseGpuFoldResult {
+    pub route: DeviceRoute,
+    pub used: &'static str,
+    pub cuda_device: Option<usize>,
+    pub host: Vec<f32>,
+    pub max_preview: usize,
+    pub n: usize,
+    pub total_bytes_read_from_disk: u64,
+    pub operation: crate::query::types::OperationPreviewFields,
+    pub dense_materialize: bool,
 }
 
 #[cfg(any(
@@ -271,16 +288,19 @@ pub(crate) fn try_scalar_f32_fold_metal(
     feature = "tetration-metal"
 ))]
 fn build_gpu_fold_outcome(
-    route: DeviceRoute,
-    used: &'static str,
-    cuda_device: Option<usize>,
-    host: Vec<f32>,
-    max_preview: usize,
-    n: usize,
-    total_bytes_read_from_disk: u64,
-    operation: crate::query::types::OperationPreviewFields,
-    dense_materialize: bool,
+    input: DenseGpuFoldResult,
 ) -> Result<(FoldPlanOutcome, DeviceRoute), &'static str> {
+    let DenseGpuFoldResult {
+        route,
+        used,
+        cuda_device,
+        host,
+        max_preview,
+        n,
+        total_bytes_read_from_disk,
+        operation,
+        dense_materialize,
+    } = input;
     let preview_cap = max_preview.min(n);
     let preview = if max_preview == 0 {
         Vec::new()
@@ -321,16 +341,11 @@ fn materialize_host_f32(
     f16_input: bool,
 ) -> Result<u64, TetError> {
     if f16_input {
-        let mut preview: &mut [f32] = &mut [];
+        let preview: &mut [f32] = &mut [];
         let mut offset = 0usize;
         for c in &plan.chunks {
             let (bytes, vals) = super::streaming_fold::collect_planned_chunk_values(
-                mmap,
-                plan,
-                c,
-                0,
-                &mut preview,
-                true,
+                mmap, plan, c, 0, preview, true,
             )?;
             let end = offset + vals.len();
             if end > dst.len() {

@@ -1,6 +1,7 @@
 //! CUDA / ROCm scalar reductions via NVRTC + block tree reduce (`tetration-gpu` or `tetration-rocm`).
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cudarc::driver::{
@@ -104,11 +105,8 @@ fn with_gpu_state<R>(
 ) -> Result<R, String> {
     let map = GPU_STATES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = map.lock().map_err(|_| "gpu_runtime_error".to_string())?;
-    if !guard.contains_key(&device_index) {
-        guard.insert(
-            device_index,
-            init_gpu(device_index).map_err(|e| e.to_string())?,
-        );
+    if let Entry::Vacant(slot) = guard.entry(device_index) {
+        slot.insert(init_gpu(device_index).map_err(|e| e.to_string())?);
     }
     let state = guard
         .get(&device_index)

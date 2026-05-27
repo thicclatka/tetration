@@ -188,7 +188,7 @@ Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_quer
 | **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                     | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
 | **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                                   | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
 | **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                      | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
-| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
+| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
 | **`dispatch.rs`**  | —                                                                                                                                                  | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                          | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
 | **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                                | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
@@ -284,7 +284,7 @@ flowchart TD
 | ------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Parallel chunk fold**   | In-core, `chunk_count > 1`, not linear scan                                                               | Rayon over chunks; mmap/decode per chunk; bulk SIMD per slab when geometry allows                               |
 | **Sequential chunk fold** | In-core single chunk, or out-of-core without linear-scan eligibility, or `execution.fold_parallel: false` | Chunks in catalog order or ascending `payload_offset` when `sequential_io`                                      |
-| **Linear scan**           | Out-of-core + full dense unit-step selection + raw codec + adjacent payloads summing to logical size      | One contiguous byte span; 64 MiB windows; [`push_f32_le_bytes`](../src/query/fold/reduction.rs) SIMD per window |
+| **Linear scan**           | Out-of-core + full dense unit-step selection + raw codec + adjacent payloads summing to logical size      | One contiguous byte span; 64 MiB windows; [`push_f32_le_bytes`](../src/query/fold/reduction/value_accum.rs) SIMD per window |
 
 **Linear scan eligibility:** [`detect_contiguous_raw_span`](../src/query/fold/linear_scan.rs) requires every touched chunk to use **raw codec 0**, payloads **abutting in plan order**, and total raw bytes = logical selection size. Converted multi-chunk **`f32`** grids from `write_raw_array_file` typically satisfy this; zstd chunks or strided partial selections do not.
 
@@ -294,11 +294,11 @@ flowchart TD
 
 ### Streaming fold performance
 
-**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
+**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction/value_accum.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
 
 So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator. Wall time is dominated by **page-cache / disk bandwidth** and CPU over the selection when out-of-core, or **memory bandwidth + cores** when in-core.
 
-**SIMD bulk fold (tier-A/B, `f32` slabs):** [`variance_simd.rs`](../src/query/fold/variance_simd.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback:
+**SIMD bulk fold (tier-A/B, `f32` slabs):** [`variance_simd`](../src/query/fold/variance_simd/mod.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback:
 
 - **mean / sum / var / std** — single-pass sum + sum-of-squares per slab → Welford merge
 - **min / max** — single-pass vector min/max per slab → accumulator merge
@@ -639,7 +639,7 @@ These match the product vision but belong **beside** the reduction enum:
 - **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 11 Python).
 - **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet qhist` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
-When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.
+When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction/` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.
 
 ## JSON security (input and output)
 
