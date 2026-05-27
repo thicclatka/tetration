@@ -387,6 +387,7 @@ where
         match kind {
             ReductionKind::ArgMin | ReductionKind::ArgMax => E::push_arg(arg, li as u64, v, kind),
             ReductionKind::NanCount => value.push_nan_f64(E::as_f64(v)),
+            ReductionKind::InfCount => value.push_inf_f64(E::as_f64(v)),
             ReductionKind::NullCount { fill } => value.push_null_f64(E::as_f64(v), fill),
             _ => E::push_value(value, v),
         }

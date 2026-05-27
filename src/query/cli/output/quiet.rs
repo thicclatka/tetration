@@ -344,6 +344,14 @@ fn quiet_scalar_field<T>(
         .ok_or_else(|| missing_field(field))
 }
 
+fn quiet_scalar_f64(
+    label: &'static str,
+    field: &'static str,
+    value: Option<f64>,
+) -> Result<(&'static str, String), String> {
+    quiet_scalar_field(label, field, value, fmt_f64)
+}
+
 fn quiet_reduced_f64(field: &'static str, values: Option<&Vec<f64>>) -> Result<String, String> {
     values
         .map(|v| fmt_f64_list(v, QUIET_VEC_INLINE_MAX))
@@ -367,47 +375,79 @@ fn scalar_operation_display(
     ex: &QueryExecutionPreview,
 ) -> Result<(&'static str, String), String> {
     match op {
-        Operation::Sum { .. } => {
-            quiet_scalar_field("sum", "operation_sum", ex.operation_sum, fmt_f64)
+        Operation::Sum { .. }
+        | Operation::Mean { .. }
+        | Operation::Min { .. }
+        | Operation::Max { .. }
+        | Operation::Var { .. }
+        | Operation::Std { .. }
+        | Operation::Product { .. }
+        | Operation::NormL1 { .. }
+        | Operation::NormL2 { .. }
+        | Operation::NanCount { .. }
+        | Operation::InfCount { .. }
+        | Operation::NullCount { .. }
+        | Operation::Median { .. } => scalar_operation_display_f64(op, ex),
+        Operation::Count { .. }
+        | Operation::AllFinite { .. }
+        | Operation::AnyNan { .. }
+        | Operation::ArgMin { .. }
+        | Operation::ArgMax { .. }
+        | Operation::Quantile { .. }
+        | Operation::Histogram { .. }
+        | Operation::Covariance { .. }
+        | Operation::Correlation { .. } => scalar_operation_display_special(op, ex),
+    }
+}
+
+fn scalar_operation_display_f64(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<(&'static str, String), String> {
+    match op {
+        Operation::Sum { .. } => quiet_scalar_f64("sum", "operation_sum", ex.operation_sum),
+        Operation::Mean { .. } => quiet_scalar_f64("mean", "operation_mean", ex.operation_mean),
+        Operation::Min { .. } => quiet_scalar_f64("min", "operation_min", ex.operation_min),
+        Operation::Max { .. } => quiet_scalar_f64("max", "operation_max", ex.operation_max),
+        Operation::Var { .. } => quiet_scalar_f64("var", "operation_var", ex.operation_var),
+        Operation::Std { .. } => quiet_scalar_f64("std", "operation_std", ex.operation_std),
+        Operation::Product { .. } => {
+            quiet_scalar_f64("product", "operation_product", ex.operation_product)
         }
-        Operation::Mean { .. } => {
-            quiet_scalar_field("mean", "operation_mean", ex.operation_mean, fmt_f64)
+        Operation::NormL1 { .. } => {
+            quiet_scalar_f64("norm_l1", "operation_norm_l1", ex.operation_norm_l1)
         }
-        Operation::Min { .. } => {
-            quiet_scalar_field("min", "operation_min", ex.operation_min, fmt_f64)
+        Operation::NormL2 { .. } => {
+            quiet_scalar_f64("norm_l2", "operation_norm_l2", ex.operation_norm_l2)
         }
-        Operation::Max { .. } => {
-            quiet_scalar_field("max", "operation_max", ex.operation_max, fmt_f64)
+        Operation::NanCount { .. } => {
+            quiet_scalar_f64("nan_count", "operation_nan_count", ex.operation_nan_count)
         }
+        Operation::InfCount { .. } => {
+            quiet_scalar_f64("inf_count", "operation_inf_count", ex.operation_inf_count)
+        }
+        Operation::NullCount { .. } => quiet_scalar_f64(
+            "null_count",
+            "operation_null_count",
+            ex.operation_null_count,
+        ),
+        Operation::Median { .. } => {
+            quiet_scalar_f64("median", "operation_median", ex.operation_median)
+        }
+        _ => unreachable!("scalar_operation_display_f64 called for non-f64 op"),
+    }
+}
+
+fn scalar_operation_display_special(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<(&'static str, String), String> {
+    match op {
         Operation::Count { .. } => quiet_scalar_field(
             "count",
             "operation_element_count",
             ex.operation_element_count,
             |v| v.to_string(),
-        ),
-        Operation::Var { .. } => {
-            quiet_scalar_field("var", "operation_var", ex.operation_var, fmt_f64)
-        }
-        Operation::Std { .. } => {
-            quiet_scalar_field("std", "operation_std", ex.operation_std, fmt_f64)
-        }
-        Operation::Product { .. } => quiet_scalar_field(
-            "product",
-            "operation_product",
-            ex.operation_product,
-            fmt_f64,
-        ),
-        Operation::NormL1 { .. } => quiet_scalar_field(
-            "norm_l1",
-            "operation_norm_l1",
-            ex.operation_norm_l1,
-            fmt_f64,
-        ),
-        Operation::NormL2 { .. } => quiet_scalar_field(
-            "norm_l2",
-            "operation_norm_l2",
-            ex.operation_norm_l2,
-            fmt_f64,
         ),
         Operation::AllFinite { .. } => quiet_scalar_field(
             "all_finite",
@@ -420,18 +460,6 @@ fn scalar_operation_display(
                 v.to_string()
             })
         }
-        Operation::NanCount { .. } => quiet_scalar_field(
-            "nan_count",
-            "operation_nan_count",
-            ex.operation_nan_count,
-            fmt_f64,
-        ),
-        Operation::NullCount { .. } => quiet_scalar_field(
-            "null_count",
-            "operation_null_count",
-            ex.operation_null_count,
-            fmt_f64,
-        ),
         Operation::ArgMin { .. } => quiet_scalar_field(
             "argmin_index",
             "operation_argmin_index",
@@ -444,9 +472,6 @@ fn scalar_operation_display(
             ex.operation_argmax_index,
             |v| v.to_string(),
         ),
-        Operation::Median { .. } => {
-            quiet_scalar_field("median", "operation_median", ex.operation_median, fmt_f64)
-        }
         Operation::Quantile { q, .. } => ex
             .operation_quantile
             .map(|v| ("quantile", fmt_f64(v)))
@@ -467,6 +492,7 @@ fn scalar_operation_display(
         Operation::Covariance { .. } | Operation::Correlation { .. } => {
             quiet_covariance_correlation_matrix(op, ex)
         }
+        _ => unreachable!("scalar_operation_display_special called for f64 op"),
     }
 }
 
@@ -544,6 +570,10 @@ fn partial_operation_values(op: &Operation, ex: &QueryExecutionPreview) -> Resul
         Operation::NanCount { .. } => quiet_reduced_f64(
             "operation_reduced_nan_count",
             ex.operation_reduced_nan_count.as_ref(),
+        ),
+        Operation::InfCount { .. } => quiet_reduced_f64(
+            "operation_reduced_inf_count",
+            ex.operation_reduced_inf_count.as_ref(),
         ),
         Operation::NullCount { .. } => quiet_reduced_f64(
             "operation_reduced_null_count",

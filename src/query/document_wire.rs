@@ -32,6 +32,7 @@ const OP_KEYS: &[&str] = &[
     "quantile",
     "histogram",
     "nan_count",
+    "inf_count",
     "null_count",
     "covariance",
     "correlation",
@@ -302,6 +303,10 @@ fn parse_operation(name: &str, v: &Value) -> Result<Operation, TetError> {
             let axes = parse_axis_spec(v)?;
             Ok(Operation::NanCount { axes })
         }
+        "inf_count" => {
+            let axes = parse_axis_spec(v)?;
+            Ok(Operation::InfCount { axes })
+        }
         "null_count" => {
             if v.is_object() {
                 let (axes, obj) = parse_parametric_op_object("null_count", v)?;
@@ -548,6 +553,9 @@ where
         }
         Operation::NanCount { axes } => {
             map.serialize_entry("nan_count", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::InfCount { axes } => {
+            map.serialize_entry("inf_count", &AxisSpecWire::from_axes(axes))?;
         }
         Operation::NullCount { axes, fill } => {
             let mut extra = Vec::new();

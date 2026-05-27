@@ -18,6 +18,7 @@ pub(crate) enum ReductionKind {
     AllFinite,
     AnyNan,
     NanCount,
+    InfCount,
     NullCount { fill: f64 },
     ArgMin,
     ArgMax,
@@ -40,6 +41,7 @@ impl From<&Operation> for ReductionKind {
             Operation::AllFinite { .. } => Self::AllFinite,
             Operation::AnyNan { .. } => Self::AnyNan,
             Operation::NanCount { .. } => Self::NanCount,
+            Operation::InfCount { .. } => Self::InfCount,
             Operation::NullCount { fill: Some(f), .. } => Self::NullCount { fill: *f },
             Operation::NullCount { fill: None, .. } => {
                 unreachable!("null_count fill must be resolved before fold")
@@ -156,7 +158,7 @@ pub(crate) struct ValueAccum {
     min: f64,
     max: f64,
     have_min_max: bool,
-    /// NaN / null-match tally for [`ReductionKind::NanCount`] and [`ReductionKind::NullCount`].
+    /// NaN / inf / null-match tally for [`ReductionKind::NanCount`], [`ReductionKind::InfCount`], and [`ReductionKind::NullCount`].
     match_count: usize,
 }
 
@@ -209,9 +211,9 @@ impl ValueAccum {
         }
     }
 
-    fn push_nan_count_slice(&mut self, len: usize, nan_count: usize) {
+    fn push_match_count_slice(&mut self, len: usize, matches: usize) {
         self.count += len;
-        self.match_count += nan_count;
+        self.match_count += matches;
     }
 
     pub(crate) fn push_nan_f64(&mut self, v: f64) {
@@ -224,6 +226,13 @@ impl ValueAccum {
     pub(crate) fn push_null_f64(&mut self, v: f64, fill: f64) {
         self.count += 1;
         if Self::values_equal_fill(v, fill) {
+            self.match_count += 1;
+        }
+    }
+
+    pub(crate) fn push_inf_f64(&mut self, v: f64) {
+        self.count += 1;
+        if v.is_infinite() {
             self.match_count += 1;
         }
     }
@@ -329,8 +338,12 @@ impl ValueAccum {
                 }
             }
             ReductionKind::NanCount => {
-                self.push_nan_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
             }
+            ReductionKind::InfCount => self.push_match_count_slice(
+                vals.len(),
+                vals.iter().filter(|v| v.is_infinite()).count(),
+            ),
             ReductionKind::NullCount { fill } => {
                 self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
@@ -419,8 +432,12 @@ impl ValueAccum {
                 }
             }
             ReductionKind::NanCount => {
-                self.push_nan_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
             }
+            ReductionKind::InfCount => self.push_match_count_slice(
+                vals.len(),
+                vals.iter().filter(|v| v.is_infinite()).count(),
+            ),
             ReductionKind::NullCount { fill } => {
                 self.push_null_count_values(vals.len(), vals.iter().copied(), fill);
             }
@@ -438,7 +455,7 @@ impl ValueAccum {
         }
         let vals: &[i32] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -482,7 +499,7 @@ impl ValueAccum {
         }
         let vals = raw;
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -527,7 +544,7 @@ impl ValueAccum {
         }
         let vals: &[i64] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -572,7 +589,7 @@ impl ValueAccum {
         }
         let vals: &[u32] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -617,7 +634,7 @@ impl ValueAccum {
         }
         let vals: &[u64] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -662,7 +679,7 @@ impl ValueAccum {
         }
         let vals: &[i16] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -707,7 +724,7 @@ impl ValueAccum {
         }
         let vals: &[u16] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count | ReductionKind::NanCount => {
+            ReductionKind::Count | ReductionKind::NanCount | ReductionKind::InfCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -771,9 +788,13 @@ impl ValueAccum {
                 let (slab_min, slab_max) = variance_simd::f16_min_max(vals);
                 self.merge_slab_min_max(slab_min, slab_max);
             }
-            ReductionKind::NanCount => self.push_nan_count_slice(
+            ReductionKind::NanCount => self.push_match_count_slice(
                 vals.len(),
                 vals.iter().filter(|v| f64::from(**v).is_nan()).count(),
+            ),
+            ReductionKind::InfCount => self.push_match_count_slice(
+                vals.len(),
+                vals.iter().filter(|v| f64::from(**v).is_infinite()).count(),
             ),
             ReductionKind::NullCount { fill } => {
                 self.push_null_count_values(vals.len(), vals.iter().map(|v| f64::from(*v)), fill);
@@ -815,7 +836,9 @@ impl ValueAccum {
             ReductionKind::NormL2 => self.norm_l2_sq.sqrt(),
             ReductionKind::AllFinite => f64::from(u8::from(self.all_finite)),
             ReductionKind::AnyNan => f64::from(u8::from(self.any_nan)),
-            ReductionKind::NanCount | ReductionKind::NullCount { .. } => self.match_count as f64,
+            ReductionKind::NanCount | ReductionKind::InfCount | ReductionKind::NullCount { .. } => {
+                self.match_count as f64
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -827,7 +850,9 @@ impl ValueAccum {
         match kind {
             ReductionKind::AllFinite => self.all_finite,
             ReductionKind::AnyNan => self.any_nan,
-            ReductionKind::NanCount | ReductionKind::NullCount { .. } => self.match_count > 0,
+            ReductionKind::NanCount | ReductionKind::InfCount | ReductionKind::NullCount { .. } => {
+                self.match_count > 0
+            }
             _ => self.finish_f64(kind) > 0.5,
         }
     }
@@ -875,6 +900,7 @@ impl ValueAccum {
         let mut all_finite_scalar = None;
         let mut any_nan_scalar = None;
         let mut nan_count_scalar = None;
+        let mut inf_count_scalar = None;
         let mut null_count_scalar = None;
         match kind {
             ReductionKind::Sum => sum_scalar = Some(self.sum),
@@ -895,6 +921,7 @@ impl ValueAccum {
             ReductionKind::AllFinite => all_finite_scalar = Some(self.all_finite),
             ReductionKind::AnyNan => any_nan_scalar = Some(self.any_nan),
             ReductionKind::NanCount => nan_count_scalar = Some(self.match_count as f64),
+            ReductionKind::InfCount => inf_count_scalar = Some(self.match_count as f64),
             ReductionKind::NullCount { .. } => null_count_scalar = Some(self.match_count as f64),
             ReductionKind::Count | ReductionKind::ArgMin | ReductionKind::ArgMax => {}
         }
@@ -912,6 +939,7 @@ impl ValueAccum {
             all_finite_scalar,
             any_nan_scalar,
             nan_count_scalar,
+            inf_count_scalar,
             null_count_scalar,
             argmin_index: None,
             argmax_index: None,
@@ -1010,6 +1038,7 @@ pub(crate) struct ScalarReductionResult {
     pub all_finite_scalar: Option<bool>,
     pub any_nan_scalar: Option<bool>,
     pub nan_count_scalar: Option<f64>,
+    pub inf_count_scalar: Option<f64>,
     pub null_count_scalar: Option<f64>,
     pub argmin_index: Option<u64>,
     pub argmax_index: Option<u64>,
@@ -1031,6 +1060,7 @@ impl ScalarReductionResult {
             all_finite_scalar: None,
             any_nan_scalar: None,
             nan_count_scalar: None,
+            inf_count_scalar: None,
             null_count_scalar: None,
             argmin_index: None,
             argmax_index: None,
@@ -1054,6 +1084,7 @@ impl From<ScalarReductionResult> for OperationPreviewFields {
             all_finite: r.all_finite_scalar,
             any_nan: r.any_nan_scalar,
             nan_count: r.nan_count_scalar,
+            inf_count: r.inf_count_scalar,
             null_count: r.null_count_scalar,
             argmin_index: r.argmin_index,
             argmax_index: r.argmax_index,

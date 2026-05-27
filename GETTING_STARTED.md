@@ -201,7 +201,8 @@ v1 already ships boolean **`any_nan`** and **`all_finite`** (scalar + partial ax
 
 - [x] **`nan_count`** — count of **NaN** elements (`nan_count`); integers contribute 0.
 - [x] **`null_count`** — count of elements equal to **fill** (query `fill` or attrs `_FillValue` / `missing_value` / `fill_value`).
-- [ ] **Related counts (as needed)** — e.g. non-finite count (`inf` + NaN), `finite_count`, or **`invalid_count`**; deferred.
+- [x] **`inf_count`** — count of ±infinity elements (`inf_count`; integers contribute 0).
+- [ ] **Related counts (as needed)** — e.g. `finite_count` or combined non-finite tallies; deferred.
 
 See [`docs/query_engine.md` — Phase 9 planned](docs/query_engine.md#phase-9-planned-ops).
 
@@ -209,7 +210,7 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 ### Interchange & format
 
-- [ ] **Export** — `.tet` → Zarr directory or other interchange (inverse of Phase 5 import).
+- [x] **Export** — `.tet` → Zarr v3 directory (`tet export in.tet out.zarr/`; inverse of Phase 5 import).
 - [ ] **Layout / codec evolution (beyond Phase 8)** — v2 only when v1 cannot be extended (filters, dedicated metadata regions, breaking layout changes).
 
 ### Out of scope for JSON `operation`

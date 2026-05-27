@@ -7,6 +7,8 @@
 mod args;
 #[path = "tet/convert.rs"]
 mod convert;
+#[path = "tet/export.rs"]
+mod export;
 #[path = "tet/info.rs"]
 mod info;
 #[path = "tet/qhist.rs"]
@@ -27,6 +29,7 @@ use tetration::query::parse_query_json;
 
 use args::{Cli, Commands};
 use convert::run_convert;
+use export::run_export;
 use info::{InfoRunOpts, run_info};
 use qhist::run_qhist;
 use query::{QueryRunOpts, run_query};
@@ -115,6 +118,7 @@ fn run(cli: Cli) -> Result<(), String> {
             dry_run,
             apply,
         }),
+        Commands::Export { input, output } => run_export(&input, &output),
         Commands::Convert {
             input,
             output,

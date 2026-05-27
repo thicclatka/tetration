@@ -91,6 +91,10 @@ pub enum Operation {
     NanCount {
         axes: Vec<String>,
     },
+    /// Count of ±infinity elements (float/`f16`; integers contribute 0).
+    InfCount {
+        axes: Vec<String>,
+    },
     /// Count of elements equal to `fill` (resolved from query or dataset attrs at plan time).
     NullCount {
         axes: Vec<String>,
@@ -127,6 +131,7 @@ macro_rules! operation_axes_match {
             | Operation::Quantile { axes, .. }
             | Operation::Histogram { axes, .. }
             | Operation::NanCount { axes }
+            | Operation::InfCount { axes }
             | Operation::NullCount { axes, .. }
             | Operation::Covariance { axes }
             | Operation::Correlation { axes } => axes,
@@ -163,6 +168,7 @@ impl Operation {
             Self::AllFinite { .. } => "all_finite",
             Self::AnyNan { .. } => "any_nan",
             Self::NanCount { .. } => "nan_count",
+            Self::InfCount { .. } => "inf_count",
             Self::NullCount { .. } => "null_count",
             Self::ArgMin { .. } => "arg_min",
             Self::ArgMax { .. } => "arg_max",

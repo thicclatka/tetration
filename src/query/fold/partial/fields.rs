@@ -55,6 +55,9 @@ pub(crate) fn partial_fields(
         reduction::ReductionKind::NanCount => {
             fields.reduced_nan_count = Some(reduced.to_vec());
         }
+        reduction::ReductionKind::InfCount => {
+            fields.reduced_inf_count = Some(reduced.to_vec());
+        }
         reduction::ReductionKind::NullCount { .. } => {
             fields.reduced_null_count = Some(reduced.to_vec());
         }

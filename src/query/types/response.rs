@@ -69,6 +69,7 @@ pub(crate) struct OperationPreviewFields {
     pub all_finite: Option<bool>,
     pub any_nan: Option<bool>,
     pub nan_count: Option<f64>,
+    pub inf_count: Option<f64>,
     pub null_count: Option<f64>,
     pub argmin_index: Option<u64>,
     pub argmax_index: Option<u64>,
@@ -89,6 +90,7 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_all_finite: Option<Vec<bool>>,
     pub reduced_any_nan: Option<Vec<bool>>,
     pub reduced_nan_count: Option<Vec<f64>>,
+    pub reduced_inf_count: Option<Vec<f64>>,
     pub reduced_null_count: Option<Vec<f64>>,
     pub reduced_argmin: Option<Vec<u64>>,
     pub reduced_argmax: Option<Vec<u64>>,
@@ -187,6 +189,8 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_nan_count: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_inf_count: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_null_count: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_argmin_index: Option<u64>,
@@ -261,6 +265,8 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_nan_count: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_inf_count: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_null_count: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_argmin: Option<Vec<u64>>,
@@ -296,6 +302,7 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_all_finite: operation.all_finite,
             operation_any_nan: operation.any_nan,
             operation_nan_count: operation.nan_count,
+            operation_inf_count: operation.inf_count,
             operation_null_count: operation.null_count,
             operation_argmin_index: operation.argmin_index,
             operation_argmax_index: operation.argmax_index,
@@ -316,6 +323,7 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_all_finite: operation.reduced_all_finite,
             operation_reduced_any_nan: operation.reduced_any_nan,
             operation_reduced_nan_count: operation.reduced_nan_count,
+            operation_reduced_inf_count: operation.reduced_inf_count,
             operation_reduced_null_count: operation.reduced_null_count,
             operation_reduced_argmin: operation.reduced_argmin,
             operation_reduced_argmax: operation.reduced_argmax,

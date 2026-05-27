@@ -65,6 +65,7 @@ impl ScalarFoldVisit {
                         self.push_arg(ctx.arg, li, val, ctx.kind);
                     }
                     reduction::ReductionKind::NanCount => ctx.value.push_nan_f64(val),
+                    reduction::ReductionKind::InfCount => ctx.value.push_inf_f64(val),
                     reduction::ReductionKind::NullCount { fill } => {
                         ctx.value.push_null_f64(val, fill);
                     }

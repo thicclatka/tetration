@@ -1167,6 +1167,34 @@ fn nan_count_scalar_on_f32_fixture() {
 }
 
 #[test]
+fn inf_count_scalar_on_f32_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inf.tet");
+    let mut patched = fixture::le_row_major_2x3_f32_one_to_six();
+    patched[0..4].copy_from_slice(&f32::INFINITY.to_le_bytes());
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            data: &patched,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","inf_count":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert_eq!(
+        resp.execution.as_ref().unwrap().operation_inf_count,
+        Some(1.0)
+    );
+}
+
+#[test]
 fn null_count_uses_footer_fill_value() {
     use crate::catalog::{DatasetMetadataV1, FooterBlobV1, TetMetadataV1, write_footer_blob};
 

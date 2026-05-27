@@ -9,8 +9,9 @@ Branch: **`phase9/query-ops`** → merge to `main` when complete. Phase 6 (TOML 
 | 3   | **QC counts** — `nan_count`, `null_count` (fill-aware)                 | done          |
 | 4   | **Covariance / correlation** — tier C along axis                       | done (rank-2) |
 | 5   | **Coordinate selection** — `start_label` / `stop_label` on `selection` | done          |
-| 6   | **Export** — `.tet` → Zarr directory                                   | pending       |
-| 7   | Docs + tests + `GETTING_STARTED` checkboxes                            | ongoing       |
+| 6   | **Export** — `.tet` → Zarr directory                                   | done          |
+| 7   | **`inf_count`** — ±inf element count (tier A/B)                        | done          |
+| 8   | Docs + tests + `GETTING_STARTED` checkboxes                            | done          |
 
 **Out of scope (Phase 9):** layout v2, FFT/ML ops, SQL/joins.
 

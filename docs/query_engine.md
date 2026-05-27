@@ -342,6 +342,7 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 | `"histogram": { "bins": 10, "axis": 0 }`                        | Histogram on axis 0                                                               |
 | `"histogram": { "bins": 10, "min": 0, "max": 1 }`               | Histogram with fixed edge range (both `min` and `max` required)                   |
 | `"nan_count": []` / `"nan_count": 0`                            | Count of NaN elements (scalar / partial)                                          |
+| `"inf_count": []` / `"inf_count": 0`                            | Count of ±infinity elements (scalar / partial; integers contribute 0)             |
 | `"null_count": []` or `{ "fill": 99, "axis": 0 }`               | Count of fill-missing values (fill from query or dataset attrs)                   |
 | `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]` | Half-open slice by coordinate label (requires footer `coords`)                    |
 | `"covariance": { "axis": 0 }` / `"correlation": 0`              | Rank-2 only; `axis` = observation dimension; `operation_*_order` = variable count |
@@ -457,15 +458,16 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 | **`median`**                 | C              | **Done** (scalar + partial axes).                                        |
 | **`quantile` / `histogram`** | C              | **Done** (scalar + partial axes; histogram partial returns counts only). |
 
-### Phase 9 planned ops
+### Phase 9 ops (shipped)
 
-Not shipped yet; see [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange-later).
+See [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange-later).
 
-| Op (proposed wire key)       | Tier (typical) | Notes                                                                                                                         |
+| Op (wire key)                | Tier (typical) | Notes                                                                                                                         |
 | ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **`nan_count`**              | A/B            | **Done** — count of NaN elements; complements **`any_nan`** (boolean).                                                        |
-| **`null_count`**             | A/B            | **Done** — fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`).                              |
-| **Related QC counts**        | A/B            | Deferred — non-finite / `invalid_count` combo.                                                                                |
+| **`nan_count`**              | A/B            | Count of NaN elements; complements **`any_nan`** (boolean).                                                                 |
+| **`inf_count`**              | A/B            | Count of ±infinity; complements **`all_finite`** (boolean).                                                                   |
+| **`null_count`**             | A/B            | Fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`).                                        |
+| **Related QC counts**        | A/B            | Deferred — e.g. `finite_count`.                                                                                             |
 | **Histogram `min` / `max`**  | C              | **Done** — caller-supplied bin edges on scalar histogram (both required when either set).                                     |
 | **Covariance / correlation** | C              | **Done** — rank-2; `axis` = observation dimension (`operation_covariance` / `operation_correlation` row-major `order×order`). |
 | **Named axis in JSON**       | —              | `"mean": "time"` via `dim_names` (resolver only).                                                                             |
@@ -477,7 +479,7 @@ These match the product vision but belong **beside** the reduction enum:
 
 | Capability                                | Why separate                                                                                                                                        |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                                  |
+| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)); **`.tet` → Zarr v3** via `tet export` ([`export`](../src/export/mod.rs)). |
 | **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                 |
 | **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                     |
 | **Coordinate labels / filter-by-value**   | Per-index coords in metadata; slice resolver; optional lookup index (Phase 7 storage + Phase 9 query).                                              |
