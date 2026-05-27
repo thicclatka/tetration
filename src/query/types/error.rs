@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum TetError {
     #[error("invalid query JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
+    #[error("invalid query TOML: {0}")]
+    InvalidToml(#[from] toml::de::Error),
     #[error("validation: {0}")]
     Validation(String),
     #[error(transparent)]

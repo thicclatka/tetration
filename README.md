@@ -183,12 +183,12 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 ## Documentation map
 
-| Doc                                            | Contents                                                                               |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, verification, CLI history, what's next                               |
-| [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                   |
-| [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                         |
-| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`small/tet/`](fixtures/small/tet/) verify/query smoke |
+| Doc                                            | Contents                                                                                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, [Rust API by phase](GETTING_STARTED.md#rust-api-by-phase), library/roadmap summary in [README](README.md#library-use) |
+| [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                                                                    |
+| [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                                                                          |
+| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`small/tet/`](fixtures/small/tet/) verify/query smoke                                                  |
 
 ## Design stance (short)
 
@@ -210,24 +210,55 @@ use tetration::prelude::*;
 // TetWriterSession, TetFile, parse_query_json, execute_query_json, verify_tet_file, …
 ```
 
-### Rust API by phase
+### Roadmap at a glance
 
-Phases **0–9** below are **done** in this repo unless marked _later_. Full checklist: [`GETTING_STARTED.md`](GETTING_STARTED.md).
+| Area                                                                                                                                                                                                                       | Status                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Phases **0–3** (layout, writers, `ReadPlan`, zstd)                                                                                                                                                                         | **Done**                                                  |
+| Phase **4** (query execute: fold, spill, tier-C, SIMD)                                                                                                                                                                     | **Done** — [`docs/query_engine.md`](docs/query_engine.md) |
+| Phase **5** (`tet convert` import)                                                                                                                                                                                         | **Done**                                                  |
+| Phase **6** (CLI UX: `--format`, `qhist`, `tet info` table)                                                                                                                                                                | **Done** — JSON + **TOML** query profiles (see below)     |
+| Phase **7** ([`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html) / [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), footer metadata) | **Done**                                                  |
+| Phase **8** (`tet verify` / `repair`, dtypes **`f32`–`u64`**)                                                                                                                                                              | **Done**                                                  |
+| Phase **9** (named axes, coord labels, QC counts, `tet export`)                                                                                                                                                            | **Done**                                                  |
+| Phase **10** (GPU hooks)                                                                                                                                                                                                   | _Later_                                                   |
+| Phase **11** (Python bindings)                                                                                                                                                                                             | _Later_                                                   |
 
-| Phase  | Status  | You get                                                                                              | Rust / CLI entry points                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------ | ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **1**  | Done    | **Create `.tet` on disk** (superblock, catalog, chunk payloads)                                      | [`create_empty_v1_file`](https://docs.rs/tetration/latest/tetration/layout/fn.create_empty_v1_file.html), [`write_raw_array_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_raw_array_file.html), [`write_one_chunk_raw_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_one_chunk_raw_file.html) — low-level; tests/fixtures use these directly                                                                                                            |
-| **4**  | Done    | **Query engine** (plan, mmap decode, streaming fold, spill, tier-C stats)                            | [`plan_query_with_tet_mmap_ex`](https://docs.rs/tetration/latest/tetration/query/fn.plan_query_with_tet_mmap_ex.html), [`build_execution_preview`](https://docs.rs/tetration/latest/tetration/query/fn.build_execution_preview.html); CLI `tet query … -x`                                                                                                                                                                                                                                       |
-| **5**  | Done    | **Import** HDF5 / NetCDF / Zarr v3 → `.tet`                                                          | [`tetration::convert`](https://docs.rs/tetration/latest/tetration/convert/index.html); CLI `tet convert`                                                                                                                                                                                                                                                                                                                                                                                         |
-| **7**  | Done    | **Embedder session types** — queue datasets + footer metadata/history, commit, mmap-open for queries | [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetDatasetWrite`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetDatasetWrite.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) — re-exported in [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html) |
-| **8**  | Done    | **File health** + wire dtypes through **`u64` / `f16`**                                              | [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), [`repair_tet_file`](https://docs.rs/tetration/latest/tetration/repair/fn.repair_tet_file.html); CLI `tet verify` / `tet repair` (`VerifyOptions::deep_decode` = `tet verify --deep`)                                                                                                                                                                                                             |
-| **9**  | Done    | Named axes, coord **label** selection, QC counts, covariance/correlation, **Zarr export**            | Resolved at plan time inside `execute_query_*`; CLI `tet export`; details in [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                                                                                                                                                                                                                                                                      |
-| **10** | _Later_ | Optional GPU materialize after CPU decode                                                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **11** | _Later_ | Python wheels (+ narrow C ABI when needed)                                                           | Separate repo; pins crates.io `tetration`                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+Checklist + per-phase Rust paths: [`GETTING_STARTED.md`](GETTING_STARTED.md). Agent handoff: [`AGENTS.md`](AGENTS.md).
 
-**Typical embedder flow (Phase 7 on top of Phase 1 + 4):**
+### Embedder flow (Phase 7)
 
-1. **Write** — `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming tiles).
-2. **Read / aggregate** — `TetFile::open` → `execute_query_json` → [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html) (CLI: [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout).
+1. **Write** — `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming).
+2. **Read / aggregate** — `TetFile::open` → `execute_query_json` → [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html).
 
-**Examples:** `cargo run --example create_and_query`, `session_write`, `inspect_catalog` (see [`src/catalog/session.rs`](src/catalog/session.rs)). **Smoke fixtures:** `cargo run --example gen_small_tet_fixtures` → [`fixtures/small/tet/`](fixtures/small/tet/).
+```bash
+cargo run --example create_and_query
+cargo run --example session_write
+```
+
+### Query input: JSON or TOML
+
+Flat JSON and TOML profiles compile to the same [`QueryDocument`](https://docs.rs/tetration/latest/tetration/query/struct.QueryDocument.html). `tet query` accepts `.json` / `.toml` paths, inline text, or stdin; leading `{` selects JSON, otherwise TOML (extension overrides).
+
+```json
+{ "dataset": "temperature", "mean": [] }
+```
+
+```toml
+dataset = "temperature"
+mean = [] # scalar reduction
+```
+
+Library: [`parse_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_json.html), [`parse_query_toml`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_toml.html), [`parse_query_text`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_text.html) (auto-detect).
+
+### Rust API by phase (detail)
+
+| Phase             | Status | You get                                          | Entry points                                                                                                                                                                                                                                                           |
+| ----------------- | ------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**             | Done   | Write `.tet` bytes (low-level)                   | [`write_raw_array_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_raw_array_file.html), [`create_empty_v1_file`](https://docs.rs/tetration/latest/tetration/layout/fn.create_empty_v1_file.html)                                                    |
+| **4**             | Done   | Query plan + execute                             | [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html), `tet query -x`                                                                                                                                                    |
+| **5**             | Done   | Import                                           | `tet convert`, [`convert`](https://docs.rs/tetration/latest/tetration/convert/index.html)                                                                                                                                                                              |
+| **7**             | Done   | **Embedder session API**                         | [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html) |
+| **8**             | Done   | Verify / repair                                  | [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), `tet verify`                                                                                                                                                           |
+| **9**             | Done   | Named axes, export                               | `tet export`, [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                                                                                                           |
+| **0–3, 6, 10–11** | —      | Spec, `ReadPlan`, zstd, CLI formats, GPU, Python | Full table: [GETTING_STARTED — Rust API by phase](GETTING_STARTED.md#rust-api-by-phase)                                                                                                                                                                                |

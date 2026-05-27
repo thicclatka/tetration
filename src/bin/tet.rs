@@ -25,7 +25,7 @@ mod verify;
 use std::process::ExitCode;
 
 use clap::Parser;
-use tetration::query::parse_query_json;
+use tetration::query::parse_query_text;
 
 use args::{Cli, Commands};
 use convert::run_convert;
@@ -34,7 +34,7 @@ use info::{InfoRunOpts, run_info};
 use qhist::run_qhist;
 use query::{QueryRunOpts, run_query};
 use repair::{RepairRunOpts, run_repair};
-use util::{cli_error, read_query_payload, resolve_stdout};
+use util::{cli_error, query_input_format, read_query_payload, resolve_stdout};
 use verify::{VerifyRunOpts, run_verify};
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -78,8 +78,10 @@ fn run(cli: Cli) -> Result<(), String> {
             spill_allow,
         } => {
             let stdout = resolve_stdout(quiet, format);
-            let raw = read_query_payload(query.as_deref()).map_err(cli_error)?;
-            let doc = parse_query_json(raw.trim()).map_err(cli_error)?;
+            let (raw, path_hint) = read_query_payload(query.as_deref()).map_err(cli_error)?;
+            let trimmed = raw.trim();
+            let format = query_input_format(path_hint.as_deref(), trimmed);
+            let doc = parse_query_text(trimmed, format).map_err(cli_error)?;
             run_query(QueryRunOpts {
                 doc,
                 tet,

@@ -6,6 +6,7 @@ mod cli;
 mod decode;
 mod dispatch;
 mod document;
+mod document_toml;
 mod document_wire;
 pub(crate) mod engine;
 mod execute;
@@ -27,7 +28,11 @@ pub use cli::{
     history_entry_mode, info_view_sections_from_flags, list_cli_query_history,
     parse_history_execute_filter,
 };
-pub use document::{QueryLimits, parse_query_json, validate_query};
+pub use document::{
+    QueryInputFormat, QueryLimits, detect_query_input_format, parse_query_json, parse_query_text,
+    validate_query,
+};
+pub use document_toml::parse_query_toml;
 #[doc(hidden)]
 pub use engine::TempSpillFile;
 pub use engine::{

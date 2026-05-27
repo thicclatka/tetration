@@ -183,7 +183,11 @@ impl Default for ValueAccum {
 
 impl ValueAccum {
     fn values_equal_fill(v: f64, fill: f64) -> bool {
-        if fill.is_nan() { v.is_nan() } else { v == fill }
+        if fill.is_nan() {
+            v.is_nan()
+        } else {
+            v.to_bits() == fill.to_bits()
+        }
     }
 
     fn merge_slab_min_max(&mut self, slab_min: f64, slab_max: f64) {
@@ -338,7 +342,7 @@ impl ValueAccum {
                 }
             }
             ReductionKind::NanCount => {
-                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count());
             }
             ReductionKind::InfCount => self.push_match_count_slice(
                 vals.len(),
@@ -432,7 +436,7 @@ impl ValueAccum {
                 }
             }
             ReductionKind::NanCount => {
-                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+                self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count());
             }
             ReductionKind::InfCount => self.push_match_count_slice(
                 vals.len(),
