@@ -10,6 +10,7 @@ words:
   - bytemuck
   - cdylib
   - CUDA
+  - cvtepi
   - cvtps
   - ddof
   - DTYPE
@@ -41,6 +42,7 @@ words:
   - rkyv
   - roundtrips
   - rustdoc
+  - setzero
   - storeu
   - subslices
   - sumsq
@@ -50,6 +52,7 @@ words:
   - THST
   - TIDX
   - trunc
+  - unpackhi
   - vaddvq
   - vcvt
   - vget

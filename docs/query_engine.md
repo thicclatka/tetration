@@ -68,7 +68,118 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                                                 |
 | `table`          | —     | ASCII tables: query summary, `read_plan`, execution I/O, scalar/partial **result**, optional **preview** sample (like `tet info`)              |
 
+**Phase 10 (device routing):** optional `execution.device` or `tet query … --device` — see [Phase 10 — optional GPU](#phase-10--optional-gpu-experimental).
+
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
+
+## Phase 10 — optional GPU (experimental)
+
+**Status:** scaffold on `feat/phase10-gpu-scaffold` — routing + CUDA/Metal kernels ship behind optional features; **CPU streaming fold remains the fast, correct default** for large and extra-large selections on Apple Silicon benches.
+
+### What it does today
+
+1. **Host decode** — mmap + chunk decode unchanged (raw **0** / zstd **1**).
+2. **GPU path (when routed)** — dense host **`f32`** materialize (`vec` sized to logical selection), then:
+   - **Device:** `sum`, `mean`, `min`, `max`, `count` via block-reduce kernels (`tetration-metal` on macOS, `tetration-gpu` on CUDA).
+   - **Host (`f64` SIMD):** population **`var`** / **`std`** (`ddof = 0`) — same accumulators as streaming CPU fold; **not** device tree-reduce (f32 GPU sum-of-squares was numerically wrong at ~10⁹ elements).
+3. **CPU streaming** — parallel chunk fold or out-of-core linear scan when GPU is not selected or falls back.
+
+Preview JSON / **`stats`** format: `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`.
+
+### `execution.device` / `--device`
+
+| Token             | Behavior                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cpu`             | Always host streaming fold.                                                                                                                             |
+| `auto`            | Metal on macOS when `tetration-metal` enabled, else CUDA device 0 when `tetration-gpu` enabled, else CPU. Skips GPU below **64 MiB** logical selection. |
+| `metal`           | Apple GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                      |
+| `cuda` / `cuda:N` | NVIDIA GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                     |
+
+CLI **`--device`** overrides query JSON `execution.device` (needs **`-x`**).
+
+### Host-RAM gate (before materialize)
+
+GPU scalar paths need a dense host buffer of size `logical_f32_bytes`. Routing refuses device when:
+
+- logical bytes **>** **85%** of probed host RAM (`MemAvailable` / macOS free+inactive), or
+- logical bytes **>** **8 GiB** when RAM cannot be probed.
+
+When the selection exceeds the host materialize budget, the engine uses **per-chunk streaming GPU fold** (decode one tile → device reduce → merge) instead of a dense `vec![f32; n]`. If GPU is disabled or fails at runtime, execution falls back to CPU streaming fold (`gpu_host_materialize_exceeded` is no longer a route-time refusal when GPU features are enabled).
+
+Constants: [`GPU_HOST_MATERIALIZE_RAM_FRACTION`](../src/query/device.rs), [`GPU_HOST_MATERIALIZE_UNKNOWN_HOST_CAP_BYTES`](../src/query/device.rs).
+
+### Other fallback reasons
+
+| `device_fallback_reason`        | Meaning                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `gpu_feature_disabled`          | Requested GPU but crate not built with `tetration-metal` / `tetration-gpu`. |
+| `gpu_host_materialize_exceeded` | Selection too large for host materialize budget (see above).                |
+| `auto_below_size_threshold`     | `auto` and logical selection &lt; 64 MiB.                                   |
+| `gpu_unsupported_dtype`         | Not dense **`f32`**.                                                        |
+| `gpu_unsupported_op`            | Tier-C / partial-axis / unsupported scalar op.                              |
+| `tier_c_materialize`            | `median` / `quantile` / `histogram` need full materialize path.             |
+| `preview_or_spill_only`         | No `operation` in query.                                                    |
+
+Runtime GPU failures (VRAM, decode, kernel) fall back to CPU with reasons such as `gpu_vram_exceeded`, `gpu_runtime_error`, `gpu_host_decode_failed` (see [`scalar_fold.rs`](../src/query/gpu/scalar_fold.rs)).
+
+### Build features
+
+```bash
+cargo build --release --features tetration-metal   # macOS
+cargo build --release --features tetration-gpu     # Linux/Windows + NVIDIA
+```
+
+Default crate features do **not** link GPU backends.
+
+### Bench expectations ([`fixtures/README.md`](../fixtures/README.md))
+
+| Tier                 | Typical `device` (auto / metal on M4 Max) | Notes                                             |
+| -------------------- | ----------------------------------------- | ------------------------------------------------- |
+| **large** (~6.7 GiB) | `metal` when RAM allows                   | sum/mean/min/max on GPU; var/std on host SIMD.    |
+| **extra** (~20 GiB)  | `cpu (gpu_host_materialize_exceeded)`     | CPU streaming ~2 s/op; matches source aggregates. |
+
+Use **`mise run bench:cpu`** for apples-to-apples CPU timing; **`bench:metal`** / **`bench:gpu`** to exercise device routing.
+
+### Device tokens (Phase 10)
+
+| Token | Meaning |
+| ----- | ------- |
+| `cpu` | Host streaming fold only. |
+| `auto` | Metal (macOS) or CUDA device 0 when features enabled; skips GPU &lt; 64 MiB. |
+| `metal` | Apple GPU. |
+| `cuda` / `cuda:N` | NVIDIA GPU *N*. |
+| `cuda:multi` | Shard chunks across all visible CUDA devices (Rayon + merge). |
+| `rocm` / `rocm:N` / `rocm:multi` | ROCm build (`tetration-rocm`); same kernel path as CUDA today. |
+
+Execution preview: `device_gpu_pipeline`, `device_gpu_multi`.
+
+### Not implemented (Phase 10)
+
+- GPU tier-C ops, dtypes other than **`f32`** / **`f16`** (promoted to `f32` on device).
+- Meaningful speedup over CPU streaming on unified-memory Macs for full-tensor tier-A/B ops (current architecture).
+
+## Scalability: read-many and Phase 10
+
+**Deployment model (v1):** [README — Concurrency and scale](../README.md#concurrency-and-scale), [layout v1 — Concurrency](layout_v1.md#concurrency-informative).
+
+```text
+Write (once)  →  seal .tet  →  N readers (mmap, independent queries)
+                                    │
+                    CPU: parallel chunk fold / linear scan (today)
+                    GPU: dense or streaming per-chunk partials
+                         cuda:multi / rocm:multi shard across devices
+```
+
+| Milestone                  | What                                                                                           | Unlocks                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **A — read-many contract** | Document + test sealed-file concurrent readers                                                 | Many CPU workers / hosts on one `.tet` without format changes |
+| **B — streaming GPU fold** | Per-chunk decode + device partials ([`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)) | Large `f32` tier-A/B without full-RAM `vec![f32; n]` — **done** |
+| **C — overlap I/O**        | Decode ∥ GPU pipeline in [`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)             | Throughput — **done**                                         |
+| **D — multi-GPU**          | `cuda:multi` / `rocm:multi` chunk shards ([`multi.rs`](../src/query/gpu/multi.rs))             | Machine-scale throughput — **done**                             |
+
+**A** does not require GPU. **B–D** reuse the CPU fold merge algebra on the host.
+
+Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_query.rs) (library threads + optional `tet query` process smoke).
 
 ## Module map
 
@@ -77,7 +188,7 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 | **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                     | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
 | **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                                   | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
 | **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                      | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
-| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction.rs`, `variance_simd.rs`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
+| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
 | **`dispatch.rs`**  | —                                                                                                                                                  | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
 | **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                          | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
 | **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                                | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
@@ -173,7 +284,7 @@ flowchart TD
 | ------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Parallel chunk fold**   | In-core, `chunk_count > 1`, not linear scan                                                               | Rayon over chunks; mmap/decode per chunk; bulk SIMD per slab when geometry allows                               |
 | **Sequential chunk fold** | In-core single chunk, or out-of-core without linear-scan eligibility, or `execution.fold_parallel: false` | Chunks in catalog order or ascending `payload_offset` when `sequential_io`                                      |
-| **Linear scan**           | Out-of-core + full dense unit-step selection + raw codec + adjacent payloads summing to logical size      | One contiguous byte span; 64 MiB windows; [`push_f32_le_bytes`](../src/query/fold/reduction.rs) SIMD per window |
+| **Linear scan**           | Out-of-core + full dense unit-step selection + raw codec + adjacent payloads summing to logical size      | One contiguous byte span; 64 MiB windows; [`push_f32_le_bytes`](../src/query/fold/reduction/value_accum.rs) SIMD per window |
 
 **Linear scan eligibility:** [`detect_contiguous_raw_span`](../src/query/fold/linear_scan.rs) requires every touched chunk to use **raw codec 0**, payloads **abutting in plan order**, and total raw bytes = logical selection size. Converted multi-chunk **`f32`** grids from `write_raw_array_file` typically satisfy this; zstd chunks or strided partial selections do not.
 
@@ -183,11 +294,11 @@ flowchart TD
 
 ### Streaming fold performance
 
-**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
+**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction/value_accum.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
 
 So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator. Wall time is dominated by **page-cache / disk bandwidth** and CPU over the selection when out-of-core, or **memory bandwidth + cores** when in-core.
 
-**SIMD bulk fold (tier-A/B, `f32` slabs):** [`variance_simd.rs`](../src/query/fold/variance_simd.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback:
+**SIMD bulk fold (tier-A/B, `f32` slabs):** [`variance_simd`](../src/query/fold/variance_simd/mod.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback:
 
 - **mean / sum / var / std** — single-pass sum + sum-of-squares per slab → Welford merge
 - **min / max** — single-pass vector min/max per slab → accumulator merge
@@ -528,7 +639,7 @@ These match the product vision but belong **beside** the reduction enum:
 - **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 11 Python).
 - **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet qhist` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
-When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction.rs` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.
+When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction/` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.
 
 ## JSON security (input and output)
 

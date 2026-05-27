@@ -19,6 +19,10 @@ OpName = Literal["mean", "sum", "min", "max", "count", "std", "var"]
 DEFAULT_FORMATS: tuple[FormatName, ...] = ("h5", "netcdf", "zarr")
 DEFAULT_OPS: tuple[OpName, ...] = ("mean", "sum", "min", "max", "count", "std", "var")
 
+# Passed as query `execution.device` (and `tet query --device` when set). Use `auto` for
+# Phase 10 routing; `cpu` to match pre-GPU benches.
+DEFAULT_TET_DEVICE = "auto"
+
 POP_DDOF = 0
 
 TOLERANCE: dict[OpName, float] = {

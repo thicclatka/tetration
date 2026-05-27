@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::error::TetError;
+
 // `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, `spill: "…"`, …).
 
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
@@ -242,4 +244,112 @@ pub struct ExecutionHints {
     /// When `Some(true)`, force parallel streaming fold; `Some(false)` force sequential; `None` = auto from RAM vs selection size.
     #[serde(default)]
     pub fold_parallel: Option<bool>,
+    /// Device routing for tier-A/B reductions: `cpu`, `auto`, `cuda`, or `cuda:N` (Phase 10; wire via [`crate::query::document_wire`]).
+    #[serde(default, skip)]
+    pub device: Option<ExecutionDeviceHint>,
+}
+
+/// Parsed `execution.device` or CLI `--device` token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionDeviceHint {
+    Cpu,
+    Auto,
+    Metal,
+    Cuda(usize),
+    CudaMulti,
+    Rocm(usize),
+    RocmMulti,
+}
+
+impl ExecutionDeviceHint {
+    /// Parse `cpu`, `auto`, `metal`, `cuda`, or `cuda:N`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TetError::Validation`] when the token is unknown or malformed.
+    pub fn parse(token: &str) -> Result<Self, TetError> {
+        let t = token.trim();
+        if t.is_empty() {
+            return Err(TetError::Validation(
+                "device token must not be empty".into(),
+            ));
+        }
+        if t.eq_ignore_ascii_case("cpu") {
+            return Ok(Self::Cpu);
+        }
+        if t.eq_ignore_ascii_case("auto") {
+            return Ok(Self::Auto);
+        }
+        if t.eq_ignore_ascii_case("metal") {
+            return Ok(Self::Metal);
+        }
+        if t.eq_ignore_ascii_case("cuda") {
+            return Ok(Self::Cuda(0));
+        }
+        if t.eq_ignore_ascii_case("cuda:multi") {
+            return Ok(Self::CudaMulti);
+        }
+        if let Some(rest) = t.strip_prefix("cuda:") {
+            let idx = rest.parse::<usize>().map_err(|_| {
+                TetError::Validation(format!(
+                    "invalid device `{token}` (expected cuda:N with non-negative N)"
+                ))
+            })?;
+            return Ok(Self::Cuda(idx));
+        }
+        if t.eq_ignore_ascii_case("rocm") {
+            return Ok(Self::Rocm(0));
+        }
+        if t.eq_ignore_ascii_case("rocm:multi") {
+            return Ok(Self::RocmMulti);
+        }
+        if let Some(rest) = t.strip_prefix("rocm:") {
+            let idx = rest.parse::<usize>().map_err(|_| {
+                TetError::Validation(format!(
+                    "invalid device `{token}` (expected rocm:N with non-negative N)"
+                ))
+            })?;
+            return Ok(Self::Rocm(idx));
+        }
+        Err(TetError::Validation(format!(
+            "unknown device `{token}` (expected cpu, auto, metal, cuda[:N| :multi], or rocm[:N| :multi])"
+        )))
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Auto => "auto",
+            Self::Metal => "metal",
+            Self::Cuda(0) => "cuda:0",
+            Self::CudaMulti => "cuda:multi",
+            Self::Rocm(0) => "rocm:0",
+            Self::RocmMulti => "rocm:multi",
+            Self::Cuda(n) => {
+                let _ = n;
+                "cuda"
+            }
+            Self::Rocm(n) => {
+                let _ = n;
+                "rocm"
+            }
+        }
+    }
+
+    /// Wire/JSON token (includes index for `cuda:N`).
+    #[must_use]
+    pub fn to_token(self) -> String {
+        match self {
+            Self::Cpu => "cpu".to_string(),
+            Self::Auto => "auto".to_string(),
+            Self::Metal => "metal".to_string(),
+            Self::Cuda(0) => "cuda".to_string(),
+            Self::Cuda(n) => format!("cuda:{n}"),
+            Self::CudaMulti => "cuda:multi".to_string(),
+            Self::Rocm(0) => "rocm".to_string(),
+            Self::Rocm(n) => format!("rocm:{n}"),
+            Self::RocmMulti => "rocm:multi".to_string(),
+        }
+    }
 }

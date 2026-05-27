@@ -7,7 +7,7 @@ import argparse
 import os
 import sys
 
-from benchmark.constants import DEFAULT_FORMATS, FormatName
+from benchmark.constants import DEFAULT_FORMATS, DEFAULT_TET_DEVICE, FormatName
 from benchmark.dispatch import run_benchmark
 from generate.dispatch import GENERATE_TARGETS, run_target
 
@@ -86,6 +86,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="tet convert --jobs (0 = auto: host parallelism, max 64)",
     )
     bench.add_argument(
+        "--tet-device",
+        default=os.environ.get("TET_BENCH_DEVICE", DEFAULT_TET_DEVICE),
+        metavar="MODE",
+        help=(
+            "tet query --device / execution.device for .tet ops "
+            f"(default: {DEFAULT_TET_DEVICE}; env TET_BENCH_DEVICE)"
+        ),
+    )
+    bench.add_argument(
         "--run-id",
         metavar="ID",
         help="archive under bench_results/runs/ID/ (default: <git>_<UTC timestamp>)",
@@ -112,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
             ops=args.ops,
             skip_ops=skip_ops,
             jobs=args.jobs,
+            tet_device=args.tet_device,
             run_id=args.run_id,
             no_clobber=args.no_clobber,
         )

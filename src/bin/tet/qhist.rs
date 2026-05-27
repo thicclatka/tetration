@@ -81,6 +81,7 @@ fn run_qhist_replay(opts: QhistReplayOpts) -> Result<(), String> {
         stdout,
         preview: opts.preview,
         spill_allow: opts.spill_allow,
+        device: None,
         record_history: true,
     })
 }

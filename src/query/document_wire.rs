@@ -10,7 +10,8 @@ use serde_json::{Map, Value};
 
 use super::document::QueryLimits;
 use super::types::{
-    AxisSlice, ExecutionHints, Operation, OutputHint, OutputHints, QueryDocument, TetError,
+    AxisSlice, ExecutionDeviceHint, ExecutionHints, Operation, OutputHint, OutputHints,
+    QueryDocument, TetError,
 };
 
 const OP_KEYS: &[&str] = &[
@@ -181,6 +182,7 @@ fn parse_execution(v: &Value) -> Result<ExecutionHints, TetError> {
                 | "memory_budget_percent"
                 | "memory_budget_percent_bps"
                 | "fold_parallel"
+                | "device"
         ) {
             return Err(TetError::Validation(format!(
                 "unknown field `execution.{key}`"
@@ -219,10 +221,21 @@ fn parse_execution(v: &Value) -> Result<ExecutionHints, TetError> {
         })?),
     };
 
+    let device = match obj.get("device") {
+        None => None,
+        Some(v) => {
+            let s = v.as_str().ok_or_else(|| {
+                TetError::Validation("`execution.device` must be a string".into())
+            })?;
+            Some(ExecutionDeviceHint::parse(s)?)
+        }
+    };
+
     Ok(ExecutionHints {
         memory_budget_bytes,
         memory_budget_percent_bps,
         fold_parallel,
+        device,
     })
 }
 
@@ -595,6 +608,9 @@ where
     }
     if let Some(par) = ex.fold_parallel {
         obj.insert("fold_parallel".to_owned(), serde_json::json!(par));
+    }
+    if let Some(dev) = ex.device {
+        obj.insert("device".to_owned(), serde_json::json!(dev.to_token()));
     }
     if !obj.is_empty() {
         map.serialize_entry("execution", &obj)?;

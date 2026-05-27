@@ -10,7 +10,12 @@ import time
 from pathlib import Path
 
 from benchmark.case import BenchCase
-from benchmark.constants import OpName, REPO_ROOT, TET_EXECUTION_KEY
+from benchmark.constants import (
+    DEFAULT_TET_DEVICE,
+    OpName,
+    REPO_ROOT,
+    TET_EXECUTION_KEY,
+)
 from benchmark.log import format_elapsed, log
 
 
@@ -33,14 +38,26 @@ def git_short_rev() -> str:
         return "unknown"
 
 
-def query_json(op: OpName) -> str:
-    return json.dumps(
-        {
-            "dataset": "data",
-            "layout_version": 1,
-            op: [],
-        }
-    )
+def query_json(op: OpName, *, device: str | None) -> str:
+    doc: dict = {
+        "dataset": "data",
+        "layout_version": 1,
+        op: [],
+    }
+    if device:
+        doc["execution"] = {"device": device}
+    return json.dumps(doc)
+
+
+def _device_label(execution: dict) -> str:
+    used = execution.get("device_used") or "-"
+    fb = execution.get("device_fallback_reason")
+    if fb:
+        return f"{used} ({fb})"
+    req = execution.get("device_requested")
+    if req and req != used:
+        return f"{used} (req {req})"
+    return str(used)
 
 
 def run_tet_op(
@@ -48,10 +65,27 @@ def run_tet_op(
     tet_path: Path,
     case: BenchCase,
     op: OpName,
-) -> tuple[float, float | None, int | None]:
+    *,
+    device: str | None = None,
+) -> tuple[float, float | None, int | None, str | None]:
+    tet_device = device if device is not None else os.environ.get(
+        "TET_BENCH_DEVICE", DEFAULT_TET_DEVICE
+    )
     env = {**os.environ, "TET_NO_QUERY_HISTORY": "1"}
-    cmd = [str(tet), "query", "--tet", str(tet_path), "--execute", "--preview-f32", "0"]
-    body = query_json(op)
+    cmd = [
+        str(tet),
+        "query",
+        "--tet",
+        str(tet_path),
+        "--execute",
+        "--preview",
+        "0",
+        "--format",
+        "stats",
+    ]
+    if tet_device:
+        cmd.extend(["--device", tet_device])
+    body = query_json(op, device=tet_device)
 
     def once() -> dict:
         proc = subprocess.run(
@@ -83,11 +117,12 @@ def run_tet_op(
     raw = execution.get(key)
     value = float(raw) if raw is not None else None
     chunks = read_plan.get("chunk_count")
+    device_label = _device_label(execution)
     log(
         f".tet {op}: done in {format_elapsed(elapsed)}  value={value}  "
-        f"strategy={execution.get('memory_strategy')}"
+        f"strategy={execution.get('memory_strategy')}  device={device_label}"
     )
-    return elapsed, value, chunks
+    return elapsed, value, chunks, device_label
 
 
 def run_convert(tet: Path, src: Path, out: Path, jobs: int) -> float:

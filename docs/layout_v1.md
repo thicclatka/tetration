@@ -223,7 +223,19 @@ The `write_one_chunk_raw_file` helper in `tetration::catalog` writes exactly **o
 
 ## Concurrency (informative)
 
-Writers should use **exclusive create** or clearly documented append rules before parallel writers touch payloads. v1 does not define locking; see the main **README** for the long-term concurrency story.
+v1 has **no** on-disk locking, lease, or live-append protocol. Scale comes from **immutable files + mmap readers**, not from concurrent writers.
+
+| Pattern                               | Supported?     | Notes                                                                                                                                |
+| ------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Sealed file, many readers**         | Yes (intended) | After `commit` / `tet convert` completes, any number of hosts may mmap read-only and query. Chunk index + payload offsets are fixed. |
+| **One writer, then readers**          | Yes            | Reference writers (`write_raw_array_file`, [`TetWriterSession`](../src/catalog/session.rs)) produce a stable byte image.             |
+| **Parallel writers on one file**      | No (undefined) | Exclusive create or a single coordinated writer; parallel payload append without a spec can corrupt the index.                       |
+| **Read while another process writes** | No (undefined) | Readers may see torn index rows or short payloads.                                                                                   |
+| **Many queries, one file**            | Yes            | Independent plans; per-query temp spills are unique; user export `spill` paths must not collide.                                     |
+
+**Inside one query**, the engine already parallelizes chunk I/O on CPU when in-core (Rayon) or uses a sequential linear scan when out-of-core ([query engine — adaptive fold I/O](query_engine.md#adaptive-fold-io)).
+
+Full deployment notes: [README — Concurrency and scale](../README.md#concurrency-and-scale).
 
 ## File health (verify / repair)
 
