@@ -106,33 +106,85 @@ pub enum Operation {
     },
 }
 
+macro_rules! operation_axes_match {
+    ($op:expr) => {
+        match $op {
+            Operation::Sum { axes }
+            | Operation::Mean { axes }
+            | Operation::Min { axes }
+            | Operation::Max { axes }
+            | Operation::Count { axes }
+            | Operation::Var { axes }
+            | Operation::Std { axes }
+            | Operation::Product { axes }
+            | Operation::NormL1 { axes }
+            | Operation::NormL2 { axes }
+            | Operation::AllFinite { axes }
+            | Operation::AnyNan { axes }
+            | Operation::ArgMin { axes }
+            | Operation::ArgMax { axes }
+            | Operation::Median { axes }
+            | Operation::Quantile { axes, .. }
+            | Operation::Histogram { axes, .. }
+            | Operation::NanCount { axes }
+            | Operation::NullCount { axes, .. }
+            | Operation::Covariance { axes }
+            | Operation::Correlation { axes } => axes,
+        }
+    };
+}
+
 impl Operation {
     /// Per-axis decimal dimension indices for this operation.
     #[must_use]
     pub fn axes(&self) -> &[String] {
+        operation_axes_match!(self)
+    }
+
+    /// Mutable axis list for plan-time name → index resolution.
+    pub(crate) fn axes_mut(&mut self) -> &mut Vec<String> {
+        operation_axes_match!(self)
+    }
+
+    /// Top-level JSON wire key (`"mean"`, `"arg_min"`, …).
+    #[must_use]
+    pub fn wire_key(&self) -> &'static str {
         match self {
-            Self::Sum { axes }
-            | Self::Mean { axes }
-            | Self::Min { axes }
-            | Self::Max { axes }
-            | Self::Count { axes }
-            | Self::Var { axes }
-            | Self::Std { axes }
-            | Self::Product { axes }
-            | Self::NormL1 { axes }
-            | Self::NormL2 { axes }
-            | Self::AllFinite { axes }
-            | Self::AnyNan { axes }
-            | Self::ArgMin { axes }
-            | Self::ArgMax { axes }
-            | Self::Median { axes }
-            | Self::Quantile { axes, .. }
-            | Self::Histogram { axes, .. }
-            | Self::NanCount { axes }
-            | Self::NullCount { axes, .. }
-            | Self::Covariance { axes }
-            | Self::Correlation { axes } => axes,
+            Self::Sum { .. } => "sum",
+            Self::Mean { .. } => "mean",
+            Self::Min { .. } => "min",
+            Self::Max { .. } => "max",
+            Self::Count { .. } => "count",
+            Self::Var { .. } => "var",
+            Self::Std { .. } => "std",
+            Self::Product { .. } => "product",
+            Self::NormL1 { .. } => "norm_l1",
+            Self::NormL2 { .. } => "norm_l2",
+            Self::AllFinite { .. } => "all_finite",
+            Self::AnyNan { .. } => "any_nan",
+            Self::NanCount { .. } => "nan_count",
+            Self::NullCount { .. } => "null_count",
+            Self::ArgMin { .. } => "arg_min",
+            Self::ArgMax { .. } => "arg_max",
+            Self::Median { .. } => "median",
+            Self::Quantile { .. } => "quantile",
+            Self::Histogram { .. } => "histogram",
+            Self::Covariance { .. } => "covariance",
+            Self::Correlation { .. } => "correlation",
         }
+    }
+
+    /// Tier-C ops that require a full logical materialize (not streaming fold).
+    #[must_use]
+    pub fn requires_materialize(&self) -> bool {
+        matches!(
+            self,
+            Self::Median { .. }
+                | Self::Quantile { .. }
+                | Self::Histogram { .. }
+                | Self::Covariance { .. }
+                | Self::Correlation { .. }
+        )
     }
 }
 

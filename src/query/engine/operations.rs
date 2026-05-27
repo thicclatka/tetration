@@ -9,25 +9,6 @@ use crate::query::{
 };
 use crate::utils::dtype::ElementDtype;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OperationMaterializeTier {
-    Streaming,
-    MaterializeRequired,
-}
-
-impl types::Operation {
-    fn materialize_tier(&self) -> OperationMaterializeTier {
-        match self {
-            Self::Median { .. }
-            | Self::Quantile { .. }
-            | Self::Histogram { .. }
-            | Self::Covariance { .. }
-            | Self::Correlation { .. } => OperationMaterializeTier::MaterializeRequired,
-            _ => OperationMaterializeTier::Streaming,
-        }
-    }
-}
-
 fn materialized_io(
     materialized: &materialize::MaterializedLogical,
 ) -> (u64, budget::MemoryStrategy) {
@@ -353,7 +334,7 @@ fn build_operation_preview(
         dtype,
         tet_path,
     } = *input;
-    if op.materialize_tier() == OperationMaterializeTier::MaterializeRequired {
+    if op.requires_materialize() {
         let policy = spill_allowlist.ok_or_else(|| {
             types::TetError::Validation(
                 "materialize-required operation needs a spill path allowlist (pass `--tet` so defaults apply)"

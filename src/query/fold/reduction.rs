@@ -25,6 +25,7 @@ pub(crate) enum ReductionKind {
 
 impl From<&Operation> for ReductionKind {
     fn from(op: &Operation) -> Self {
+        debug_assert!(!op.requires_materialize());
         match op {
             Operation::Sum { .. } => Self::Sum,
             Operation::Mean { .. } => Self::Mean,
@@ -183,32 +184,34 @@ impl ValueAccum {
         if fill.is_nan() { v.is_nan() } else { v == fill }
     }
 
-    fn push_nan_count_f32_slice(&mut self, vals: &[f32]) {
-        self.count += vals.len();
-        self.match_count += vals.iter().filter(|v| v.is_nan()).count();
-    }
-
-    fn push_nan_count_f64_slice(&mut self, vals: &[f64]) {
-        self.count += vals.len();
-        self.match_count += vals.iter().filter(|v| v.is_nan()).count();
-    }
-
-    fn push_null_count_f32_slice(&mut self, vals: &[f32], fill: f64) {
-        self.count += vals.len();
-        for &v in vals {
-            if Self::values_equal_fill(f64::from(v), fill) {
-                self.match_count += 1;
-            }
+    fn merge_slab_min_max(&mut self, slab_min: f64, slab_max: f64) {
+        if self.have_min_max {
+            self.min = self.min.min(slab_min);
+            self.max = self.max.max(slab_max);
+        } else {
+            self.min = slab_min;
+            self.max = slab_max;
+            self.have_min_max = true;
         }
     }
 
-    fn push_null_count_f64_slice(&mut self, vals: &[f64], fill: f64) {
-        self.count += vals.len();
-        for &v in vals {
+    fn push_null_count_values(
+        &mut self,
+        len: usize,
+        values: impl IntoIterator<Item = f64>,
+        fill: f64,
+    ) {
+        self.count += len;
+        for v in values {
             if Self::values_equal_fill(v, fill) {
                 self.match_count += 1;
             }
         }
+    }
+
+    fn push_nan_count_slice(&mut self, len: usize, nan_count: usize) {
+        self.count += len;
+        self.match_count += nan_count;
     }
 
     pub(crate) fn push_nan_f64(&mut self, v: f64) {
@@ -279,14 +282,7 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::f32_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::Product => {
                 self.count += vals.len();
@@ -332,8 +328,12 @@ impl ValueAccum {
                     }
                 }
             }
-            ReductionKind::NanCount => self.push_nan_count_f32_slice(vals),
-            ReductionKind::NullCount { fill } => self.push_null_count_f32_slice(vals, fill),
+            ReductionKind::NanCount => {
+                self.push_nan_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+            }
+            ReductionKind::NullCount { fill } => {
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -418,8 +418,12 @@ impl ValueAccum {
                     }
                 }
             }
-            ReductionKind::NanCount => self.push_nan_count_f64_slice(vals),
-            ReductionKind::NullCount { fill } => self.push_null_count_f64_slice(vals, fill),
+            ReductionKind::NanCount => {
+                self.push_nan_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count())
+            }
+            ReductionKind::NullCount { fill } => {
+                self.push_null_count_values(vals.len(), vals.iter().copied(), fill);
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -451,22 +455,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::i32_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -507,22 +499,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::u8_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -564,22 +544,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::i64_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(v as f64, fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| v as f64), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -621,22 +589,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::u32_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -678,22 +634,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::u64_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(v as f64, fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| v as f64), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -735,22 +679,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::i16_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -792,22 +724,10 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::u16_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1
@@ -849,26 +769,14 @@ impl ValueAccum {
             ReductionKind::Min | ReductionKind::Max => {
                 self.count += vals.len();
                 let (slab_min, slab_max) = variance_simd::f16_min_max(vals);
-                if self.have_min_max {
-                    self.min = self.min.min(slab_min);
-                    self.max = self.max.max(slab_max);
-                } else {
-                    self.min = slab_min;
-                    self.max = slab_max;
-                    self.have_min_max = true;
-                }
+                self.merge_slab_min_max(slab_min, slab_max);
             }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
-                self.match_count += vals.iter().filter(|v| f64::from(**v).is_nan()).count();
-            }
+            ReductionKind::NanCount => self.push_nan_count_slice(
+                vals.len(),
+                vals.iter().filter(|v| f64::from(**v).is_nan()).count(),
+            ),
             ReductionKind::NullCount { fill } => {
-                self.count += vals.len();
-                for &v in vals {
-                    if Self::values_equal_fill(f64::from(v), fill) {
-                        self.match_count += 1;
-                    }
-                }
+                self.push_null_count_values(vals.len(), vals.iter().map(|v| f64::from(*v)), fill);
             }
             ReductionKind::Product
             | ReductionKind::NormL1

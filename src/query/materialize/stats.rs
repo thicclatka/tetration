@@ -5,15 +5,17 @@ use std::path::Path;
 
 use memmap2::MmapMut;
 
-use crate::query::types::{Operation, OperationPreviewFields, ReadPlan, TetError};
-
-use crate::query::decode::indexing::coords_from_linear_row_major;
-use crate::query::engine::budget::MemoryStrategy;
-use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
+use crate::query::{
+    decode::indexing::coords_from_linear_row_major,
+    engine::budget::MemoryStrategy,
+    fold::partial_geometry::{partial_axis_layout, reduced_index},
+    types::{Operation, OperationPreviewFields, ReadPlan, TetError},
+};
 
 use super::{
     LogicalF32Backing, LogicalF64Backing, MaterializedLogical,
-    covariance::run_covariance_correlation, materialized_logical_as_f64,
+    covariance::{observation_axis_index, run_covariance_correlation},
+    materialized_logical_as_f64,
 };
 
 struct HistogramTierCParams<'a> {
@@ -374,10 +376,8 @@ pub(crate) fn run_tier_c_operation(
                 },
             )
         }
-        (_, Operation::Covariance { .. }) | (_, Operation::Correlation { .. }) => {
-            let obs_axis: usize = axes[0]
-                .parse()
-                .map_err(|_| TetError::Validation("invalid observation axis index".into()))?;
+        (_, Operation::Covariance { .. } | Operation::Correlation { .. }) => {
+            let obs_axis = observation_axis_index(axes)?;
             let values = materialized_logical_as_f64(materialized)?;
             let correlation = matches!(op, Operation::Correlation { .. });
             run_covariance_correlation(&values, shape, obs_axis, correlation)

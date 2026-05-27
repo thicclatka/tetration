@@ -5,6 +5,25 @@ use crate::query::types::{OperationPreviewFields, TetError};
 /// Max variables (matrix side length) for covariance / correlation.
 pub(crate) const MAX_COVARIANCE_VARS: u32 = 1024;
 
+const SINGLE_OBS_AXIS_MSG: &str =
+    "covariance/correlation require exactly one observation axis (e.g. `\"axis\": 0`)";
+
+/// Require exactly one axis label (parse-time / pre–name-resolution).
+pub(crate) fn require_single_observation_axis(axes: &[String]) -> Result<(), TetError> {
+    if axes.len() != 1 {
+        return Err(TetError::Validation(SINGLE_OBS_AXIS_MSG.into()));
+    }
+    Ok(())
+}
+
+/// Parse the single observation-axis index (decimal, post–name-resolution).
+pub(crate) fn observation_axis_index(axes: &[String]) -> Result<usize, TetError> {
+    require_single_observation_axis(axes)?;
+    axes[0]
+        .parse()
+        .map_err(|_| TetError::Validation("invalid observation axis index".into()))
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Matrix2dLayout {
     n_obs: usize,
@@ -116,6 +135,26 @@ fn correlation_from_covariance(cov: &[f64], n_var: usize) -> Vec<f64> {
     out
 }
 
+fn matrix_preview_fields(
+    element_count: usize,
+    order: u64,
+    correlation: bool,
+    matrix: Vec<f64>,
+) -> OperationPreviewFields {
+    let mut fields = OperationPreviewFields {
+        element_count: Some(element_count),
+        ..OperationPreviewFields::default()
+    };
+    if correlation {
+        fields.correlation_order = Some(order);
+        fields.correlation = Some(matrix);
+    } else {
+        fields.covariance_order = Some(order);
+        fields.covariance = Some(matrix);
+    }
+    fields
+}
+
 pub(crate) fn run_covariance_correlation(
     values: &[f64],
     shape: &[u64],
@@ -126,20 +165,15 @@ pub(crate) fn run_covariance_correlation(
     let cov = population_covariance_matrix(values, layout)?;
     let order = u64::try_from(layout.n_var)
         .map_err(|_| TetError::Validation("covariance matrix order overflow".into()))?;
-    if correlation {
-        let matrix = correlation_from_covariance(&cov, layout.n_var);
-        Ok(OperationPreviewFields {
-            element_count: Some(values.len()),
-            correlation_order: Some(order),
-            correlation: Some(matrix),
-            ..OperationPreviewFields::default()
-        })
+    let matrix = if correlation {
+        correlation_from_covariance(&cov, layout.n_var)
     } else {
-        Ok(OperationPreviewFields {
-            element_count: Some(values.len()),
-            covariance_order: Some(order),
-            covariance: Some(cov),
-            ..OperationPreviewFields::default()
-        })
-    }
+        cov
+    };
+    Ok(matrix_preview_fields(
+        values.len(),
+        order,
+        correlation,
+        matrix,
+    ))
 }

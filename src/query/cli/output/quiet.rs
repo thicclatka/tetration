@@ -290,29 +290,7 @@ fn operation_op_tag(op: &Operation) -> String {
 }
 
 fn operation_name(op: &Operation) -> &'static str {
-    match op {
-        Operation::Sum { .. } => "sum",
-        Operation::Mean { .. } => "mean",
-        Operation::Min { .. } => "min",
-        Operation::Max { .. } => "max",
-        Operation::Count { .. } => "count",
-        Operation::Var { .. } => "var",
-        Operation::Std { .. } => "std",
-        Operation::Product { .. } => "product",
-        Operation::NormL1 { .. } => "norm_l1",
-        Operation::NormL2 { .. } => "norm_l2",
-        Operation::AllFinite { .. } => "all_finite",
-        Operation::AnyNan { .. } => "any_nan",
-        Operation::NanCount { .. } => "nan_count",
-        Operation::NullCount { .. } => "null_count",
-        Operation::ArgMin { .. } => "argmin",
-        Operation::ArgMax { .. } => "argmax",
-        Operation::Median { .. } => "median",
-        Operation::Quantile { .. } => "quantile",
-        Operation::Histogram { .. } => "histogram",
-        Operation::Covariance { .. } => "covariance",
-        Operation::Correlation { .. } => "correlation",
-    }
+    op.wire_key()
 }
 
 fn operation_extra_tags(op: &Operation) -> Vec<String> {
@@ -486,39 +464,37 @@ fn scalar_operation_display(
                 ),
             ))
         }
-        Operation::Covariance { .. } => {
-            let order = ex
-                .operation_covariance_order
-                .ok_or_else(|| missing_field("operation_covariance_order"))?;
-            let mat = ex
-                .operation_covariance
-                .as_ref()
-                .ok_or_else(|| missing_field("operation_covariance"))?;
-            Ok((
-                "covariance",
-                format!(
-                    "order={order} matrix={}",
-                    fmt_f64_list(mat, QUIET_VEC_INLINE_MAX)
-                ),
-            ))
-        }
-        Operation::Correlation { .. } => {
-            let order = ex
-                .operation_correlation_order
-                .ok_or_else(|| missing_field("operation_correlation_order"))?;
-            let mat = ex
-                .operation_correlation
-                .as_ref()
-                .ok_or_else(|| missing_field("operation_correlation"))?;
-            Ok((
-                "correlation",
-                format!(
-                    "order={order} matrix={}",
-                    fmt_f64_list(mat, QUIET_VEC_INLINE_MAX)
-                ),
-            ))
+        Operation::Covariance { .. } | Operation::Correlation { .. } => {
+            quiet_covariance_correlation_matrix(op, ex)
         }
     }
+}
+
+fn quiet_covariance_correlation_matrix(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<(&'static str, String), String> {
+    let label = op.wire_key();
+    let (order, matrix) = match op {
+        Operation::Covariance { .. } => (
+            ex.operation_covariance_order,
+            ex.operation_covariance.as_ref(),
+        ),
+        Operation::Correlation { .. } => (
+            ex.operation_correlation_order,
+            ex.operation_correlation.as_ref(),
+        ),
+        _ => unreachable!("quiet_covariance_correlation_matrix called for non-matrix op"),
+    };
+    let order = order.ok_or_else(|| missing_field(&format!("operation_{label}_order")))?;
+    let mat = matrix.ok_or_else(|| missing_field(&format!("operation_{label}")))?;
+    Ok((
+        label,
+        format!(
+            "order={order} matrix={}",
+            fmt_f64_list(mat, QUIET_VEC_INLINE_MAX)
+        ),
+    ))
 }
 
 fn partial_operation_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<String, String> {

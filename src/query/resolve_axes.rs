@@ -93,30 +93,7 @@ fn resolve_operation_axes(
     dim_names: Option<&[String]>,
     ndim: usize,
 ) -> Result<(), TetError> {
-    let axes = match op {
-        Operation::Sum { axes }
-        | Operation::Mean { axes }
-        | Operation::Min { axes }
-        | Operation::Max { axes }
-        | Operation::Count { axes }
-        | Operation::Var { axes }
-        | Operation::Std { axes }
-        | Operation::Product { axes }
-        | Operation::NormL1 { axes }
-        | Operation::NormL2 { axes }
-        | Operation::AllFinite { axes }
-        | Operation::AnyNan { axes }
-        | Operation::NanCount { axes }
-        | Operation::NullCount { axes, .. }
-        | Operation::ArgMin { axes }
-        | Operation::ArgMax { axes }
-        | Operation::Median { axes }
-        | Operation::Quantile { axes, .. }
-        | Operation::Histogram { axes, .. }
-        | Operation::Covariance { axes }
-        | Operation::Correlation { axes } => axes,
-    };
-    for label in axes.iter_mut() {
+    for label in op.axes_mut() {
         *label = resolve_one_axis_label(label, dim_names, ndim)?;
     }
     Ok(())
