@@ -10,6 +10,7 @@ pub(crate) mod utils;
 
 pub mod catalog;
 pub mod convert;
+pub mod export;
 pub mod layout;
 pub mod query;
 pub mod repair;

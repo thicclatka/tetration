@@ -497,23 +497,7 @@ fn history_queries_equal(a: &QueryDocument, b: &QueryDocument) -> bool {
 fn operation_label(op: Option<&Operation>) -> &'static str {
     match op {
         None => "-",
-        Some(Operation::Sum { .. }) => "sum",
-        Some(Operation::Mean { .. }) => "mean",
-        Some(Operation::Min { .. }) => "min",
-        Some(Operation::Max { .. }) => "max",
-        Some(Operation::Count { .. }) => "count",
-        Some(Operation::Var { .. }) => "var",
-        Some(Operation::Std { .. }) => "std",
-        Some(Operation::Product { .. }) => "product",
-        Some(Operation::NormL1 { .. }) => "norm_l1",
-        Some(Operation::NormL2 { .. }) => "norm_l2",
-        Some(Operation::AllFinite { .. }) => "all_finite",
-        Some(Operation::AnyNan { .. }) => "any_nan",
-        Some(Operation::ArgMin { .. }) => "arg_min",
-        Some(Operation::ArgMax { .. }) => "arg_max",
-        Some(Operation::Median { .. }) => "median",
-        Some(Operation::Quantile { .. }) => "quantile",
-        Some(Operation::Histogram { .. }) => "histogram",
+        Some(op) => op.wire_key(),
     }
 }
 

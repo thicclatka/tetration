@@ -31,11 +31,11 @@ fn small_nc(name: &str) -> PathBuf {
     repo_root().join("fixtures/small/netcdf").join(name)
 }
 
-fn small_zarr(name: &str) -> PathBuf {
+pub(crate) fn small_zarr(name: &str) -> PathBuf {
     repo_root().join("fixtures/small/zarr").join(name)
 }
 
-fn materialize_dataset_le_bytes(mmap: &[u8], dataset: &str) -> Vec<u8> {
+pub(crate) fn materialize_dataset_le_bytes(mmap: &[u8], dataset: &str) -> Vec<u8> {
     let doc = parse_query_json(&format!(r#"{{"dataset":"{dataset}"}}"#)).unwrap();
     validate_query(&doc).unwrap();
     let plan = plan_query_with_tet_mmap(&doc, None, mmap, None).unwrap();
@@ -239,7 +239,7 @@ fn assert_small_fixture_zarr(stem: &str) {
     assert_tet_verify_ok(&output);
 }
 
-fn zarr_array_le_bytes(array_dir: &Path) -> Vec<u8> {
+pub(crate) fn zarr_array_le_bytes(array_dir: &Path) -> Vec<u8> {
     let chunk_path = array_dir.join("c/0/0/0");
     let on_disk = std::fs::read(&chunk_path).unwrap();
     let meta: serde_json::Value =

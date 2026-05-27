@@ -143,6 +143,9 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
     opt_usize(map, "operation_element_count", ex.operation_element_count);
     opt_bool(map, "operation_all_finite", ex.operation_all_finite);
     opt_bool(map, "operation_any_nan", ex.operation_any_nan);
+    opt_f64(map, "operation_nan_count", ex.operation_nan_count);
+    opt_f64(map, "operation_inf_count", ex.operation_inf_count);
+    opt_f64(map, "operation_null_count", ex.operation_null_count);
     opt_u64(map, "operation_argmin_index", ex.operation_argmin_index);
     opt_u64(map, "operation_argmax_index", ex.operation_argmax_index);
     opt_vec_f64(
@@ -155,9 +158,37 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
         "operation_histogram_edges",
         ex.operation_histogram_edges.as_ref(),
     );
+    opt_vec_f64(
+        map,
+        "operation_covariance",
+        ex.operation_covariance.as_ref(),
+    );
+    opt_u64(
+        map,
+        "operation_covariance_order",
+        ex.operation_covariance_order,
+    );
+    opt_vec_f64(
+        map,
+        "operation_correlation",
+        ex.operation_correlation.as_ref(),
+    );
+    opt_u64(
+        map,
+        "operation_correlation_order",
+        ex.operation_correlation_order,
+    );
 }
 
 fn push_execution_reduced_operation_stats(
+    map: &mut Map<String, Value>,
+    ex: &QueryExecutionPreview,
+) {
+    push_execution_reduced_aggregate_stats(map, ex);
+    push_execution_reduced_qc_stats(map, ex);
+}
+
+fn push_execution_reduced_aggregate_stats(
     map: &mut Map<String, Value>,
     ex: &QueryExecutionPreview,
 ) {
@@ -221,6 +252,9 @@ fn push_execution_reduced_operation_stats(
         "operation_reduced_product",
         ex.operation_reduced_product.as_ref(),
     );
+}
+
+fn push_execution_reduced_qc_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPreview) {
     opt_vec_f64(
         map,
         "operation_reduced_norm_l1",
@@ -240,6 +274,21 @@ fn push_execution_reduced_operation_stats(
         map,
         "operation_reduced_any_nan",
         ex.operation_reduced_any_nan.as_ref(),
+    );
+    opt_vec_f64(
+        map,
+        "operation_reduced_nan_count",
+        ex.operation_reduced_nan_count.as_ref(),
+    );
+    opt_vec_f64(
+        map,
+        "operation_reduced_inf_count",
+        ex.operation_reduced_inf_count.as_ref(),
+    );
+    opt_vec_f64(
+        map,
+        "operation_reduced_null_count",
+        ex.operation_reduced_null_count.as_ref(),
     );
     opt_vec_u64(
         map,

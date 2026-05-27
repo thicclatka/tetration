@@ -71,13 +71,23 @@ pub fn parse_query_json(text: &str) -> Result<QueryDocument, TetError> {
     parse_query_value(&value)
 }
 
-/// JSON-only checks: `step != 0`, and when both `start` and `stop` are set, `start < stop`.
+/// JSON-only checks: `step != 0`, numeric bounds, and no mixed label/numeric endpoints.
 pub(super) fn validate_axis_slice_json(i: usize, sl: &AxisSlice) -> Result<(), TetError> {
     if let Some(step) = sl.step
         && step == 0
     {
         return Err(TetError::Validation(format!(
             "selection[{i}].step must be >= 1, got 0"
+        )));
+    }
+    if sl.start.is_some() && sl.start_label.is_some() {
+        return Err(TetError::Validation(format!(
+            "selection[{i}]: use either `start` or `start_label`, not both"
+        )));
+    }
+    if sl.stop.is_some() && sl.stop_label.is_some() {
+        return Err(TetError::Validation(format!(
+            "selection[{i}]: use either `stop` or `stop_label`, not both"
         )));
     }
     match (sl.start, sl.stop) {
@@ -137,6 +147,21 @@ fn validate_operation_params(op: &Operation) -> Result<(), TetError> {
         Operation::Histogram { bins, .. } if *bins > 4096 => Err(TetError::Validation(format!(
             "histogram bins exceeds maximum 4096 (got {bins})"
         ))),
+        Operation::Histogram { min, max, .. } => match (min, max) {
+            (Some(a), Some(b)) if !a.is_finite() || !b.is_finite() => Err(TetError::Validation(
+                "histogram min/max must be finite".into(),
+            )),
+            (Some(a), Some(b)) if a >= b => Err(TetError::Validation(format!(
+                "histogram min must be < max (got {a} >= {b})"
+            ))),
+            (Some(_), None) | (None, Some(_)) => Err(TetError::Validation(
+                "histogram requires both `min` and `max` when either is set".into(),
+            )),
+            _ => Ok(()),
+        },
+        Operation::Covariance { axes } | Operation::Correlation { axes } => {
+            crate::query::materialize::covariance::require_single_observation_axis(axes)
+        }
         _ => Ok(()),
     }
 }
@@ -154,12 +179,7 @@ fn validate_operation_axis_token(s: &str) -> Result<(), TetError> {
             s.len()
         )));
     }
-    if !s.chars().all(|c| c.is_ascii_digit()) {
-        return Err(TetError::Validation(
-            "operation axes must be decimal dimension indices (e.g. \"0\"); non-ASCII labels are not supported yet".into(),
-        ));
-    }
-    Ok(())
+    super::resolve_axes::validate_axis_label_token(s)
 }
 
 fn validate_operation_axes_v1(op: &Operation) -> Result<(), TetError> {

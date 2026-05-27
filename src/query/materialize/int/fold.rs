@@ -602,7 +602,12 @@ macro_rules! int_scalar_fold_arm_value {
             kind;
             acc;
             sequential_io;
-            on_value: |acc: &mut ValueAccum, _li, v, _kind| acc.push_f64(v),
+            on_value: |acc: &mut ValueAccum, _li, v, kind| match kind {
+                ReductionKind::NanCount => acc.push_nan_f64(v),
+                ReductionKind::InfCount => acc.push_inf_f64(v),
+                ReductionKind::NullCount { fill } => acc.push_null_f64(v, fill),
+                _ => acc.push_f64(v),
+            },
             finish => acc.finish_scalar(kind)
         )
     }};

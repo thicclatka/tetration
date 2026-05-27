@@ -98,9 +98,10 @@ fn parses_flat_mean_on_axis_zero() {
 
 #[test]
 fn rejects_invalid_operation_axis_token() {
-    let json = r#"{"dataset":"a","sum":"x"}"#;
+    // Single-letter names like "x" are valid dimension names (Phase 9); reject malformed tokens.
+    let json = r#"{"dataset":"a","sum":"9bad"}"#;
     let err = parse_query_json(json).unwrap_err();
-    assert!(err.to_string().contains("decimal"), "{err}");
+    assert!(err.to_string().contains("invalid axis label"), "{err}");
 }
 
 #[test]
@@ -576,6 +577,61 @@ fn plan_query_operation_min_along_axis_zero() {
     assert!((mins[0] - 1.0).abs() < 1e-5);
     assert!((mins[1] - 2.0).abs() < 1e-5);
     assert!((mins[2] - 3.0).abs() < 1e-5);
+}
+
+#[test]
+fn named_axis_resolves_via_footer_dim_names() {
+    use crate::catalog::{DatasetMetadataV1, FooterBlobV1, TetMetadataV1, write_footer_blob};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dim_names.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1 {
+                datasets: [(
+                    "a".to_owned(),
+                    DatasetMetadataV1 {
+                        dim_names: Some(vec!["row".to_owned(), "col".to_owned()]),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            }),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+
+    let mmap = mmap_file_read(&path).unwrap();
+    let by_name = parse_query_json(r#"{"dataset":"a","min":"row"}"#).unwrap();
+    validate_query(&by_name).unwrap();
+    let by_idx = parse_query_json(r#"{"dataset":"a","min":0}"#).unwrap();
+    let r_name = plan_query_with_tet_mmap(&by_name, None, &mmap, Some(4)).unwrap();
+    let r_idx = plan_query_with_tet_mmap(&by_idx, None, &mmap, Some(4)).unwrap();
+    let ex_name = r_name.execution.as_ref().unwrap();
+    let ex_idx = r_idx.execution.as_ref().unwrap();
+    assert_eq!(ex_name.operation_reduced_min, ex_idx.operation_reduced_min);
+    assert_eq!(
+        ex_name.operation_reduced_shape,
+        ex_idx.operation_reduced_shape
+    );
+}
+
+#[test]
+fn named_axis_requires_dim_names_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no_dim_names.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a","mean":"row"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let err = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap_err();
+    assert!(err.to_string().contains("dim_names"));
 }
 
 #[test]
@@ -1056,6 +1112,253 @@ fn plan_query_operation_quantile_scalar() {
         plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
     let ex = resp.execution.as_ref().unwrap();
     assert!((ex.operation_quantile.unwrap() - 5.75).abs() < 1e-5);
+}
+
+#[test]
+fn histogram_scalar_respects_min_max_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hist.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let json = r#"{"dataset":"a","histogram":{"bins":2,"min":0,"max":10},"execution":{"memory_budget_bytes":999999}}"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let edges = resp
+        .execution
+        .as_ref()
+        .unwrap()
+        .operation_histogram_edges
+        .as_ref()
+        .unwrap();
+    assert_eq!(edges.len(), 3);
+    assert!((edges[0] - 0.0).abs() < 1e-9);
+    assert!((edges[2] - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn nan_count_scalar_on_f32_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nan.tet");
+    let data = fixture::le_row_major_2x3_f32_one_to_six();
+    let mut patched = data.clone();
+    patched[4..8].copy_from_slice(&f32::NAN.to_le_bytes());
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            data: &patched,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","nan_count":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert_eq!(
+        resp.execution.as_ref().unwrap().operation_nan_count,
+        Some(1.0)
+    );
+}
+
+#[test]
+fn inf_count_scalar_on_f32_fixture() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inf.tet");
+    let mut patched = fixture::le_row_major_2x3_f32_one_to_six();
+    patched[0..4].copy_from_slice(&f32::INFINITY.to_le_bytes());
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            data: &patched,
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","inf_count":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert_eq!(
+        resp.execution.as_ref().unwrap().operation_inf_count,
+        Some(1.0)
+    );
+}
+
+#[test]
+fn null_count_uses_footer_fill_value() {
+    use crate::catalog::{DatasetMetadataV1, FooterBlobV1, TetMetadataV1, write_footer_blob};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fill.tet");
+    let mut data = fixture::le_row_major_2x3_u8_one_to_six();
+    data[0] = 99;
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            data: &data,
+            dtype: DATASET_DTYPE_TAG_V1.u8,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1 {
+                datasets: [(
+                    "a".to_owned(),
+                    DatasetMetadataV1 {
+                        attrs: [("_FillValue".to_owned(), "99".to_owned())].into(),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            }),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","null_count":[]}"#).unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert_eq!(
+        resp.execution.as_ref().unwrap().operation_null_count,
+        Some(1.0)
+    );
+}
+
+#[test]
+fn selection_coord_labels_resolve_to_row_slice() {
+    use crate::catalog::{
+        CoordAxisV1, DatasetMetadataV1, FooterBlobV1, TetMetadataV1, write_footer_blob,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("coords.tet");
+    write_raw_array_file(
+        &path,
+        &RawArrayWrite {
+            name: "a",
+            shape: &SHAPE_2X3,
+            chunk_shape: &CHUNK_2X2,
+            data: &fixture::le_row_major_2x3_f32_one_to_six(),
+            dtype: DATASET_DTYPE_TAG_V1.f32,
+            chunk_codec: CHUNK_PAYLOAD_CODEC_V1.raw,
+            file_execution: None,
+        },
+    )
+    .unwrap();
+    write_footer_blob(
+        &path,
+        &FooterBlobV1 {
+            history: Vec::new(),
+            metadata: Some(TetMetadataV1 {
+                datasets: [(
+                    "a".to_owned(),
+                    DatasetMetadataV1 {
+                        dim_names: Some(vec!["row".into(), "col".into()]),
+                        coords: Some({
+                            let mut m = std::collections::BTreeMap::new();
+                            m.insert(
+                                "row".into(),
+                                CoordAxisV1 {
+                                    labels: vec!["r0".into(), "r1".into()],
+                                },
+                            );
+                            m
+                        }),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            }),
+            metadata_ref: None,
+        },
+    )
+    .unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(
+        r#"{
+            "dataset":"a",
+            "selection":[
+                {"start_label":"r0","stop_label":"r1"},
+                {"start":0,"stop":3}
+            ],
+            "mean":[]
+        }"#,
+    )
+    .unwrap();
+    let resp = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    assert_eq!(resp.execution.as_ref().unwrap().operation_mean, Some(2.0));
+}
+
+#[test]
+fn covariance_on_2x3_selection_obs_axis_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cov.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(
+        r#"{"dataset":"a","covariance":1,"execution":{"memory_budget_bytes":999999}}"#,
+    )
+    .unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_covariance_order, Some(2));
+    let cov = ex.operation_covariance.as_ref().unwrap();
+    assert_eq!(cov.len(), 4);
+    assert_eq!(ex.operation_element_count, Some(6));
+    let expected = crate::query::materialize::covariance::run_covariance_correlation(
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        &[2, 3],
+        1,
+        false,
+    )
+    .unwrap()
+    .covariance
+    .unwrap();
+    for (a, b) in cov.iter().zip(expected.iter()) {
+        assert!((a - b).abs() < 1e-5, "got {a} expected {b}");
+    }
+}
+
+#[test]
+fn correlation_on_2x3_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("corr.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(
+        r#"{"dataset":"a","correlation":{"axis":1},"execution":{"memory_budget_bytes":999999}}"#,
+    )
+    .unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_correlation_order, Some(2));
+    let corr = ex.operation_correlation.as_ref().unwrap();
+    assert!((corr[0] - 1.0).abs() < 1e-9);
+    assert!((corr[3] - 1.0).abs() < 1e-9);
 }
 
 #[test]

@@ -18,7 +18,7 @@
 - **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import** — `tet convert` from HDF5, NetCDF, Zarr v3 directory stores.
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
-- **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`.
+- **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
 
 **Wire dtypes** (tags `1`–`10`, row-major chunks): **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`**, **`u16`**, **`i16`**, **`u32`**, **`f16`**, **`u64`**. Booleans import as **`u8`**. See [`docs/layout_v1.md`](docs/layout_v1.md#dataset-record-concatenated-variable-length-per-record).
 
@@ -183,7 +183,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops (named axes, histogram edges, **fill/NaN QC counts** such as `nan_count` / `null_count`, covariance/correlation) and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
 
 ## Library use
 

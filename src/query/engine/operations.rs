@@ -1,93 +1,64 @@
-#![allow(clippy::too_many_arguments)]
-
 use std::path::Path;
 
-use crate::query::types::{
-    ExecutionHints, Operation, OperationPreviewFields, OutputHint, OutputHints,
-    QueryExecutionPreview, ReadPlan, TetError,
+use crate::query::{
+    dispatch,
+    engine::{budget, spill_policy},
+    fold,
+    materialize::{self, stats::run_tier_c_operation},
+    types,
 };
 use crate::utils::dtype::ElementDtype;
 
-use crate::query::dispatch::{
-    materialize_for_execution, partial_fold, scalar_fold, spill_export_preview,
-    spill_full_selection,
-};
-use crate::query::engine::budget::{ExecutionBudget, MemoryStrategy};
-use crate::query::engine::spill_policy::SpillPathAllowlist;
-use crate::query::fold::FoldPlanOutcome;
-use crate::query::fold::fold_policy::FoldIoPolicy;
-use crate::query::fold::reduction::ReductionKind;
-use crate::query::materialize::stats::run_tier_c_operation;
-use crate::query::materialize::{
-    DecodePreviewBundle, MaterializedLogical, materialize_logical_selection,
-    preview_from_materialized,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OperationMaterializeTier {
-    Streaming,
-    MaterializeRequired,
-}
-
-impl Operation {
-    fn materialize_tier(&self) -> OperationMaterializeTier {
-        match self {
-            Self::Median { .. } | Self::Quantile { .. } | Self::Histogram { .. } => {
-                OperationMaterializeTier::MaterializeRequired
-            }
-            _ => OperationMaterializeTier::Streaming,
-        }
-    }
-}
-
-fn materialized_io(materialized: &MaterializedLogical) -> (u64, MemoryStrategy) {
+fn materialized_io(
+    materialized: &materialize::MaterializedLogical,
+) -> (u64, budget::MemoryStrategy) {
     match materialized {
-        MaterializedLogical::F32 {
+        materialize::MaterializedLogical::F32 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::F64 {
+        | materialize::MaterializedLogical::F64 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::I32 {
+        | materialize::MaterializedLogical::I32 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::I64 {
+        | materialize::MaterializedLogical::I64 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::U8 {
+        | materialize::MaterializedLogical::U8 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::U16 {
+        | materialize::MaterializedLogical::U16 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::I16 {
+        | materialize::MaterializedLogical::I16 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::U32 {
+        | materialize::MaterializedLogical::U32 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::U64 {
+        | materialize::MaterializedLogical::U64 {
             total_bytes_read_from_disk,
             strategy,
             ..
         }
-        | MaterializedLogical::F16 {
+        | materialize::MaterializedLogical::F16 {
             total_bytes_read_from_disk,
             strategy,
             ..
@@ -97,47 +68,30 @@ fn materialized_io(materialized: &MaterializedLogical) -> (u64, MemoryStrategy) 
 
 fn preview_from_bundle(
     total_bytes_read_from_disk: u64,
-    bundle: DecodePreviewBundle,
-    operation: OperationPreviewFields,
+    previews: materialize::DecodePreviewBundle,
+    operation: types::OperationPreviewFields,
     memory_strategy: Option<&'static str>,
     spill_f32_path: Option<String>,
     spill_f32_bytes: Option<u64>,
-) -> QueryExecutionPreview {
-    QueryExecutionPreview::with_operation_and_io(
-        total_bytes_read_from_disk,
-        bundle.f32,
-        bundle.f32_truncated,
-        bundle.f64,
-        bundle.f64_truncated,
-        bundle.i32,
-        bundle.i32_truncated,
-        bundle.i64,
-        bundle.i64_truncated,
-        bundle.u8,
-        bundle.u8_truncated,
-        bundle.u16,
-        bundle.u16_truncated,
-        bundle.i16,
-        bundle.i16_truncated,
-        bundle.u32,
-        bundle.u32_truncated,
-        bundle.u64,
-        bundle.u64_truncated,
-        bundle.f16,
-        bundle.f16_truncated,
+) -> types::QueryExecutionPreview {
+    types::QueryExecutionPreview::assemble(types::QueryExecutionPreviewBuild {
+        io: types::ExecutionPreviewIo {
+            total_bytes_read_from_disk,
+            memory_strategy,
+            spill_f32_path,
+            spill_f32_bytes,
+        },
+        previews,
         operation,
-        memory_strategy,
-        spill_f32_path,
-        spill_f32_bytes,
-    )
+    })
 }
 
 fn attach_budget_fields(
-    preview: &mut QueryExecutionPreview,
-    budget: ExecutionBudget,
-    plan: &ReadPlan,
+    preview: &mut types::QueryExecutionPreview,
+    budget: budget::ExecutionBudget,
+    plan: &types::ReadPlan,
     dtype: ElementDtype,
-    fold_policy: Option<FoldIoPolicy>,
+    fold_policy: Option<fold::fold_policy::FoldIoPolicy>,
 ) {
     preview.memory_budget_bytes = Some(budget.memory_budget_bytes);
     preview.host_available_ram_bytes = budget.host_available_ram_bytes;
@@ -156,16 +110,16 @@ fn attach_budget_fields(
 }
 
 fn fold_outcome_to_preview(
-    folded: FoldPlanOutcome,
-    strategy: MemoryStrategy,
-    budget: ExecutionBudget,
-    plan: &ReadPlan,
+    folded: fold::FoldPlanOutcome,
+    strategy: budget::MemoryStrategy,
+    budget: budget::ExecutionBudget,
+    plan: &types::ReadPlan,
     dtype: ElementDtype,
-    fold_policy: FoldIoPolicy,
-) -> QueryExecutionPreview {
+    fold_policy: fold::fold_policy::FoldIoPolicy,
+) -> types::QueryExecutionPreview {
     let mut preview = preview_from_bundle(
         folded.total_bytes_read_from_disk,
-        DecodePreviewBundle {
+        materialize::DecodePreviewBundle {
             f32: folded.f32_preview,
             f64: folded.f64_preview,
             i32: folded.i32_preview,
@@ -198,16 +152,20 @@ fn fold_outcome_to_preview(
 
 fn run_materialize_required_operation(
     mmap: &[u8],
-    plan: &ReadPlan,
-    op: &Operation,
+    plan: &types::ReadPlan,
+    op: &types::Operation,
     max_preview: usize,
-    budget: &ExecutionBudget,
-    allowlist: &SpillPathAllowlist,
+    budget: &budget::ExecutionBudget,
+    allowlist: &spill_policy::SpillPathAllowlist,
     dtype: ElementDtype,
-) -> Result<QueryExecutionPreview, TetError> {
-    let materialized = materialize_logical_selection(mmap, plan, budget, allowlist, dtype)?;
-    let bundle =
-        preview_from_materialized(&materialized, plan.logical_f32_element_count, max_preview)?;
+) -> Result<types::QueryExecutionPreview, types::TetError> {
+    let materialized =
+        materialize::materialize_logical_selection(mmap, plan, budget, allowlist, dtype)?;
+    let bundle = materialize::preview_from_materialized(
+        &materialized,
+        plan.logical_f32_element_count,
+        max_preview,
+    )?;
     let operation = run_tier_c_operation(&materialized, plan, op)?;
     let (total_bytes_read_from_disk, strategy) = materialized_io(&materialized);
     let mut preview = preview_from_bundle(
@@ -222,33 +180,35 @@ fn run_materialize_required_operation(
     Ok(preview)
 }
 
-fn scalar_reduction_kind(op: &Operation) -> Option<ReductionKind> {
-    op.axes().is_empty().then(|| ReductionKind::from(op))
+fn scalar_reduction_kind(op: &types::Operation) -> Option<fold::reduction::ReductionKind> {
+    op.axes()
+        .is_empty()
+        .then(|| fold::reduction::ReductionKind::from(op))
 }
 
-fn spill_requested(output: Option<&OutputHints>) -> Option<&str> {
+fn spill_requested(output: Option<&types::OutputHints>) -> Option<&str> {
     match output.and_then(|o| o.preferred.as_ref()) {
-        Some(OutputHint::SpillArray { handle }) => Some(handle.as_str()),
+        Some(types::OutputHint::SpillArray { handle }) => Some(handle.as_str()),
         _ => None,
     }
 }
 
 pub(super) struct ExecutionPreviewInput<'a> {
     pub mmap: &'a [u8],
-    pub plan: &'a ReadPlan,
+    pub plan: &'a types::ReadPlan,
     pub dtype: u32,
-    pub operation: Option<&'a Operation>,
-    pub output: Option<&'a OutputHints>,
+    pub operation: Option<&'a types::Operation>,
+    pub output: Option<&'a types::OutputHints>,
     pub max_f32: usize,
-    pub budget: ExecutionBudget,
-    pub execution: Option<&'a ExecutionHints>,
-    pub spill_allowlist: Option<&'a SpillPathAllowlist>,
+    pub budget: budget::ExecutionBudget,
+    pub execution: Option<&'a types::ExecutionHints>,
+    pub spill_allowlist: Option<&'a spill_policy::SpillPathAllowlist>,
     pub tet_path: Option<&'a Path>,
 }
 
 pub(super) fn build_execution_preview(
     input: &ExecutionPreviewInput<'_>,
-) -> Result<QueryExecutionPreview, TetError> {
+) -> Result<types::QueryExecutionPreview, types::TetError> {
     let ExecutionPreviewInput {
         mmap,
         plan,
@@ -273,40 +233,53 @@ pub(super) fn build_execution_preview(
             spill_allowlist,
             elem_dtype,
         ),
-        Some(op) => build_operation_preview(
+        Some(op) => build_operation_preview(&OperationPreviewInput {
             mmap,
             plan,
             op,
-            max_f32,
+            max_preview: max_f32,
             budget,
             execution,
             spill_allowlist,
-            elem_dtype,
+            dtype: elem_dtype,
             tet_path,
-        ),
+        }),
     }
+}
+
+struct OperationPreviewInput<'a> {
+    mmap: &'a [u8],
+    plan: &'a types::ReadPlan,
+    op: &'a types::Operation,
+    max_preview: usize,
+    budget: budget::ExecutionBudget,
+    execution: Option<&'a types::ExecutionHints>,
+    spill_allowlist: Option<&'a spill_policy::SpillPathAllowlist>,
+    dtype: ElementDtype,
+    tet_path: Option<&'a Path>,
 }
 
 fn build_decode_preview(
     mmap: &[u8],
-    plan: &ReadPlan,
-    output: Option<&OutputHints>,
+    plan: &types::ReadPlan,
+    output: Option<&types::OutputHints>,
     max_preview: usize,
-    budget: ExecutionBudget,
-    spill_allowlist: Option<&SpillPathAllowlist>,
+    budget: budget::ExecutionBudget,
+    spill_allowlist: Option<&spill_policy::SpillPathAllowlist>,
     dtype: ElementDtype,
-) -> Result<QueryExecutionPreview, TetError> {
+) -> Result<types::QueryExecutionPreview, types::TetError> {
     if let Some(spill_path) = spill_requested(output) {
         let path = Path::new(spill_path);
         let policy = spill_allowlist.ok_or_else(|| {
-            TetError::Validation(
+            types::TetError::Validation(
                 "spill output requires a spill path allowlist (pass `--tet` so defaults apply)"
                     .into(),
             )
         })?;
         let resolved = policy.validate(path)?;
-        let total_bytes_read_from_disk = spill_full_selection(mmap, plan, &resolved, dtype)?;
-        let bundle = spill_export_preview(
+        let total_bytes_read_from_disk =
+            dispatch::spill_full_selection(mmap, plan, &resolved, dtype)?;
+        let bundle = dispatch::spill_export_preview(
             &resolved,
             plan.logical_f32_element_count,
             max_preview,
@@ -316,8 +289,8 @@ fn build_decode_preview(
         let mut preview = preview_from_bundle(
             total_bytes_read_from_disk,
             bundle,
-            OperationPreviewFields::default(),
-            Some(MemoryStrategy::MmapSpill.as_str()),
+            types::OperationPreviewFields::default(),
+            Some(budget::MemoryStrategy::MmapSpill.as_str()),
             Some(resolved.display().to_string()),
             Some(spill_bytes),
         );
@@ -325,7 +298,7 @@ fn build_decode_preview(
         return Ok(preview);
     }
     if budget.full_tensor_exceeds_budget(plan, dtype)? && max_preview == 0 {
-        return Err(TetError::Validation(format!(
+        return Err(types::TetError::Validation(format!(
             "logical selection ({} elements, {} bytes) exceeds memory_budget_bytes ({}); \
              use a positive preview cap, a reduction key, `spill`, or raise execution.memory_budget_bytes / memory_budget_percent_bps",
             plan.logical_f32_element_count,
@@ -333,12 +306,13 @@ fn build_decode_preview(
             budget.memory_budget_bytes
         )));
     }
-    let (bundle, total_bytes) = materialize_for_execution(mmap, plan, Some(max_preview), dtype)?;
+    let (bundle, total_bytes) =
+        dispatch::materialize_for_execution(mmap, plan, Some(max_preview), dtype)?;
     let mut preview = preview_from_bundle(
         total_bytes,
         bundle,
-        OperationPreviewFields::default(),
-        Some(MemoryStrategy::CappedInMemory.as_str()),
+        types::OperationPreviewFields::default(),
+        Some(budget::MemoryStrategy::CappedInMemory.as_str()),
         None,
         None,
     );
@@ -347,19 +321,22 @@ fn build_decode_preview(
 }
 
 fn build_operation_preview(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    op: &Operation,
-    max_preview: usize,
-    budget: ExecutionBudget,
-    execution: Option<&ExecutionHints>,
-    spill_allowlist: Option<&SpillPathAllowlist>,
-    dtype: ElementDtype,
-    tet_path: Option<&Path>,
-) -> Result<QueryExecutionPreview, TetError> {
-    if op.materialize_tier() == OperationMaterializeTier::MaterializeRequired {
+    input: &OperationPreviewInput<'_>,
+) -> Result<types::QueryExecutionPreview, types::TetError> {
+    let OperationPreviewInput {
+        mmap,
+        plan,
+        op,
+        max_preview,
+        budget,
+        execution,
+        spill_allowlist,
+        dtype,
+        tet_path,
+    } = *input;
+    if op.requires_materialize() {
         let policy = spill_allowlist.ok_or_else(|| {
-            TetError::Validation(
+            types::TetError::Validation(
                 "materialize-required operation needs a spill path allowlist (pass `--tet` so defaults apply)"
                     .into(),
             )
@@ -374,20 +351,21 @@ fn build_operation_preview(
             dtype,
         );
     }
-    let fold_policy = FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
+    let fold_policy = fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
-        let folded = scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy, tet_path)?;
+        let folded =
+            dispatch::scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy, tet_path)?;
         return Ok(fold_outcome_to_preview(
             folded,
-            MemoryStrategy::StreamingFold,
+            budget::MemoryStrategy::StreamingFold,
             budget,
             plan,
             dtype,
             fold_policy,
         ));
     }
-    let kind = ReductionKind::from(op);
-    let folded = partial_fold(
+    let kind = fold::reduction::ReductionKind::from(op);
+    let folded = dispatch::partial_fold(
         mmap,
         plan,
         max_preview,
@@ -398,7 +376,7 @@ fn build_operation_preview(
     )?;
     Ok(fold_outcome_to_preview(
         folded,
-        MemoryStrategy::StreamingFold,
+        budget::MemoryStrategy::StreamingFold,
         budget,
         plan,
         dtype,

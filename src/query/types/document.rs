@@ -8,12 +8,19 @@ use serde::{Deserialize, Serialize};
 // `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, `spill: "…"`, …).
 
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
+///
+/// Coordinate labels (`start_label` / `stop_label`) resolve to indices at plan time when footer
+/// `coords` exist (axis key = `dim_names[d]` or decimal `"d"`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AxisSlice {
     pub start: Option<u64>,
     pub stop: Option<u64>,
     pub step: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_label: Option<String>,
 }
 
 /// Reduction or aggregate over the logical selection.
@@ -24,48 +31,166 @@ pub struct AxisSlice {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
-    Sum { axes: Vec<String> },
-    Mean { axes: Vec<String> },
-    Min { axes: Vec<String> },
-    Max { axes: Vec<String> },
-    Count { axes: Vec<String> },
-    Var { axes: Vec<String> },
-    Std { axes: Vec<String> },
-    Product { axes: Vec<String> },
-    NormL1 { axes: Vec<String> },
-    NormL2 { axes: Vec<String> },
-    AllFinite { axes: Vec<String> },
-    AnyNan { axes: Vec<String> },
-    ArgMin { axes: Vec<String> },
-    ArgMax { axes: Vec<String> },
-    Median { axes: Vec<String> },
-    Quantile { axes: Vec<String>, q: f64 },
-    Histogram { axes: Vec<String>, bins: u32 },
+    Sum {
+        axes: Vec<String>,
+    },
+    Mean {
+        axes: Vec<String>,
+    },
+    Min {
+        axes: Vec<String>,
+    },
+    Max {
+        axes: Vec<String>,
+    },
+    Count {
+        axes: Vec<String>,
+    },
+    Var {
+        axes: Vec<String>,
+    },
+    Std {
+        axes: Vec<String>,
+    },
+    Product {
+        axes: Vec<String>,
+    },
+    NormL1 {
+        axes: Vec<String>,
+    },
+    NormL2 {
+        axes: Vec<String>,
+    },
+    AllFinite {
+        axes: Vec<String>,
+    },
+    AnyNan {
+        axes: Vec<String>,
+    },
+    ArgMin {
+        axes: Vec<String>,
+    },
+    ArgMax {
+        axes: Vec<String>,
+    },
+    Median {
+        axes: Vec<String>,
+    },
+    Quantile {
+        axes: Vec<String>,
+        q: f64,
+    },
+    Histogram {
+        axes: Vec<String>,
+        bins: u32,
+        /// When both set, bin edges span `[min, max]`; otherwise data min/max.
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+    /// Count of NaN elements (float/`f16` wire tags; integers contribute 0).
+    NanCount {
+        axes: Vec<String>,
+    },
+    /// Count of ±infinity elements (float/`f16`; integers contribute 0).
+    InfCount {
+        axes: Vec<String>,
+    },
+    /// Count of elements equal to `fill` (resolved from query or dataset attrs at plan time).
+    NullCount {
+        axes: Vec<String>,
+        fill: Option<f64>,
+    },
+    /// Population covariance matrix (variables × variables) with samples along `axes[0]`.
+    Covariance {
+        axes: Vec<String>,
+    },
+    /// Pearson correlation matrix with samples along `axes[0]`.
+    Correlation {
+        axes: Vec<String>,
+    },
+}
+
+macro_rules! operation_axes_match {
+    ($op:expr) => {
+        match $op {
+            Operation::Sum { axes }
+            | Operation::Mean { axes }
+            | Operation::Min { axes }
+            | Operation::Max { axes }
+            | Operation::Count { axes }
+            | Operation::Var { axes }
+            | Operation::Std { axes }
+            | Operation::Product { axes }
+            | Operation::NormL1 { axes }
+            | Operation::NormL2 { axes }
+            | Operation::AllFinite { axes }
+            | Operation::AnyNan { axes }
+            | Operation::ArgMin { axes }
+            | Operation::ArgMax { axes }
+            | Operation::Median { axes }
+            | Operation::Quantile { axes, .. }
+            | Operation::Histogram { axes, .. }
+            | Operation::NanCount { axes }
+            | Operation::InfCount { axes }
+            | Operation::NullCount { axes, .. }
+            | Operation::Covariance { axes }
+            | Operation::Correlation { axes } => axes,
+        }
+    };
 }
 
 impl Operation {
     /// Per-axis decimal dimension indices for this operation.
     #[must_use]
     pub fn axes(&self) -> &[String] {
+        operation_axes_match!(self)
+    }
+
+    /// Mutable axis list for plan-time name → index resolution.
+    pub(crate) fn axes_mut(&mut self) -> &mut Vec<String> {
+        operation_axes_match!(self)
+    }
+
+    /// Top-level JSON wire key (`"mean"`, `"arg_min"`, …).
+    #[must_use]
+    pub fn wire_key(&self) -> &'static str {
         match self {
-            Self::Sum { axes }
-            | Self::Mean { axes }
-            | Self::Min { axes }
-            | Self::Max { axes }
-            | Self::Count { axes }
-            | Self::Var { axes }
-            | Self::Std { axes }
-            | Self::Product { axes }
-            | Self::NormL1 { axes }
-            | Self::NormL2 { axes }
-            | Self::AllFinite { axes }
-            | Self::AnyNan { axes }
-            | Self::ArgMin { axes }
-            | Self::ArgMax { axes }
-            | Self::Median { axes }
-            | Self::Quantile { axes, .. }
-            | Self::Histogram { axes, .. } => axes,
+            Self::Sum { .. } => "sum",
+            Self::Mean { .. } => "mean",
+            Self::Min { .. } => "min",
+            Self::Max { .. } => "max",
+            Self::Count { .. } => "count",
+            Self::Var { .. } => "var",
+            Self::Std { .. } => "std",
+            Self::Product { .. } => "product",
+            Self::NormL1 { .. } => "norm_l1",
+            Self::NormL2 { .. } => "norm_l2",
+            Self::AllFinite { .. } => "all_finite",
+            Self::AnyNan { .. } => "any_nan",
+            Self::NanCount { .. } => "nan_count",
+            Self::InfCount { .. } => "inf_count",
+            Self::NullCount { .. } => "null_count",
+            Self::ArgMin { .. } => "arg_min",
+            Self::ArgMax { .. } => "arg_max",
+            Self::Median { .. } => "median",
+            Self::Quantile { .. } => "quantile",
+            Self::Histogram { .. } => "histogram",
+            Self::Covariance { .. } => "covariance",
+            Self::Correlation { .. } => "correlation",
         }
+    }
+
+    /// Tier-C ops that require a full logical materialize (not streaming fold).
+    #[must_use]
+    pub fn requires_materialize(&self) -> bool {
+        matches!(
+            self,
+            Self::Median { .. }
+                | Self::Quantile { .. }
+                | Self::Histogram { .. }
+                | Self::Covariance { .. }
+                | Self::Correlation { .. }
+        )
     }
 }
 

@@ -6,6 +6,8 @@ use crate::catalog::{
     CatalogError, DATASET_DTYPE_TAG_V1, DatasetRecordV1, TetFileSummaryV1,
     chunk_coords_intersecting_strided, read_tet_summary_v1, tensor_bytes_from_shape,
 };
+use crate::query::resolve_axes::resolve_query_document_axes;
+use crate::query::resolve_selection::resolve_query_document_selection;
 use crate::query::types::{
     CHUNK_TOUCH_POLICY, DatasetResolution, OutputHint, QueryDocument, QueryExecutionPreview,
     QueryResponse, ReadPlan, TetError,
@@ -271,8 +273,12 @@ fn plan_query_matched_dataset(
     spill_allowlist: Option<&SpillPathAllowlist>,
 ) -> Result<QueryResponse, TetError> {
     let rec = &summary.datasets[dataset_idx];
+    let mut doc = doc.clone();
+    let dataset_meta = summary.metadata.datasets.get(&doc.dataset);
+    resolve_query_document_axes(&mut doc, dataset_meta, rec.shape.len())?;
+    resolve_query_document_selection(&mut doc, dataset_meta, &rec.shape)?;
     let rows = chunk_index_rows_for_dataset(summary, dataset_idx);
-    let read_plan = build_matched_read_plan(summary, dataset_idx, doc)?;
+    let read_plan = build_matched_read_plan(summary, dataset_idx, &doc)?;
     if doc.operation.is_some() && raw_f32_preview_max.is_none() {
         return Err(TetError::Validation(
             "`operation` requires mmap execution with an explicit preview limit (e.g. `--execute --preview-f32 64`, or `--preview-f32 0` to omit preview floats)".into(),
@@ -283,7 +289,7 @@ fn plan_query_matched_dataset(
     );
     let execution = matched_dataset_execution(
         &MatchedExecutionCtx {
-            doc,
+            doc: &doc,
             mmap,
             read_plan: &read_plan,
             rec,
@@ -295,7 +301,7 @@ fn plan_query_matched_dataset(
         &mut message,
     )?;
     Ok(query_response(
-        doc,
+        &doc,
         message,
         tet_path,
         Some(matched_dataset_resolution(summary, dataset_idx, rec, rows)),
