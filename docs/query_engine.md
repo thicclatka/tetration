@@ -68,9 +68,83 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                                                 |
 | `table`          | —     | ASCII tables: query summary, `read_plan`, execution I/O, scalar/partial **result**, optional **preview** sample (like `tet info`)              |
 
-**Phase 10 (device routing):** optional `execution.device` or `tet query … --device` (`cpu`, `auto`, `metal`, `cuda`, `cuda:N`). Decode stays on the host; tier-A/B scalar **`f32`** reductions can run on device when built with **`tetration-metal`** (macOS) or **`tetration-gpu`** (CUDA). Preview records `device_used` / `device_fallback_reason`. `auto` picks Metal on macOS when enabled, else CUDA, else CPU; skips GPU below 64 MiB logical selection. GPU scalar paths require a dense host **`f32`** buffer: routing refuses device when logical bytes exceed ~85% of probed host RAM (or 8 GiB when RAM cannot be probed), with `device_fallback_reason` **`gpu_host_materialize_exceeded`** — CPU streaming fold runs instead (no full-RAM materialize attempt).
+**Phase 10 (device routing):** optional `execution.device` or `tet query … --device` — see [Phase 10 — optional GPU](#phase-10--optional-gpu-experimental).
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
+
+## Phase 10 — optional GPU (experimental)
+
+**Status:** scaffold on `feat/phase10-gpu-scaffold` — routing + CUDA/Metal kernels ship behind optional features; **CPU streaming fold remains the fast, correct default** for large and extra-large selections on Apple Silicon benches.
+
+### What it does today
+
+1. **Host decode** — mmap + chunk decode unchanged (raw **0** / zstd **1**).
+2. **GPU path (when routed)** — dense host **`f32`** materialize (`vec` sized to logical selection), then:
+   - **Device:** `sum`, `mean`, `min`, `max`, `count` via block-reduce kernels (`tetration-metal` on macOS, `tetration-gpu` on CUDA).
+   - **Host (`f64` SIMD):** population **`var`** / **`std`** (`ddof = 0`) — same accumulators as streaming CPU fold; **not** device tree-reduce (f32 GPU sum-of-squares was numerically wrong at ~10⁹ elements).
+3. **CPU streaming** — parallel chunk fold or out-of-core linear scan when GPU is not selected or falls back.
+
+Preview JSON / **`stats`** format: `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`.
+
+### `execution.device` / `--device`
+
+| Token             | Behavior                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cpu`             | Always host streaming fold.                                                                                                                             |
+| `auto`            | Metal on macOS when `tetration-metal` enabled, else CUDA device 0 when `tetration-gpu` enabled, else CPU. Skips GPU below **64 MiB** logical selection. |
+| `metal`           | Apple GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                      |
+| `cuda` / `cuda:N` | NVIDIA GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                     |
+
+CLI **`--device`** overrides query JSON `execution.device` (needs **`-x`**).
+
+### Host-RAM gate (before materialize)
+
+GPU scalar paths need a dense host buffer of size `logical_f32_bytes`. Routing refuses device when:
+
+- logical bytes **>** **85%** of probed host RAM (`MemAvailable` / macOS free+inactive), or
+- logical bytes **>** **8 GiB** when RAM cannot be probed.
+
+Fallback: **`device_used: cpu`**, **`device_fallback_reason: gpu_host_materialize_exceeded`** — CPU streaming fold runs (typical for **~20 GiB** extra-large bench tensors).
+
+Constants: [`GPU_HOST_MATERIALIZE_RAM_FRACTION`](../src/query/device.rs), [`GPU_HOST_MATERIALIZE_UNKNOWN_HOST_CAP_BYTES`](../src/query/device.rs).
+
+### Other fallback reasons
+
+| `device_fallback_reason`        | Meaning                                                                     |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `gpu_feature_disabled`          | Requested GPU but crate not built with `tetration-metal` / `tetration-gpu`. |
+| `gpu_host_materialize_exceeded` | Selection too large for host materialize budget (see above).                |
+| `auto_below_size_threshold`     | `auto` and logical selection &lt; 64 MiB.                                   |
+| `gpu_unsupported_dtype`         | Not dense **`f32`**.                                                        |
+| `gpu_unsupported_op`            | Tier-C / partial-axis / unsupported scalar op.                              |
+| `tier_c_materialize`            | `median` / `quantile` / `histogram` need full materialize path.             |
+| `preview_or_spill_only`         | No `operation` in query.                                                    |
+
+Runtime GPU failures (VRAM, decode, kernel) fall back to CPU with reasons such as `gpu_vram_exceeded`, `gpu_runtime_error`, `gpu_host_decode_failed` (see [`scalar_fold.rs`](../src/query/gpu/scalar_fold.rs)).
+
+### Build features
+
+```bash
+cargo build --release --features tetration-metal   # macOS
+cargo build --release --features tetration-gpu     # Linux/Windows + NVIDIA
+```
+
+Default crate features do **not** link GPU backends.
+
+### Bench expectations ([`fixtures/README.md`](../fixtures/README.md))
+
+| Tier                 | Typical `device` (auto / metal on M4 Max) | Notes                                             |
+| -------------------- | ----------------------------------------- | ------------------------------------------------- |
+| **large** (~6.7 GiB) | `metal` when RAM allows                   | sum/mean/min/max on GPU; var/std on host SIMD.    |
+| **extra** (~20 GiB)  | `cpu (gpu_host_materialize_exceeded)`     | CPU streaming ~2 s/op; matches source aggregates. |
+
+Use **`mise run bench:cpu`** for apples-to-apples CPU timing; **`bench:metal`** / **`bench:gpu`** to exercise device routing.
+
+### Not implemented (Phase 10)
+
+- Streaming GPU reduce without full host materialize.
+- GPU tier-C ops, non-`f32` dtypes, ROCm (**10d**).
+- Meaningful speedup over CPU streaming on unified-memory Macs for full-tensor tier-A/B ops (current architecture).
 
 ## Module map
 

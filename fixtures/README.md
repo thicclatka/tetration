@@ -93,11 +93,20 @@ Sequential per **tier**, then wipe the whole **format** tree before the next for
 
 `.tet` query timing uses **`execution.device: auto`** by default (`tet query --device auto`); override with `--tet-device cpu` or `TET_BENCH_DEVICE`. Reports include a **device** column (`device_used` and fallback reason when CPU wins).
 
+**Interpreting the device column (Phase 10):**
+
+| Tier      | ~size   | Typical result                                                                                                                                           |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **large** | 6.7 GiB | `metal` or `cuda` when built with GPU features and host-RAM gate allows — GPU does sum/mean/min/max; **var/std use host SIMD** after materialize.        |
+| **extra** | 20 GiB  | `cpu (gpu_host_materialize_exceeded)` on most machines — **CPU streaming** (~2 s/op), correct aggregates; not slower than a failed full-RAM GPU attempt. |
+
+For CPU-only timing comparisons, use **`mise run bench:cpu`**. GPU backends are optional crate features; default `cargo build` does not link Metal/CUDA.
+
 ```bash
 mise run bench              # alias for bench:auto (all formats)
 mise run bench:auto         # execution.device auto (Metal on macOS with tetration-metal, else CUDA/CPU)
-mise run bench:cpu          # force CPU reductions
-mise run bench:metal        # macOS: --features tetration-metal, device metal
+mise run bench:cpu          # force CPU streaming fold (recommended baseline)
+mise run bench:metal        # macOS: --features tetration-metal, device metal (large tier only useful)
 mise run bench:gpu          # Linux+NVIDIA: --features tetration-gpu, device cuda
 mise run bench:h5           # one format only (auto device)
 uv run --directory fixtures bench-large --run-id my-run   # archived under bench_results/runs/

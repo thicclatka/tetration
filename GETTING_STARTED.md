@@ -224,25 +224,32 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 - [x] **Parallel streaming fold** — Rayon over chunks for tier-A/B scalar + partial-axis ops when in-core and `chunk_count > 1` ([`parallel/`](src/query/fold/parallel/mod.rs); see [`docs/query_engine.md`](docs/query_engine.md#streaming-fold-performance)).
 - [x] **Out-of-core linear scan** — sequential byte-stream fold when logical size exceeds available RAM headroom and payloads are contiguous raw ([`linear_scan.rs`](src/query/fold/linear_scan.rs), [PR #7](https://github.com/thicclatka/tetration/pull/7)).
 
-## Phase 10 — GPU (later)
+## Phase 10 — GPU (experimental)
 
-**Goal:** optional **device materialization** after CPU decode — format stays mmap-first; GPU is a binding/runtime choice, not a different wire layout.
+**Goal:** optional device assist after **host** mmap decode — format stays mmap-first; GPU is a runtime choice, not a different wire layout.
+
+**Product note:** On local **large / extra_large** benches, **CPU streaming fold** is already fast and correct (~2 s over 20 GiB). Phase 10 is **plumbing + proof kernels**; do not expect large wins over CPU on unified-memory Macs until **streaming device reduce** exists.
+
+Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_engine.md#phase-10--optional-gpu-experimental).
 
 ### Phase 10a — routing scaffold
 
 - [x] **`execution.device` / `--device`** — `cpu`, `auto`, `metal`, `cuda`, `cuda:N`; CLI overrides query JSON ([`device.rs`](src/query/device.rs)).
 - [x] **Execution preview** — `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`.
 - [x] **`auto` threshold** — skip GPU below 64 MiB logical selection; tier-C / preview-only stay CPU.
+- [x] **Host-RAM gate** — refuse GPU when dense `f32` materialize would exceed ~85% probed host RAM (8 GiB cap if unknown) → CPU streaming + **`gpu_host_materialize_exceeded`** (extra-large tier on typical laptops).
 
 ### Phase 10b — CUDA (NVIDIA)
 
-- [x] **`tetration-gpu`** — `cudarc` block-reduce kernels for scalar tier-A/B **`f32`** ([`gpu/cuda.rs`](src/query/gpu/cuda.rs)).
+- [x] **`tetration-gpu`** — `cudarc` block-reduce for scalar tier-A/B **`f32`** **sum / mean / min / max / count** ([`gpu/cuda.rs`](src/query/gpu/cuda.rs)).
+- [x] **`var` / `std`** — host **`f64` SIMD** after materialize (same as CPU fold; GPU f32 sumsq was wrong at bench scale).
 - [ ] **Batched host→device copy** — overlap decode with async H2D.
 - [ ] **Multi-GPU** — `cuda:N` device selection beyond routing.
 
 ### Phase 10c — Metal (Apple)
 
-- [x] **`tetration-metal`** — Metal compute kernels for scalar tier-A/B **`f32`** on macOS ([`gpu/metal.rs`](src/query/gpu/metal.rs)); `device: metal` or `auto` on macOS when built with `--features tetration-metal`.
+- [x] **`tetration-metal`** — Metal block-reduce for **sum / mean / min / max / count** on macOS ([`gpu/metal.rs`](src/query/gpu/metal.rs)); `device: metal` or `auto` when built with `--features tetration-metal`.
+- [x] **`var` / `std`** — host **`f64` SIMD** ([`gpu/mod.rs`](src/query/gpu/mod.rs) `host_f32_population_variance`).
 - [ ] **Async command buffers** — overlap decode with GPU queue.
 
 ### Phase 10d — ROCm / AMD (later)
@@ -252,6 +259,8 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 ### Shared (all backends)
 
 - [x] **VRAM guardrails (v1)** — best-effort budget check before upload; CPU fallback `gpu_vram_exceeded`.
+- [x] **Bench tasks** — `mise run bench:auto` / `bench:cpu` / `bench:metal` / `bench:gpu` ([`.mise.toml`](.mise.toml), [`fixtures/README.md`](fixtures/README.md)).
+- [ ] **Streaming GPU fold** — per-chunk device accumulators without full-RAM `vec![f32; n]`.
 - [ ] **Alignment / dtype notes** — row-major `f16` fast paths.
 
 ## Phase 11 — Bindings (Python & C ABI)
@@ -311,33 +320,34 @@ Quick map for embedders and contributors. **Phases 0–9** are **done** unless m
 
 ### Roadmap at a glance
 
-| Area            | Status                                                                                              |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| Phases **0–3**  | **Done** — layout, writers, `ReadPlan`, zstd                                                        |
-| Phase **4**     | **Done** — query execute                                                                            |
-| Phase **5**     | **Done** — `tet convert`                                                                            |
-| Phase **6**     | **Done** — CLI UX; JSON + TOML profiles, `--format table`, [`fixtures/queries/`](fixtures/queries/) |
-| Phase **7**     | **Done** — `TetWriterSession` / `TetFile`, footer metadata                                          |
-| Phase **8**     | **Done** — verify/repair, dtypes                                                                    |
-| Phase **9**     | **Done** — named axes, coord labels, export                                                         |
-| Phase **10–11** | _Later_ — GPU, Python bindings                                                                      |
+| Area           | Status                                                                                              |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| Phases **0–3** | **Done** — layout, writers, `ReadPlan`, zstd                                                        |
+| Phase **4**    | **Done** — query execute                                                                            |
+| Phase **5**    | **Done** — `tet convert`                                                                            |
+| Phase **6**    | **Done** — CLI UX; JSON + TOML profiles, `--format table`, [`fixtures/queries/`](fixtures/queries/) |
+| Phase **7**    | **Done** — `TetWriterSession` / `TetFile`, footer metadata                                          |
+| Phase **8**    | **Done** — verify/repair, dtypes                                                                    |
+| Phase **9**    | **Done** — named axes, coord labels, export                                                         |
+| Phase **10**   | **Experimental** — optional Metal/CUDA scalar `f32`; CPU streaming default                          |
+| Phase **11**   | _Later_ — Python bindings                                                                           |
 
 ### Per-phase Rust / CLI
 
-| Phase  | Status  | You get                                             | Primary Rust / CLI                                                                                                                                                                                 |
-| ------ | ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0**  | Done    | Layout v1 wire spec                                 | [`docs/layout_v1.md`](docs/layout_v1.md)                                                                                                                                                           |
-| **1**  | Done    | **Write `.tet` bytes** (no session type)            | [`create_empty_v1_file`](src/layout.rs), [`write_raw_array_file`](src/catalog/write.rs), [`write_one_chunk_raw_file`](src/catalog/write.rs); tests: [`src/tests/fixture.rs`](src/tests/fixture.rs) |
-| **2**  | Done    | Slice → chunk coords → `ReadPlan`                   | [`plan_query_with_tet_mmap`](src/query/engine/run.rs), [`catalog/tile.rs`](src/catalog/tile.rs)                                                                                                    |
-| **3**  | Done    | Per-chunk zstd + index robustness                   | [`ChunkPayloadCodecV1`](src/catalog/mod.rs), [`src/tests/catalog.rs`](src/tests/catalog.rs)                                                                                                        |
-| **4**  | Done    | Query plan + execute (fold, spill, tier-C)          | [`build_execution_preview`](src/query/engine/run.rs), [`src/query/`](src/query/); CLI `tet query … -x`                                                                                             |
-| **5**  | Done    | HDF5 / NetCDF / Zarr v3 import                      | [`src/convert/`](src/convert/), CLI `tet convert`                                                                                                                                                  |
-| **6**  | Done    | CLI stdout modes + query history; JSON/TOML queries | [`format_query_response`](src/query/cli/output/mod.rs) (`table`), `tet qhist`, [`parse_query_toml`](src/query/document_toml.rs), [`fixtures/queries/`](fixtures/queries/)                          |
-| **7**  | Done    | **`TetWriterSession` / `TetFile`** embedder API     | [`src/catalog/session.rs`](src/catalog/session.rs), [`execute_query_*`](src/query/execute.rs), [`prelude`](src/lib.rs); examples + [`src/tests/session.rs`](src/tests/session.rs)                  |
-| **8**  | Done    | `tet verify` / `tet repair`, dtypes **`f32`–`u64`** | [`src/verify/`](src/verify/), [`src/repair/`](src/repair/)                                                                                                                                         |
-| **9**  | Done    | Named axes, coord labels, QC counts, `tet export`   | [`resolve_axes.rs`](src/query/resolve_axes.rs), [`resolve_selection.rs`](src/query/resolve_selection.rs), [`src/export/`](src/export/)                                                             |
-| **10** | _Later_ | GPU materialize hooks                               | —                                                                                                                                                                                                  |
-| **11** | _Later_ | Python bindings repo                                | —                                                                                                                                                                                                  |
+| Phase  | Status       | You get                                                                         | Primary Rust / CLI                                                                                                                                                                                 |
+| ------ | ------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0**  | Done         | Layout v1 wire spec                                                             | [`docs/layout_v1.md`](docs/layout_v1.md)                                                                                                                                                           |
+| **1**  | Done         | **Write `.tet` bytes** (no session type)                                        | [`create_empty_v1_file`](src/layout.rs), [`write_raw_array_file`](src/catalog/write.rs), [`write_one_chunk_raw_file`](src/catalog/write.rs); tests: [`src/tests/fixture.rs`](src/tests/fixture.rs) |
+| **2**  | Done         | Slice → chunk coords → `ReadPlan`                                               | [`plan_query_with_tet_mmap`](src/query/engine/run.rs), [`catalog/tile.rs`](src/catalog/tile.rs)                                                                                                    |
+| **3**  | Done         | Per-chunk zstd + index robustness                                               | [`ChunkPayloadCodecV1`](src/catalog/mod.rs), [`src/tests/catalog.rs`](src/tests/catalog.rs)                                                                                                        |
+| **4**  | Done         | Query plan + execute (fold, spill, tier-C)                                      | [`build_execution_preview`](src/query/engine/run.rs), [`src/query/`](src/query/); CLI `tet query … -x`                                                                                             |
+| **5**  | Done         | HDF5 / NetCDF / Zarr v3 import                                                  | [`src/convert/`](src/convert/), CLI `tet convert`                                                                                                                                                  |
+| **6**  | Done         | CLI stdout modes + query history; JSON/TOML queries                             | [`format_query_response`](src/query/cli/output/mod.rs) (`table`), `tet qhist`, [`parse_query_toml`](src/query/document_toml.rs), [`fixtures/queries/`](fixtures/queries/)                          |
+| **7**  | Done         | **`TetWriterSession` / `TetFile`** embedder API                                 | [`src/catalog/session.rs`](src/catalog/session.rs), [`execute_query_*`](src/query/execute.rs), [`prelude`](src/lib.rs); examples + [`src/tests/session.rs`](src/tests/session.rs)                  |
+| **8**  | Done         | `tet verify` / `tet repair`, dtypes **`f32`–`u64`**                             | [`src/verify/`](src/verify/), [`src/repair/`](src/repair/)                                                                                                                                         |
+| **9**  | Done         | Named axes, coord labels, QC counts, `tet export`                               | [`resolve_axes.rs`](src/query/resolve_axes.rs), [`resolve_selection.rs`](src/query/resolve_selection.rs), [`src/export/`](src/export/)                                                             |
+| **10** | Experimental | `execution.device`, host-RAM gate, optional `tetration-metal` / `tetration-gpu` | [`device.rs`](src/query/device.rs), [`gpu/`](src/query/gpu/); CLI `--device`; [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental)                                   |
+| **11** | _Later_      | Python bindings repo                                                            | —                                                                                                                                                                                                  |
 
 **Typical embedder path:** Phase **7** on top of **1** (bytes) and **4** (query engine):
 
