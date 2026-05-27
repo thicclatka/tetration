@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use super::document::Operation;
+use crate::query::materialize::DecodePreviewBundle;
 
 /// Result of matching `QueryDocument::dataset` against a mmap’d `.tet` catalog.
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +68,8 @@ pub(crate) struct OperationPreviewFields {
     pub norm_l2: Option<f64>,
     pub all_finite: Option<bool>,
     pub any_nan: Option<bool>,
+    pub nan_count: Option<f64>,
+    pub null_count: Option<f64>,
     pub argmin_index: Option<u64>,
     pub argmax_index: Option<u64>,
     pub reduced_shape: Option<Vec<u64>>,
@@ -85,8 +88,27 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_norm_l2: Option<Vec<f64>>,
     pub reduced_all_finite: Option<Vec<bool>>,
     pub reduced_any_nan: Option<Vec<bool>>,
+    pub reduced_nan_count: Option<Vec<f64>>,
+    pub reduced_null_count: Option<Vec<f64>>,
     pub reduced_argmin: Option<Vec<u64>>,
     pub reduced_argmax: Option<Vec<u64>>,
+}
+
+/// I/O and spill metadata when building a [`QueryExecutionPreview`].
+#[derive(Debug, Clone)]
+pub(crate) struct ExecutionPreviewIo {
+    pub total_bytes_read_from_disk: u64,
+    pub memory_strategy: Option<&'static str>,
+    pub spill_f32_path: Option<String>,
+    pub spill_f32_bytes: Option<u64>,
+}
+
+/// Decode previews, operation outputs, and execution I/O for [`QueryExecutionPreview::assemble`].
+#[derive(Debug, Clone)]
+pub(crate) struct QueryExecutionPreviewBuild {
+    pub io: ExecutionPreviewIo,
+    pub previews: DecodePreviewBundle,
+    pub operation: OperationPreviewFields,
 }
 
 /// First `f32` values read from planned chunk payloads (little-endian), capped for JSON safety.
@@ -156,6 +178,10 @@ pub struct QueryExecutionPreview {
     pub operation_all_finite: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_any_nan: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_nan_count: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_null_count: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_argmin_index: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -227,6 +253,10 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_any_nan: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_nan_count: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_null_count: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_argmin: Option<Vec<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_argmax: Option<Vec<u64>>,
@@ -251,6 +281,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_norm_l2: operation.norm_l2,
             operation_all_finite: operation.all_finite,
             operation_any_nan: operation.any_nan,
+            operation_nan_count: operation.nan_count,
+            operation_null_count: operation.null_count,
             operation_argmin_index: operation.argmin_index,
             operation_argmax_index: operation.argmax_index,
             operation_reduced_shape: operation.reduced_shape,
@@ -269,6 +301,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_norm_l2: operation.reduced_norm_l2,
             operation_reduced_all_finite: operation.reduced_all_finite,
             operation_reduced_any_nan: operation.reduced_any_nan,
+            operation_reduced_nan_count: operation.reduced_nan_count,
+            operation_reduced_null_count: operation.reduced_null_count,
             operation_reduced_argmin: operation.reduced_argmin,
             operation_reduced_argmax: operation.reduced_argmax,
             ..Self::default()
@@ -292,58 +326,41 @@ impl QueryExecutionPreview {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::fn_params_excessive_bools)]
     #[must_use]
-    pub(crate) fn with_operation_and_io(
-        total_bytes_read_from_disk: u64,
-        f32_preview: Vec<f32>,
-        f32_preview_truncated: bool,
-        f64_preview: Vec<f64>,
-        f64_preview_truncated: bool,
-        i32_preview: Vec<i32>,
-        i32_preview_truncated: bool,
-        i64_preview: Vec<i64>,
-        i64_preview_truncated: bool,
-        u8_preview: Vec<u8>,
-        u8_preview_truncated: bool,
-        u16_preview: Vec<u16>,
-        u16_preview_truncated: bool,
-        i16_preview: Vec<i16>,
-        i16_preview_truncated: bool,
-        u32_preview: Vec<u32>,
-        u32_preview_truncated: bool,
-        u64_preview: Vec<u64>,
-        u64_preview_truncated: bool,
-        f16_preview: Vec<half::f16>,
-        f16_preview_truncated: bool,
-        operation: OperationPreviewFields,
-        memory_strategy: Option<&'static str>,
-        spill_f32_path: Option<String>,
-        spill_f32_bytes: Option<u64>,
-    ) -> Self {
+    pub(crate) fn assemble(build: QueryExecutionPreviewBuild) -> Self {
+        let QueryExecutionPreviewBuild {
+            io:
+                ExecutionPreviewIo {
+                    total_bytes_read_from_disk,
+                    memory_strategy,
+                    spill_f32_path,
+                    spill_f32_bytes,
+                },
+            previews,
+            operation,
+        } = build;
         Self {
             total_bytes_read_from_disk,
-            f32_preview,
-            f32_preview_truncated,
-            f64_preview,
-            f64_preview_truncated,
-            i32_preview,
-            i32_preview_truncated,
-            i64_preview,
-            i64_preview_truncated,
-            u8_preview,
-            u8_preview_truncated,
-            u16_preview,
-            u16_preview_truncated,
-            i16_preview,
-            i16_preview_truncated,
-            u32_preview,
-            u32_preview_truncated,
-            u64_preview,
-            u64_preview_truncated,
-            f16_preview,
-            f16_preview_truncated,
+            f32_preview: previews.f32,
+            f32_preview_truncated: previews.f32_truncated,
+            f64_preview: previews.f64,
+            f64_preview_truncated: previews.f64_truncated,
+            i32_preview: previews.i32,
+            i32_preview_truncated: previews.i32_truncated,
+            i64_preview: previews.i64,
+            i64_preview_truncated: previews.i64_truncated,
+            u8_preview: previews.u8,
+            u8_preview_truncated: previews.u8_truncated,
+            u16_preview: previews.u16,
+            u16_preview_truncated: previews.u16_truncated,
+            i16_preview: previews.i16,
+            i16_preview_truncated: previews.i16_truncated,
+            u32_preview: previews.u32,
+            u32_preview_truncated: previews.u32_truncated,
+            u64_preview: previews.u64,
+            u64_preview_truncated: previews.u64_truncated,
+            f16_preview: previews.f16,
+            f16_preview_truncated: previews.f16_truncated,
             memory_strategy,
             spill_f32_path,
             spill_f32_bytes,

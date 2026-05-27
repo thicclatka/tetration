@@ -64,6 +64,10 @@ impl ScalarFoldVisit {
                     reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
                         self.push_arg(ctx.arg, li, val, ctx.kind);
                     }
+                    reduction::ReductionKind::NanCount => ctx.value.push_nan_f64(val),
+                    reduction::ReductionKind::NullCount { fill } => {
+                        ctx.value.push_null_f64(val, fill);
+                    }
                     _ => self.push_value(ctx.value, val),
                 }
                 self.write_preview(ctx.preview_addr, ctx.preview_len, li, val);

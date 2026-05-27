@@ -31,6 +31,8 @@ const OP_KEYS: &[&str] = &[
     "median",
     "quantile",
     "histogram",
+    "nan_count",
+    "null_count",
 ];
 
 const RESERVED_KEYS: &[&str] = &[
@@ -285,7 +287,28 @@ fn parse_operation(name: &str, v: &Value) -> Result<Operation, TetError> {
                 .and_then(Value::as_u64)
                 .and_then(|u| u32::try_from(u).ok())
                 .ok_or_else(|| TetError::Validation("`histogram.bins` is required".into()))?;
-            Ok(Operation::Histogram { axes, bins })
+            let min = obj.get("min").and_then(Value::as_f64);
+            let max = obj.get("max").and_then(Value::as_f64);
+            Ok(Operation::Histogram {
+                axes,
+                bins,
+                min,
+                max,
+            })
+        }
+        "nan_count" => {
+            let axes = parse_axis_spec(v)?;
+            Ok(Operation::NanCount { axes })
+        }
+        "null_count" => {
+            if v.is_object() {
+                let (axes, obj) = parse_parametric_op_object("null_count", v)?;
+                let fill = obj.get("fill").and_then(Value::as_f64);
+                Ok(Operation::NullCount { axes, fill })
+            } else {
+                let axes = parse_axis_spec(v)?;
+                Ok(Operation::NullCount { axes, fill: None })
+            }
         }
         other => {
             let axes = parse_axis_spec(v)?;
@@ -389,15 +412,11 @@ fn validate_axis_token(s: &str) -> Result<String, TetError> {
     }
     if s.len() > QueryLimits::DEFAULT.max_operation_axis_label_len {
         return Err(TetError::Validation(format!(
-            "axis index exceeds maximum length ({})",
+            "axis label exceeds maximum length ({})",
             QueryLimits::DEFAULT.max_operation_axis_label_len
         )));
     }
-    if !s.chars().all(|c| c.is_ascii_digit()) {
-        return Err(TetError::Validation(format!(
-            "invalid axis index {s:?} (decimal dimension indices only)"
-        )));
-    }
+    super::resolve_axes::validate_axis_label_token(s)?;
     Ok(s.to_owned())
 }
 
@@ -498,12 +517,38 @@ where
             };
             map.serialize_entry("quantile", &wire)?;
         }
-        Operation::Histogram { axes, bins } => {
+        Operation::Histogram {
+            axes,
+            bins,
+            min,
+            max,
+        } => {
+            let mut extra = vec![("bins", serde_json::json!(bins))];
+            if let Some(v) = min {
+                extra.push(("min", serde_json::json!(v)));
+            }
+            if let Some(v) = max {
+                extra.push(("max", serde_json::json!(v)));
+            }
             let wire = ParametricOpWire {
                 axes: AxisSpecWire::from_axes(axes),
-                extra: vec![("bins", serde_json::json!(bins))],
+                extra,
             };
             map.serialize_entry("histogram", &wire)?;
+        }
+        Operation::NanCount { axes } => {
+            map.serialize_entry("nan_count", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::NullCount { axes, fill } => {
+            let mut extra = Vec::new();
+            if let Some(v) = fill {
+                extra.push(("fill", serde_json::json!(v)));
+            }
+            let wire = ParametricOpWire {
+                axes: AxisSpecWire::from_axes(axes),
+                extra,
+            };
+            map.serialize_entry("null_count", &wire)?;
         }
     }
     Ok(())

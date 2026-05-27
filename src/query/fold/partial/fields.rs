@@ -52,6 +52,12 @@ pub(crate) fn partial_fields(
         reduction::ReductionKind::AnyNan => {
             fields.reduced_any_nan = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
         }
+        reduction::ReductionKind::NanCount => {
+            fields.reduced_nan_count = Some(reduced.to_vec());
+        }
+        reduction::ReductionKind::NullCount { .. } => {
+            fields.reduced_null_count = Some(reduced.to_vec());
+        }
         reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
             unreachable!("argmin/argmax use partial_arg_fields")
         }

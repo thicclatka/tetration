@@ -8,12 +8,19 @@ use serde::{Deserialize, Serialize};
 // `QueryDocument` JSON wire format: see `document_wire.rs` (flat op keys, `mean: 0`, `spill: "…"`, …).
 
 /// Per-axis slice: `start` inclusive, `stop` exclusive, `step` ≥ 1 when present.
+///
+/// Coordinate labels (`start_label` / `stop_label`) resolve to indices at plan time when footer
+/// `coords` exist (axis key = `dim_names[d]` or decimal `"d"`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AxisSlice {
     pub start: Option<u64>,
     pub stop: Option<u64>,
     pub step: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_label: Option<String>,
 }
 
 /// Reduction or aggregate over the logical selection.
@@ -24,23 +31,71 @@ pub struct AxisSlice {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
-    Sum { axes: Vec<String> },
-    Mean { axes: Vec<String> },
-    Min { axes: Vec<String> },
-    Max { axes: Vec<String> },
-    Count { axes: Vec<String> },
-    Var { axes: Vec<String> },
-    Std { axes: Vec<String> },
-    Product { axes: Vec<String> },
-    NormL1 { axes: Vec<String> },
-    NormL2 { axes: Vec<String> },
-    AllFinite { axes: Vec<String> },
-    AnyNan { axes: Vec<String> },
-    ArgMin { axes: Vec<String> },
-    ArgMax { axes: Vec<String> },
-    Median { axes: Vec<String> },
-    Quantile { axes: Vec<String>, q: f64 },
-    Histogram { axes: Vec<String>, bins: u32 },
+    Sum {
+        axes: Vec<String>,
+    },
+    Mean {
+        axes: Vec<String>,
+    },
+    Min {
+        axes: Vec<String>,
+    },
+    Max {
+        axes: Vec<String>,
+    },
+    Count {
+        axes: Vec<String>,
+    },
+    Var {
+        axes: Vec<String>,
+    },
+    Std {
+        axes: Vec<String>,
+    },
+    Product {
+        axes: Vec<String>,
+    },
+    NormL1 {
+        axes: Vec<String>,
+    },
+    NormL2 {
+        axes: Vec<String>,
+    },
+    AllFinite {
+        axes: Vec<String>,
+    },
+    AnyNan {
+        axes: Vec<String>,
+    },
+    ArgMin {
+        axes: Vec<String>,
+    },
+    ArgMax {
+        axes: Vec<String>,
+    },
+    Median {
+        axes: Vec<String>,
+    },
+    Quantile {
+        axes: Vec<String>,
+        q: f64,
+    },
+    Histogram {
+        axes: Vec<String>,
+        bins: u32,
+        /// When both set, bin edges span `[min, max]`; otherwise data min/max.
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+    /// Count of NaN elements (float/`f16` wire tags; integers contribute 0).
+    NanCount {
+        axes: Vec<String>,
+    },
+    /// Count of elements equal to `fill` (resolved from query or dataset attrs at plan time).
+    NullCount {
+        axes: Vec<String>,
+        fill: Option<f64>,
+    },
 }
 
 impl Operation {
@@ -64,7 +119,9 @@ impl Operation {
             | Self::ArgMax { axes }
             | Self::Median { axes }
             | Self::Quantile { axes, .. }
-            | Self::Histogram { axes, .. } => axes,
+            | Self::Histogram { axes, .. }
+            | Self::NanCount { axes }
+            | Self::NullCount { axes, .. } => axes,
         }
     }
 }

@@ -1,7 +1,5 @@
 //! Chunk-streaming partial-axis reductions (no full logical tensor allocation).
 
-#![allow(clippy::too_many_arguments)]
-
 mod fields;
 mod float;
 mod int;

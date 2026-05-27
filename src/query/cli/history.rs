@@ -509,6 +509,8 @@ fn operation_label(op: Option<&Operation>) -> &'static str {
         Some(Operation::NormL2 { .. }) => "norm_l2",
         Some(Operation::AllFinite { .. }) => "all_finite",
         Some(Operation::AnyNan { .. }) => "any_nan",
+        Some(Operation::NanCount { .. }) => "nan_count",
+        Some(Operation::NullCount { .. }) => "null_count",
         Some(Operation::ArgMin { .. }) => "arg_min",
         Some(Operation::ArgMax { .. }) => "arg_max",
         Some(Operation::Median { .. }) => "median",

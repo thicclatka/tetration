@@ -8,6 +8,19 @@ use crate::query::{
     types::{OperationPreviewFields, ReadPlan, TetError},
 };
 
+struct PartialFoldCtx<'a> {
+    mmap: &'a [u8],
+    plan: &'a ReadPlan,
+    kind: reduction::ReductionKind,
+    layout: &'a partial_geometry::PartialAxisLayout,
+    shape: &'a [u64],
+    n: usize,
+    preview_cap: usize,
+    saw_any: &'a mut bool,
+    total_bytes: &'a mut u64,
+    sequential_io: bool,
+}
+
 /// Stream a **partial-axis** reduction without allocating the full logical tensor (f32).
 pub(crate) fn fold_read_plan_partial_operation(
     mmap: &[u8],
@@ -86,34 +99,22 @@ fn fold_read_plan_partial_operation_impl(
     let mut saw_any = false;
     let mut total_bytes_read_from_disk: u64 = 0;
 
+    let mut ctx = PartialFoldCtx {
+        mmap,
+        plan,
+        kind,
+        layout: &layout,
+        shape,
+        n,
+        preview_cap,
+        saw_any: &mut saw_any,
+        total_bytes: &mut total_bytes_read_from_disk,
+        sequential_io,
+    };
     let operation = if f64_path {
-        run_partial_f64(
-            mmap,
-            plan,
-            kind,
-            &layout,
-            shape,
-            n,
-            preview_cap,
-            &mut f64_preview,
-            &mut saw_any,
-            &mut total_bytes_read_from_disk,
-            sequential_io,
-        )?
+        run_partial_f64(&mut ctx, &mut f64_preview)?
     } else {
-        run_partial_f32(
-            mmap,
-            plan,
-            kind,
-            &layout,
-            shape,
-            n,
-            preview_cap,
-            &mut f32_preview,
-            &mut saw_any,
-            &mut total_bytes_read_from_disk,
-            sequential_io,
-        )?
+        run_partial_f32(&mut ctx, &mut f32_preview)?
     };
 
     if f64_path {
@@ -138,133 +139,155 @@ fn fold_read_plan_partial_operation_impl(
 }
 
 fn run_partial_f32(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    kind: reduction::ReductionKind,
-    layout: &partial_geometry::PartialAxisLayout,
-    shape: &[u64],
-    n: usize,
-    preview_cap: usize,
+    ctx: &mut PartialFoldCtx<'_>,
     preview: &mut [f32],
-    saw_any: &mut bool,
-    total_bytes: &mut u64,
-    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
-    match kind {
+    let chunk_order =
+        fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
+    match ctx.kind {
         reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
-            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ArgIndexAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
-                let c = &plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
-                    let oi = partial_geometry::reduced_index(
-                        &coords,
-                        &layout.axis_set,
-                        &layout.out_shape,
-                    )?;
-                    let fi =
-                        partial_geometry::fiber_linear_index(&coords, &layout.axis_indices, shape)?
-                            as u64;
-                    cells[oi].push(fi, v, kind);
-                    Ok(())
-                })?;
-                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let c = &ctx.plan.chunks[i];
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk(ctx.mmap, ctx.plan, c, |li, v| {
+                        *ctx.saw_any = true;
+                        if li < ctx.preview_cap {
+                            preview[li] = v;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, ctx.shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &ctx.layout.axis_set,
+                            &ctx.layout.out_shape,
+                        )?;
+                        let fi = partial_geometry::fiber_linear_index(
+                            &coords,
+                            &ctx.layout.axis_indices,
+                            ctx.shape,
+                        )? as u64;
+                        cells[oi].push(fi, v, ctx.kind);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
-            Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
+            Ok(partial_arg_fields(
+                ctx.kind,
+                ctx.n,
+                &ctx.layout.out_shape,
+                &cells,
+            ))
         }
         _ => {
-            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
-                let c = &plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
-                    let oi = partial_geometry::reduced_index(
-                        &coords,
-                        &layout.axis_set,
-                        &layout.out_shape,
-                    )?;
-                    cells[oi].push(v);
-                    Ok(())
-                })?;
-                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let c = &ctx.plan.chunks[i];
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk(ctx.mmap, ctx.plan, c, |li, v| {
+                        *ctx.saw_any = true;
+                        if li < ctx.preview_cap {
+                            preview[li] = v;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, ctx.shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &ctx.layout.axis_set,
+                            &ctx.layout.out_shape,
+                        )?;
+                        cells[oi].push(v);
+                        Ok(())
+                    })?;
+                dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
-            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
-            Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
+            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(ctx.kind)).collect();
+            Ok(partial_fields(
+                ctx.kind,
+                ctx.n,
+                &ctx.layout.out_shape,
+                &reduced,
+                &cells,
+            ))
         }
     }
 }
 
 fn run_partial_f64(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    kind: reduction::ReductionKind,
-    layout: &partial_geometry::PartialAxisLayout,
-    shape: &[u64],
-    n: usize,
-    preview_cap: usize,
+    ctx: &mut PartialFoldCtx<'_>,
     preview: &mut [f64],
-    saw_any: &mut bool,
-    total_bytes: &mut u64,
-    sequential_io: bool,
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order = fold_policy::chunk_indices_for_fold(plan, sequential_io);
-    match kind {
+    let chunk_order =
+        fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
+    match ctx.kind {
         reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
-            let mut cells = vec![reduction::ArgIndexAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ArgIndexAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
-                let c = &plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
-                    let oi = partial_geometry::reduced_index(
-                        &coords,
-                        &layout.axis_set,
-                        &layout.out_shape,
-                    )?;
-                    let fi =
-                        partial_geometry::fiber_linear_index(&coords, &layout.axis_indices, shape)?
-                            as u64;
-                    cells[oi].push_f64(fi, v, kind);
-                    Ok(())
-                })?;
-                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let c = &ctx.plan.chunks[i];
+                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(
+                    ctx.mmap,
+                    ctx.plan,
+                    c,
+                    |li, v| {
+                        *ctx.saw_any = true;
+                        if li < ctx.preview_cap {
+                            preview[li] = v;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, ctx.shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &ctx.layout.axis_set,
+                            &ctx.layout.out_shape,
+                        )?;
+                        let fi = partial_geometry::fiber_linear_index(
+                            &coords,
+                            &ctx.layout.axis_indices,
+                            ctx.shape,
+                        )? as u64;
+                        cells[oi].push_f64(fi, v, ctx.kind);
+                        Ok(())
+                    },
+                )?;
+                dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
-            Ok(partial_arg_fields(kind, n, &layout.out_shape, &cells))
+            Ok(partial_arg_fields(
+                ctx.kind,
+                ctx.n,
+                &ctx.layout.out_shape,
+                &cells,
+            ))
         }
         _ => {
-            let mut cells = vec![reduction::ValueAccum::default(); layout.out_len];
+            let mut cells = vec![reduction::ValueAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
-                let c = &plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(mmap, plan, c, |li, v| {
-                    *saw_any = true;
-                    if li < preview_cap {
-                        preview[li] = v;
-                    }
-                    let coords = indexing::coords_from_linear_row_major(li, shape)?;
-                    let oi = partial_geometry::reduced_index(
-                        &coords,
-                        &layout.axis_set,
-                        &layout.out_shape,
-                    )?;
-                    cells[oi].push_f64(v);
-                    Ok(())
-                })?;
-                dispatch::accumulate_chunk_read_bytes(total_bytes, chunk_bytes)?;
+                let c = &ctx.plan.chunks[i];
+                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(
+                    ctx.mmap,
+                    ctx.plan,
+                    c,
+                    |li, v| {
+                        *ctx.saw_any = true;
+                        if li < ctx.preview_cap {
+                            preview[li] = v;
+                        }
+                        let coords = indexing::coords_from_linear_row_major(li, ctx.shape)?;
+                        let oi = partial_geometry::reduced_index(
+                            &coords,
+                            &ctx.layout.axis_set,
+                            &ctx.layout.out_shape,
+                        )?;
+                        cells[oi].push_f64(v);
+                        Ok(())
+                    },
+                )?;
+                dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
-            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(kind)).collect();
-            Ok(partial_fields(kind, n, &layout.out_shape, &reduced, &cells))
+            let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(ctx.kind)).collect();
+            Ok(partial_fields(
+                ctx.kind,
+                ctx.n,
+                &ctx.layout.out_shape,
+                &reduced,
+                &cells,
+            ))
         }
     }
 }

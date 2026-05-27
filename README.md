@@ -183,7 +183,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops (named axes, histogram edges, **fill/NaN QC counts** such as `nan_count` / `null_count`, covariance/correlation) and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
 
 ## Library use
 

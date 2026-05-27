@@ -15,6 +15,16 @@ use super::{
     LogicalF32Backing, LogicalF64Backing, MaterializedLogical, materialized_logical_as_f64,
 };
 
+struct HistogramTierCParams<'a> {
+    plan: &'a ReadPlan,
+    axes: &'a [String],
+    n: usize,
+    shape: &'a [u64],
+    bins: u32,
+    range_min: Option<f64>,
+    range_max: Option<f64>,
+}
+
 fn median_f64(values: &mut [f64]) -> Result<f64, TetError> {
     if values.is_empty() {
         return Err(TetError::Validation(
@@ -68,7 +78,12 @@ fn quantile_f64(values: &mut [f64], q: f64) -> Result<f64, TetError> {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-fn histogram_f64(values: &[f64], bins: u32) -> Result<(Vec<f64>, Vec<f64>), TetError> {
+fn histogram_f64(
+    values: &[f64],
+    bins: u32,
+    range_min: Option<f64>,
+    range_max: Option<f64>,
+) -> Result<(Vec<f64>, Vec<f64>), TetError> {
     if values.is_empty() {
         return Err(TetError::Validation(
             "histogram requires at least one element".into(),
@@ -76,8 +91,8 @@ fn histogram_f64(values: &[f64], bins: u32) -> Result<(Vec<f64>, Vec<f64>), TetE
     }
     let bins = usize::try_from(bins)
         .map_err(|_| TetError::Validation("histogram bins overflow".into()))?;
-    let min = values.iter().copied().reduce(f64::min).unwrap_or(f64::NAN);
-    let max = values.iter().copied().reduce(f64::max).unwrap_or(f64::NAN);
+    let min = range_min.unwrap_or_else(|| values.iter().copied().fold(f64::INFINITY, f64::min));
+    let max = range_max.unwrap_or_else(|| values.iter().copied().fold(f64::NEG_INFINITY, f64::max));
     let mut counts = vec![0.0; bins];
     let mut edges = vec![0.0; bins + 1];
     if (max - min).abs() < f64::EPSILON {
@@ -330,11 +345,33 @@ pub(crate) fn run_tier_c_operation(
         (MaterializedLogical::F64 { backing, .. }, Operation::Quantile { q, .. }) => {
             run_quantile_f64(backing, plan, axes, n, shape, *q)
         }
-        (MaterializedLogical::F32 { backing, .. }, Operation::Histogram { bins, .. }) => {
-            run_histogram_f32(backing, plan, axes, n, shape, *bins)
+        (MaterializedLogical::F32 { backing, .. }, Operation::Histogram { bins, min, max, .. }) => {
+            run_histogram_f32(
+                backing,
+                &HistogramTierCParams {
+                    plan,
+                    axes,
+                    n,
+                    shape,
+                    bins: *bins,
+                    range_min: *min,
+                    range_max: *max,
+                },
+            )
         }
-        (MaterializedLogical::F64 { backing, .. }, Operation::Histogram { bins, .. }) => {
-            run_histogram_f64(backing, plan, axes, n, shape, *bins)
+        (MaterializedLogical::F64 { backing, .. }, Operation::Histogram { bins, min, max, .. }) => {
+            run_histogram_f64(
+                backing,
+                &HistogramTierCParams {
+                    plan,
+                    axes,
+                    n,
+                    shape,
+                    bins: *bins,
+                    range_min: *min,
+                    range_max: *max,
+                },
+            )
         }
         _ => Err(TetError::Validation(format!(
             "unsupported materialize-required operation: {op:?}"
@@ -426,12 +463,17 @@ fn run_quantile_f32(
 
 fn run_histogram_f64(
     backing: &LogicalF64Backing,
-    plan: &ReadPlan,
-    axes: &[String],
-    n: usize,
-    shape: &[u64],
-    bins: u32,
+    p: &HistogramTierCParams<'_>,
 ) -> Result<OperationPreviewFields, TetError> {
+    let HistogramTierCParams {
+        plan,
+        axes,
+        n,
+        shape,
+        bins,
+        range_min,
+        range_max,
+    } = *p;
     if axes.is_empty() {
         let values = match backing {
             LogicalF64Backing::InMemory(v) => v.clone(),
@@ -439,7 +481,7 @@ fn run_histogram_f64(
                 .map(|li| read_f64_at_spill_f64(temp.path(), li))
                 .collect::<Result<Vec<_>, _>>()?,
         };
-        let (counts, edges) = histogram_f64(&values, bins)?;
+        let (counts, edges) = histogram_f64(&values, bins, range_min, range_max)?;
         return Ok(OperationPreviewFields {
             element_count: Some(n),
             histogram_counts: Some(counts),
@@ -456,7 +498,7 @@ fn run_histogram_f64(
     };
     let mut flat = Vec::with_capacity(cells.len() * bins as usize);
     for cell in &cells {
-        let (counts, _) = histogram_f64(cell, bins)?;
+        let (counts, _) = histogram_f64(cell, bins, range_min, range_max)?;
         flat.extend(counts);
     }
     Ok(OperationPreviewFields {
@@ -469,12 +511,17 @@ fn run_histogram_f64(
 
 fn run_histogram_f32(
     backing: &LogicalF32Backing,
-    plan: &ReadPlan,
-    axes: &[String],
-    n: usize,
-    shape: &[u64],
-    bins: u32,
+    p: &HistogramTierCParams<'_>,
 ) -> Result<OperationPreviewFields, TetError> {
+    let HistogramTierCParams {
+        plan,
+        axes,
+        n,
+        shape,
+        bins,
+        range_min,
+        range_max,
+    } = *p;
     if axes.is_empty() {
         let values: Vec<f64> = match backing {
             LogicalF32Backing::InMemory(v) => v.iter().map(|&x| f64::from(x)).collect(),
@@ -482,7 +529,7 @@ fn run_histogram_f32(
                 .map(|li| read_f64_at_spill_f32(temp.path(), li))
                 .collect::<Result<Vec<_>, _>>()?,
         };
-        let (counts, edges) = histogram_f64(&values, bins)?;
+        let (counts, edges) = histogram_f64(&values, bins, range_min, range_max)?;
         return Ok(OperationPreviewFields {
             element_count: Some(n),
             histogram_counts: Some(counts),
@@ -499,7 +546,7 @@ fn run_histogram_f32(
     };
     let mut flat = Vec::with_capacity(cells.len() * bins as usize);
     for cell in &cells {
-        let (counts, _) = histogram_f64(cell, bins)?;
+        let (counts, _) = histogram_f64(cell, bins, range_min, range_max)?;
         flat.extend(counts);
     }
     Ok(OperationPreviewFields {

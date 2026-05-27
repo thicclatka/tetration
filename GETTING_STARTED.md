@@ -190,10 +190,20 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (`5`), **`u16`** (`6
 
 ### Stats lane
 
-- [ ] **Histogram** — caller-supplied `min` / `max` bin edges (already on slice list).
+- [x] **Histogram** — caller-supplied `min` / `max` bin edges (already on slice list).
 - [ ] **Covariance / correlation** along an axis (tier C; materialize or multi-pass).
-- [ ] **Dimension names in query** — resolve `"mean": "time"` → axis index via Phase 7 metadata (decimal indices remain the internal wire).
-- [ ] **Coordinate-aware selection** — slice/filter by label when per-index coords are stored (optional lookup index for large categorical axes).
+- [x] **Dimension names in query** — resolve `"mean": "time"` → axis index via Phase 7 metadata (decimal indices remain the internal wire).
+- [x] **Coordinate-aware selection** — `selection[].start_label` / `stop_label` resolve via footer `coords` (+ `dim_names` axis key) at plan time.
+
+### QC / missing-data counts (Phase 9)
+
+v1 already ships boolean **`any_nan`** and **`all_finite`** (scalar + partial axes). Phase 9 adds **count** reductions for data-quality workflows (tier A/B streaming fold where possible):
+
+- [x] **`nan_count`** — count of **NaN** elements (`nan_count`); integers contribute 0.
+- [x] **`null_count`** — count of elements equal to **fill** (query `fill` or attrs `_FillValue` / `missing_value` / `fill_value`).
+- [ ] **Related counts (as needed)** — e.g. non-finite count (`inf` + NaN), `finite_count`, or **`invalid_count`**; deferred.
+
+See [`docs/query_engine.md` — Phase 9 planned](docs/query_engine.md#phase-9-planned-ops).
 
 See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-vs-coordinate-labels-planned).
 
@@ -287,6 +297,7 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 9. ~~**History (Phase 7):** structured events + metadata spill.~~ **Done**
 10. ~~**File health (Phase 8):** `tet verify` / `tet repair` + verify fixtures.~~ **Done** — includes `--deep` decode and dataset tensor byte cross-check.
 11. ~~**Dtypes (Phase 8):** additional wire tags through write → query smoke.~~ **Done** — tags `5`–`10` (`u8`–`u64`, incl. `f16`); booleans import as `u8`; SIMD slab paths for tier-A/B ops.
-12. **Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.
+12. ~~**Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.~~ **Done**
 13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
-14. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+14. **QC counts (Phase 9):** `nan_count`, `null_count` (fill-aware), related non-finite / invalid counts — complements shipped `any_nan` / `all_finite`.
+15. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

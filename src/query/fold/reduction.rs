@@ -3,7 +3,7 @@
 use crate::query::fold::variance_simd;
 use crate::query::types::{Operation, OperationPreviewFields};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ReductionKind {
     Sum,
     Mean,
@@ -17,6 +17,8 @@ pub(crate) enum ReductionKind {
     NormL2,
     AllFinite,
     AnyNan,
+    NanCount,
+    NullCount { fill: f64 },
     ArgMin,
     ArgMax,
 }
@@ -36,6 +38,11 @@ impl From<&Operation> for ReductionKind {
             Operation::NormL2 { .. } => Self::NormL2,
             Operation::AllFinite { .. } => Self::AllFinite,
             Operation::AnyNan { .. } => Self::AnyNan,
+            Operation::NanCount { .. } => Self::NanCount,
+            Operation::NullCount { fill: Some(f), .. } => Self::NullCount { fill: *f },
+            Operation::NullCount { fill: None, .. } => {
+                unreachable!("null_count fill must be resolved before fold")
+            }
             Operation::ArgMin { .. } => Self::ArgMin,
             Operation::ArgMax { .. } => Self::ArgMax,
             Operation::Median { .. } | Operation::Quantile { .. } | Operation::Histogram { .. } => {
@@ -144,6 +151,8 @@ pub(crate) struct ValueAccum {
     min: f64,
     max: f64,
     have_min_max: bool,
+    /// NaN / null-match tally for [`ReductionKind::NanCount`] and [`ReductionKind::NullCount`].
+    match_count: usize,
 }
 
 impl Default for ValueAccum {
@@ -160,6 +169,55 @@ impl Default for ValueAccum {
             min: 0.0,
             max: 0.0,
             have_min_max: false,
+            match_count: 0,
+        }
+    }
+}
+
+impl ValueAccum {
+    fn values_equal_fill(v: f64, fill: f64) -> bool {
+        if fill.is_nan() { v.is_nan() } else { v == fill }
+    }
+
+    fn push_nan_count_f32_slice(&mut self, vals: &[f32]) {
+        self.count += vals.len();
+        self.match_count += vals.iter().filter(|v| v.is_nan()).count();
+    }
+
+    fn push_nan_count_f64_slice(&mut self, vals: &[f64]) {
+        self.count += vals.len();
+        self.match_count += vals.iter().filter(|v| v.is_nan()).count();
+    }
+
+    fn push_null_count_f32_slice(&mut self, vals: &[f32], fill: f64) {
+        self.count += vals.len();
+        for &v in vals {
+            if Self::values_equal_fill(f64::from(v), fill) {
+                self.match_count += 1;
+            }
+        }
+    }
+
+    fn push_null_count_f64_slice(&mut self, vals: &[f64], fill: f64) {
+        self.count += vals.len();
+        for &v in vals {
+            if Self::values_equal_fill(v, fill) {
+                self.match_count += 1;
+            }
+        }
+    }
+
+    pub(crate) fn push_nan_f64(&mut self, v: f64) {
+        self.count += 1;
+        if v.is_nan() {
+            self.match_count += 1;
+        }
+    }
+
+    pub(crate) fn push_null_f64(&mut self, v: f64, fill: f64) {
+        self.count += 1;
+        if Self::values_equal_fill(v, fill) {
+            self.match_count += 1;
         }
     }
 }
@@ -270,6 +328,8 @@ impl ValueAccum {
                     }
                 }
             }
+            ReductionKind::NanCount => self.push_nan_count_f32_slice(vals),
+            ReductionKind::NullCount { fill } => self.push_null_count_f32_slice(vals, fill),
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -354,6 +414,8 @@ impl ValueAccum {
                     }
                 }
             }
+            ReductionKind::NanCount => self.push_nan_count_f64_slice(vals),
+            ReductionKind::NullCount { fill } => self.push_null_count_f64_slice(vals, fill),
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -392,6 +454,17 @@ impl ValueAccum {
                     self.min = slab_min;
                     self.max = slab_max;
                     self.have_min_max = true;
+                }
+            }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
                 }
             }
             ReductionKind::Product
@@ -440,6 +513,17 @@ impl ValueAccum {
                     self.min = slab_min;
                     self.max = slab_max;
                     self.have_min_max = true;
+                }
+            }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
                 }
             }
             ReductionKind::Product
@@ -491,6 +575,17 @@ impl ValueAccum {
                     self.have_min_max = true;
                 }
             }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(v as f64, fill) {
+                        self.match_count += 1;
+                    }
+                }
+            }
             ReductionKind::Product
             | ReductionKind::NormL1
             | ReductionKind::NormL2
@@ -538,6 +633,17 @@ impl ValueAccum {
                     self.min = slab_min;
                     self.max = slab_max;
                     self.have_min_max = true;
+                }
+            }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
                 }
             }
             ReductionKind::Product
@@ -589,6 +695,17 @@ impl ValueAccum {
                     self.have_min_max = true;
                 }
             }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(v as f64, fill) {
+                        self.match_count += 1;
+                    }
+                }
+            }
             ReductionKind::Product
             | ReductionKind::NormL1
             | ReductionKind::NormL2
@@ -636,6 +753,17 @@ impl ValueAccum {
                     self.min = slab_min;
                     self.max = slab_max;
                     self.have_min_max = true;
+                }
+            }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
                 }
             }
             ReductionKind::Product
@@ -687,6 +815,17 @@ impl ValueAccum {
                     self.have_min_max = true;
                 }
             }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
+                }
+            }
             ReductionKind::Product
             | ReductionKind::NormL1
             | ReductionKind::NormL2
@@ -736,6 +875,18 @@ impl ValueAccum {
                     self.have_min_max = true;
                 }
             }
+            ReductionKind::NanCount => {
+                self.count += vals.len();
+                self.match_count += vals.iter().filter(|v| f64::from(**v).is_nan()).count();
+            }
+            ReductionKind::NullCount { fill } => {
+                self.count += vals.len();
+                for &v in vals {
+                    if Self::values_equal_fill(f64::from(v), fill) {
+                        self.match_count += 1;
+                    }
+                }
+            }
             ReductionKind::Product
             | ReductionKind::NormL1
             | ReductionKind::NormL2
@@ -773,6 +924,7 @@ impl ValueAccum {
             ReductionKind::NormL2 => self.norm_l2_sq.sqrt(),
             ReductionKind::AllFinite => f64::from(u8::from(self.all_finite)),
             ReductionKind::AnyNan => f64::from(u8::from(self.any_nan)),
+            ReductionKind::NanCount | ReductionKind::NullCount { .. } => self.match_count as f64,
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -784,6 +936,7 @@ impl ValueAccum {
         match kind {
             ReductionKind::AllFinite => self.all_finite,
             ReductionKind::AnyNan => self.any_nan,
+            ReductionKind::NanCount | ReductionKind::NullCount { .. } => self.match_count > 0,
             _ => self.finish_f64(kind) > 0.5,
         }
     }
@@ -805,6 +958,7 @@ impl ValueAccum {
         self.norm_l2_sq += other.norm_l2_sq;
         self.all_finite &= other.all_finite;
         self.any_nan |= other.any_nan;
+        self.match_count += other.match_count;
         if other.have_min_max {
             if self.have_min_max {
                 self.min = self.min.min(other.min);
@@ -829,6 +983,8 @@ impl ValueAccum {
         let mut norm_l2_scalar = None;
         let mut all_finite_scalar = None;
         let mut any_nan_scalar = None;
+        let mut nan_count_scalar = None;
+        let mut null_count_scalar = None;
         match kind {
             ReductionKind::Sum => sum_scalar = Some(self.sum),
             ReductionKind::Mean => {
@@ -847,6 +1003,8 @@ impl ValueAccum {
             ReductionKind::NormL2 => norm_l2_scalar = Some(self.norm_l2_sq.sqrt()),
             ReductionKind::AllFinite => all_finite_scalar = Some(self.all_finite),
             ReductionKind::AnyNan => any_nan_scalar = Some(self.any_nan),
+            ReductionKind::NanCount => nan_count_scalar = Some(self.match_count as f64),
+            ReductionKind::NullCount { .. } => null_count_scalar = Some(self.match_count as f64),
             ReductionKind::Count | ReductionKind::ArgMin | ReductionKind::ArgMax => {}
         }
         ScalarReductionResult {
@@ -862,6 +1020,8 @@ impl ValueAccum {
             norm_l2_scalar,
             all_finite_scalar,
             any_nan_scalar,
+            nan_count_scalar,
+            null_count_scalar,
             argmin_index: None,
             argmax_index: None,
         }
@@ -958,6 +1118,8 @@ pub(crate) struct ScalarReductionResult {
     pub norm_l2_scalar: Option<f64>,
     pub all_finite_scalar: Option<bool>,
     pub any_nan_scalar: Option<bool>,
+    pub nan_count_scalar: Option<f64>,
+    pub null_count_scalar: Option<f64>,
     pub argmin_index: Option<u64>,
     pub argmax_index: Option<u64>,
 }
@@ -977,6 +1139,8 @@ impl ScalarReductionResult {
             norm_l2_scalar: None,
             all_finite_scalar: None,
             any_nan_scalar: None,
+            nan_count_scalar: None,
+            null_count_scalar: None,
             argmin_index: None,
             argmax_index: None,
         }
@@ -998,6 +1162,8 @@ impl From<ScalarReductionResult> for OperationPreviewFields {
             norm_l2: r.norm_l2_scalar,
             all_finite: r.all_finite_scalar,
             any_nan: r.any_nan_scalar,
+            nan_count: r.nan_count_scalar,
+            null_count: r.null_count_scalar,
             argmin_index: r.argmin_index,
             argmax_index: r.argmax_index,
             ..Self::default()

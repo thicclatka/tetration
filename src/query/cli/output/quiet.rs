@@ -303,6 +303,8 @@ fn operation_name(op: &Operation) -> &'static str {
         Operation::NormL2 { .. } => "norm_l2",
         Operation::AllFinite { .. } => "all_finite",
         Operation::AnyNan { .. } => "any_nan",
+        Operation::NanCount { .. } => "nan_count",
+        Operation::NullCount { .. } => "null_count",
         Operation::ArgMin { .. } => "argmin",
         Operation::ArgMax { .. } => "argmax",
         Operation::Median { .. } => "median",
@@ -314,7 +316,19 @@ fn operation_name(op: &Operation) -> &'static str {
 fn operation_extra_tags(op: &Operation) -> Vec<String> {
     match op {
         Operation::Quantile { q, .. } => vec![format!("q={}", fmt_f64(*q))],
-        Operation::Histogram { bins, .. } => vec![format!("bins={bins}")],
+        Operation::Histogram { bins, min, max, .. } => {
+            let mut tags = vec![format!("bins={bins}")];
+            if let Some(v) = min {
+                tags.push(format!("min={}", fmt_f64(*v)));
+            }
+            if let Some(v) = max {
+                tags.push(format!("max={}", fmt_f64(*v)));
+            }
+            tags
+        }
+        Operation::NullCount { fill, .. } => fill
+            .map(|v| vec![format!("fill={}", fmt_f64(v))])
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -426,6 +440,18 @@ fn scalar_operation_display(
                 v.to_string()
             })
         }
+        Operation::NanCount { .. } => quiet_scalar_field(
+            "nan_count",
+            "operation_nan_count",
+            ex.operation_nan_count,
+            fmt_f64,
+        ),
+        Operation::NullCount { .. } => quiet_scalar_field(
+            "null_count",
+            "operation_null_count",
+            ex.operation_null_count,
+            fmt_f64,
+        ),
         Operation::ArgMin { .. } => quiet_scalar_field(
             "argmin_index",
             "operation_argmin_index",
@@ -504,6 +530,14 @@ fn partial_operation_values(op: &Operation, ex: &QueryExecutionPreview) -> Resul
         Operation::AnyNan { .. } => quiet_reduced_bool(
             "operation_reduced_any_nan",
             ex.operation_reduced_any_nan.as_ref(),
+        ),
+        Operation::NanCount { .. } => quiet_reduced_f64(
+            "operation_reduced_nan_count",
+            ex.operation_reduced_nan_count.as_ref(),
+        ),
+        Operation::NullCount { .. } => quiet_reduced_f64(
+            "operation_reduced_null_count",
+            ex.operation_reduced_null_count.as_ref(),
         ),
         Operation::ArgMin { .. } => quiet_reduced_u64(
             "operation_reduced_argmin",

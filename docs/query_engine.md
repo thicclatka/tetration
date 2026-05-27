@@ -307,13 +307,13 @@ Future metadata ([`layout_v1.md — axis metadata`](layout_v1.md#axis-metadata-p
 ### Dimension names (axis names)
 
 - **One string per axis** — the name of the dimension, not each slot along it.
-- **Query use (Phase 9):** resolve `"mean": "time"` → internal axis `0` before planning; same reductions as today.
+- **Query use (shipped):** resolve `"mean": "time"` → internal axis `0` at plan time when footer `dim_names` is set; decimal indices and numeric wire forms still accepted.
 - **Size:** O(`ndim`) — fits in dataset attrs or file header.
 
 ### Coordinate labels (index values)
 
 - **One value per position** along an axis — e.g. every row’s timestamp, every column’s variable name, every station id.
-- **Query use (later):** slice or filter by label (`time >= "2024-01"`), verify alignment between two datasets on shared coords; **group-by** needs labels **plus** a new aggregation op (not v1).
+- **Query use (shipped):** `selection[].start_label` / `stop_label` resolve to axis indices at plan time when footer `coords` exist (axis key = `dim_names[d]` or `"d"`). Filter-by-value and group-by remain later.
 - **Size:** O(`shape[d]`) — may be stored inline, as attrs, or as a separate 1D array/dataset in the file.
 
 ### What labels do _not_ imply
@@ -322,7 +322,7 @@ Future metadata ([`layout_v1.md — axis metadata`](layout_v1.md#axis-metadata-p
 | ------------------------------- | ---------------------------------------------------------- |
 | `"mean": "time"` (axis name)    | **Dimension names** only                                   |
 | Slice rows 100–200 by index     | **Today** — numeric `selection`                            |
-| Slice by timestamp / station id | **Coordinate labels** + resolver                           |
+| Slice by timestamp / station id | **Coordinate labels** on `selection` (**done**); range/filter later |
 | Fast lookup without full scan   | Coords **+ optional index** (sorted array, hash, …)        |
 | `GROUP BY station`              | Coords on key axis **+ group-by op**                       |
 | SQL-style join two datasets     | Two queries or spill + caller; **non-goal** as full engine |
@@ -340,11 +340,15 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 | `"sum": [0, 1]`                                | Partial reduction over axes 0 and 1                                       |
 | `"quantile": { "q": 0.95, "axis": 0 }`         | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)                   |
 | `"histogram": { "bins": 10, "axis": 0 }`       | Histogram on axis 0                                                       |
+| `"histogram": { "bins": 10, "min": 0, "max": 1 }` | Histogram with fixed edge range (both `min` and `max` required)          |
+| `"nan_count": []` / `"nan_count": 0`           | Count of NaN elements (scalar / partial)                                  |
+| `"null_count": []` or `{ "fill": 99, "axis": 0 }` | Count of fill-missing values (fill from query or dataset attrs)           |
+| `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]` | Half-open slice by coordinate label (requires footer `coords`) |
 | `"execution": { "memory_budget_percent": 40 }` | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)       |
 | `"execution": { "fold_parallel": false }`      | Force sequential chunk visits (not linear scan); default is policy-driven |
 | `"spill": "slice.bin"`                         | Full logical tensor export beside the `.tet` parent (allowlist applies)   |
 
-`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis indices must be **non-negative decimals** (`0`, not `"time"`) — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels-planned).
+`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis specs accept **non-negative decimals** (`0`) or **dimension names** (`"time"`) when `dim_names` is in footer metadata — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels-planned).
 
 At most **one** reduction key per document. Unknown top-level fields are rejected (`deny_unknown_fields` style in [`parse_query_value`](../src/query/document_wire.rs)).
 
@@ -452,6 +456,20 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 | **`median`**                 | C              | **Done** (scalar + partial axes).                                        |
 | **`quantile` / `histogram`** | C              | **Done** (scalar + partial axes; histogram partial returns counts only). |
 
+### Phase 9 planned ops
+
+Not shipped yet; see [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange-later).
+
+| Op (proposed wire key) | Tier (typical) | Notes |
+| ---------------------- | -------------- | ----- |
+| **`nan_count`** | A/B | **Done** — count of NaN elements; complements **`any_nan`** (boolean). |
+| **`null_count`** | A/B | **Done** — fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`). |
+| **Related QC counts** | A/B | Deferred — non-finite / `invalid_count` combo. |
+| **Histogram `min` / `max`** | C | **Done** — caller-supplied bin edges on scalar histogram (both required when either set). |
+| **Covariance / correlation** | C | Along an axis; materialize or multi-pass. |
+| **Named axis in JSON** | — | `"mean": "time"` via `dim_names` (resolver only). |
+| **Coord label slice** | — | **Done** — `selection` `start_label` / `stop_label` ([`resolve_selection.rs`](../src/query/resolve_selection.rs)). |
+
 ### Tier 3 — not `Operation` enum variants
 
 These match the product vision but belong **beside** the reduction enum:
@@ -460,7 +478,7 @@ These match the product vision but belong **beside** the reduction enum:
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)).                                                  |
 | **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                 |
-| **Named axis labels**                     | **Dimension names** in metadata → resolve `"time"` to axis index before reductions (Phase 9).                                                       |
+| **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                    |
 | **Coordinate labels / filter-by-value**   | Per-index coords in metadata; slice resolver; optional lookup index (Phase 7 storage + Phase 9 query).                                              |
 | **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                   |
 | **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                  |

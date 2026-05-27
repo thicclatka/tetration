@@ -98,12 +98,16 @@ impl ChunkElem for half::f16 {
 
 /// Scalar fold hooks for floating chunk payloads (`f32` / `f64`).
 trait FoldChunkElem: ChunkElem {
+    fn as_f64(v: Self) -> f64;
     fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind);
     fn push_value(value: &mut ValueAccum, v: Self);
     fn push_arg(arg: &mut ArgIndexAccum, li: u64, v: Self, kind: ReductionKind);
 }
 
 impl FoldChunkElem for f32 {
+    fn as_f64(v: Self) -> f64 {
+        f64::from(v)
+    }
     fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind) {
         value.push_f32_le_bytes(raw, kind);
     }
@@ -116,6 +120,9 @@ impl FoldChunkElem for f32 {
 }
 
 impl FoldChunkElem for f64 {
+    fn as_f64(v: Self) -> f64 {
+        v
+    }
     fn push_le_bytes(value: &mut ValueAccum, raw: &[u8], kind: ReductionKind) {
         value.push_f64_le_bytes(raw, kind);
     }
@@ -379,6 +386,8 @@ where
     visit_prepared_chunk::<E, _>(&prep, plan, |li, v| {
         match kind {
             ReductionKind::ArgMin | ReductionKind::ArgMax => E::push_arg(arg, li as u64, v, kind),
+            ReductionKind::NanCount => value.push_nan_f64(E::as_f64(v)),
+            ReductionKind::NullCount { fill } => value.push_null_f64(E::as_f64(v), fill),
             _ => E::push_value(value, v),
         }
         if li < preview_len {
