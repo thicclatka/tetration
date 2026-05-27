@@ -321,7 +321,7 @@ fn fmt_axes(axes: &[String]) -> String {
     }
 }
 
-fn fmt_shape(shape: &[u64]) -> String {
+pub(super) fn fmt_shape(shape: &[u64]) -> String {
     if shape.is_empty() {
         "0".to_string()
     } else {
@@ -370,7 +370,7 @@ fn quiet_reduced_u64(field: &'static str, values: Option<&Vec<u64>>) -> Result<S
         .ok_or_else(|| missing_field(field))
 }
 
-fn scalar_operation_display(
+pub(super) fn scalar_operation_display(
     op: &Operation,
     ex: &QueryExecutionPreview,
 ) -> Result<(&'static str, String), String> {
@@ -523,7 +523,10 @@ fn quiet_covariance_correlation_matrix(
     ))
 }
 
-fn partial_operation_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<String, String> {
+pub(super) fn partial_operation_values(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<String, String> {
     match op {
         Operation::Sum { .. } => {
             quiet_reduced_f64("operation_reduced_sum", ex.operation_reduced_sum.as_ref())

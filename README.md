@@ -137,14 +137,14 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 
 `QUERY`: path to `.json`, inline JSON, `-` for stdin, or omit to read stdin.
 
-| Flag                | Effect                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `-t`, `--tet PATH`  | Attach catalog / read plan (required for `-x`)                                                                |
-| `-x`, `--execute`   | Decode tiles, run `operation`, attach `execution`                                                             |
-| `--format`          | `full` (default), `json`, `stats`, `plan`, `quiet`                                                            |
-| `-q`, `--quiet`     | Shorthand for `--format quiet` (one-line stdout)                                                              |
-| `--preview N`       | Cap preview sample values when executing (`--preview-f32` alias; default 64 for full/json, 0 for quiet/stats) |
-| `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                           |
+| Flag                | Effect                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `-t`, `--tet PATH`  | Attach catalog / read plan (required for `-x`)                                                                      |
+| `-x`, `--execute`   | Decode tiles, run `operation`, attach `execution`                                                                   |
+| `--format`          | `full` (default), `json`, `stats`, `plan`, `quiet`, `table`                                                         |
+| `-q`, `--quiet`     | Shorthand for `--format quiet` (one-line stdout)                                                                    |
+| `--preview N`       | Cap preview sample values when executing (`--preview-f32` alias; default 64 for full/json, 0 for quiet/stats/table) |
+| `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                                 |
 
 ### `tet qhist`
 

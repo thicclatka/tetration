@@ -236,6 +236,8 @@ pub enum QueryStdoutFormat {
     Plan,
     /// One human-readable line (`dataset=… op=… mean=…`).
     Quiet,
+    /// ASCII tables (summary, plan, aggregates, optional preview sample).
+    Table,
 }
 
 impl From<QueryStdoutFormat> for QueryOutputFormat {
@@ -246,6 +248,7 @@ impl From<QueryStdoutFormat> for QueryOutputFormat {
             QueryStdoutFormat::Stats => Self::Stats,
             QueryStdoutFormat::Plan => Self::Plan,
             QueryStdoutFormat::Quiet => Self::Quiet,
+            QueryStdoutFormat::Table => Self::Table,
         }
     }
 }

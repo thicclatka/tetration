@@ -1,0 +1,5 @@
+dataset = "a"
+
+[quantile]
+q = 0.5
+axis = 0

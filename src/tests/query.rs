@@ -15,8 +15,8 @@ use crate::query::{
     CHUNK_TOUCH_POLICY, Operation, OutputHint, QueryInputFormat, QueryLimits, SpillPathAllowlist,
     TempSpillFile, detect_query_input_format, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
-    materialize_read_plan_f32_le_parallel, parse_query_json, parse_query_text, parse_query_toml,
-    plan_query_empty, plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, validate_query,
+    materialize_read_plan_f32_le_parallel, parse_query_json, parse_query_text, plan_query_empty,
+    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, validate_query,
 };
 
 /// JSON string literal for a filesystem path embedded in test query fixtures.
@@ -29,19 +29,7 @@ fn json_path_handle(path: &Path) -> String {
 
 #[test]
 fn sample_query_toml_parses_like_json() {
-    let toml = r#"
-        dataset = "temperature"
-        mean = []
-
-        [[selection]]
-        start = 0
-        stop = 100
-        step = 2
-
-        [[selection]]
-        step = 1
-    "#;
-    let doc = parse_query_toml(toml).unwrap();
+    let doc = super::fixture::query_files::toml("mean_strided_temperature");
     validate_query(&doc).unwrap();
     assert_eq!(doc.dataset, "temperature");
     assert!(matches!(doc.operation, Some(Operation::Mean { .. })));
@@ -54,38 +42,33 @@ fn sample_query_toml_parses_like_json() {
 
 #[test]
 fn parse_query_text_auto_detects_json_and_toml() {
-    let json = r#"{"dataset":"a","mean":[]}"#;
-    let toml = "dataset = \"a\"\nmean = []\n";
+    let json = super::fixture::query_files::read("mean_a", "json");
+    let toml = super::fixture::query_files::read("mean_a", "toml");
+    let json_path = super::fixture::query_files::path("mean_a", "json");
+    let toml_path = super::fixture::query_files::path("mean_a", "toml");
     assert_eq!(
-        detect_query_input_format(Some("q.json"), json),
+        detect_query_input_format(Some(json_path.to_str().unwrap()), &json),
         QueryInputFormat::Json
     );
     assert_eq!(
-        detect_query_input_format(Some("q.toml"), toml),
+        detect_query_input_format(Some(toml_path.to_str().unwrap()), &toml),
         QueryInputFormat::Toml
     );
     assert_eq!(
-        detect_query_input_format(None, json),
+        detect_query_input_format(None, &json),
         QueryInputFormat::Json
     );
     assert_eq!(
-        detect_query_input_format(None, toml),
+        detect_query_input_format(None, &toml),
         QueryInputFormat::Toml
     );
-    parse_query_text(json, QueryInputFormat::Auto).unwrap();
-    parse_query_text(toml, QueryInputFormat::Auto).unwrap();
+    parse_query_text(&json, QueryInputFormat::Auto).unwrap();
+    parse_query_text(&toml, QueryInputFormat::Auto).unwrap();
 }
 
 #[test]
 fn toml_parametric_op_tables() {
-    let toml = r#"
-        dataset = "a"
-
-        [quantile]
-        q = 0.5
-        axis = 0
-    "#;
-    let doc = parse_query_toml(toml).unwrap();
+    let doc = super::fixture::query_files::toml("quantile_axis0_a");
     validate_query(&doc).unwrap();
     assert!(matches!(
         doc.operation,
@@ -95,16 +78,7 @@ fn toml_parametric_op_tables() {
 
 #[test]
 fn sample_query_parses_and_plans() {
-    let json = r#"{
-        "layout_version": 1,
-        "dataset": "temperature",
-        "selection": [
-            { "start": 0, "stop": 100, "step": 2 },
-            { "start": null, "stop": null, "step": 1 }
-        ],
-        "mean":[]
-    }"#;
-    let doc = parse_query_json(json).unwrap();
+    let doc = super::fixture::query_files::json("mean_strided_temperature");
     validate_query(&doc).unwrap();
     let plan = plan_query_empty(&doc);
     assert!(plan.accepted);

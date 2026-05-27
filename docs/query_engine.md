@@ -66,6 +66,7 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `stats`          | —     | Slim JSON: status, catalog/read_plan summary, `execution` aggregates — no `read_plan.chunks[]`, no preview arrays                              |
 | `plan`           | —     | Slim JSON: catalog + `read_plan` summary only (no `chunks[]`, no `execution`; **`-x`** still runs decode — use without **`-x`** for plan-only) |
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                                                 |
+| `table`          | —     | ASCII tables: query summary, `read_plan`, execution I/O, scalar/partial **result**, optional **preview** sample (like `tet info`)              |
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
 
@@ -358,14 +359,14 @@ At most **one** reduction key per document. Unknown top-level fields are rejecte
 
 Equivalent TOML for the same wire (parametric ops use inline tables; `selection` uses `[[selection]]` array-of-tables):
 
-| TOML | Same as JSON |
-| ---- | ------------ |
-| `dataset = "temperature"` / `mean = []` | `"dataset": "temperature", "mean": []` |
-| `mean = 0` | `"mean": 0` |
-| `sum = [0, 1]` | `"sum": [0, 1]` |
-| `[quantile]` / `q = 0.95` / `axis = 0` | `"quantile": { "q": 0.95, "axis": 0 }` |
-| `[execution]` / `memory_budget_percent = 40` | `"execution": { "memory_budget_percent": 40 }` |
-| `spill = "slice.bin"` | `"spill": "slice.bin"` |
+| TOML                                                      | Same as JSON                                            |
+| --------------------------------------------------------- | ------------------------------------------------------- |
+| `dataset = "temperature"` / `mean = []`                   | `"dataset": "temperature", "mean": []`                  |
+| `mean = 0`                                                | `"mean": 0`                                             |
+| `sum = [0, 1]`                                            | `"sum": [0, 1]`                                         |
+| `[quantile]` / `q = 0.95` / `axis = 0`                    | `"quantile": { "q": 0.95, "axis": 0 }`                  |
+| `[execution]` / `memory_budget_percent = 40`              | `"execution": { "memory_budget_percent": 40 }`          |
+| `spill = "slice.bin"`                                     | `"spill": "slice.bin"`                                  |
 | `[[selection]]` / `start = 0` / `stop = 100` / `step = 2` | `"selection": [{ "start": 0, "stop": 100, "step": 2 }]` |
 
 ```toml
@@ -535,13 +536,13 @@ The query control plane (JSON or TOML input) is a **declarative document**, not 
 
 ### Threat model (v1)
 
-| Surface             | Source                                                   | Risk if mishandled                                                                                        |
-| ------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Query JSON/TOML in** | User, HTTP body, stdin, agent prompt                  | DoS (huge/deep payload), logic abuse (absurd selection), confused deputy (if a host passes paths from the document) |
-| **`.tet` mmap**     | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))           |
-| **Query JSON out**  | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                     |
-| **Binary payloads** | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                             |
-| **Spill path**      | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs) |
+| Surface                | Source                                                   | Risk if mishandled                                                                                                  |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Query JSON/TOML in** | User, HTTP body, stdin, agent prompt                     | DoS (huge/deep payload), logic abuse (absurd selection), confused deputy (if a host passes paths from the document) |
+| **`.tet` mmap**        | Caller-chosen file path (CLI flag, not JSON field today) | Malicious file → bad index spans (mitigated in [catalog robustness](#robustness-catalog-index))                     |
+| **Query JSON out**     | `QueryResponse` pretty-print                             | Log/UI injection if embedded raw; unsafe `eval` in downstream scripts                                               |
+| **Binary payloads**    | Chunk bytes on disk                                      | Not inlined in JSON; decoded only through catalog + read plan                                                       |
+| **Spill path**         | `"spill"` string in query JSON                           | Host path chosen by caller; validated against [`SpillPathAllowlist`](../src/query/engine/spill_policy.rs)           |
 
 The **dataset name** and **operation axis labels** in JSON are echoed in responses and errors. Treat them as **untrusted display data** unless your deployment pre-validates them.
 

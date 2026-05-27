@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::query::{parse_query_json, plan_query_with_tet_mmap};
+use crate::query::plan_query_with_tet_mmap;
 use crate::verify::{VerifyOptions, verify_tet_bytes, verify_tet_file};
 use crate::{layout::mmap_file_read, verify::DEEP_DECODE_MAX_CHUNKS};
 
@@ -104,7 +104,7 @@ fn tracked_small_tet_verify_and_query() {
 
     for path in [&u8, &u32, &f16] {
         let mmap = mmap_file_read(path).unwrap();
-        let sum_doc = parse_query_json(r#"{"dataset":"a","sum":[]}"#).unwrap();
+        let sum_doc = super::fixture::query_files::json("sum_a");
         let sum_ex = plan_query_with_tet_mmap(&sum_doc, None, &mmap, Some(0))
             .unwrap()
             .execution
@@ -116,7 +116,7 @@ fn tracked_small_tet_verify_and_query() {
             path.display()
         );
 
-        let var_doc = parse_query_json(r#"{"dataset":"a","var":[]}"#).unwrap();
+        let var_doc = super::fixture::query_files::json("var_a");
         let var_ex = plan_query_with_tet_mmap(&var_doc, None, &mmap, Some(0))
             .unwrap()
             .execution
@@ -176,9 +176,16 @@ fn tracked_small_tet_cli_verify_query_repair() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("footer_invalid") || stdout.contains("plan"));
 
-    let query = r#"{"dataset":"a","sum":[]}"#;
+    let query = super::fixture::query_files::path("sum_a", "json");
     let out = tet_bin()
-        .args(["query", query, "-t", u8.to_str().unwrap(), "-x", "-q"])
+        .args([
+            "query",
+            query.to_str().unwrap(),
+            "-t",
+            u8.to_str().unwrap(),
+            "-x",
+            "-q",
+        ])
         .output()
         .unwrap();
     assert!(

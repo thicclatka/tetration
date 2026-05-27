@@ -14,6 +14,7 @@ mod fold;
 mod layout_roundtrip;
 mod metadata;
 mod query;
+mod query_fixtures;
 mod reduction;
 mod repair;
 mod resolve_axes;

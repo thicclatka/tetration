@@ -113,7 +113,7 @@ Other dense-grid formats may follow the same pipeline if there is demand — e.g
 - [x] **CLI polish** — `error:` prefix on failures; catalog-miss **hint** on stderr with dataset list (`tet info` tip).
 - [x] **`--format plan`** — slim JSON: catalog + read_plan summary (no `chunks[]`, no `execution` block).
 - [x] **`tet info` UX** — table + filters; **`--history`** = on-disk footer (not `qhist`).
-- [ ] **Optional stdout modes** — human **`preview`** table for query execute (defer unless needed).
+- [x] **`--format table`** — ASCII tables for query summary, read plan, aggregates, preview sample ([`table.rs`](src/query/cli/output/table.rs)).
 
 **Verify:** spawn-`tet` smoke in `src/tests/cli_info.rs`; golden query docs in repo; `tet query -x -q` on large multi-chunk **`operation_*`** responses.
 
