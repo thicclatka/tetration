@@ -95,7 +95,7 @@ v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis name
 
 Do **not** conflate them:
 
-- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON (Phase 9) instead of `"mean": 0`.
+- **Dimension name** — “axis 0 is called **time**” → enables `"mean": "time"` in query JSON instead of `"mean": 0`.
 - **Coordinate label** — “index 42 along **time** is **2024-03-15**” → enables slice/filter by value, alignment across datasets, and (with extra ops) group-by keys.
 
 **Analogues:** NetCDF dimension name vs coordinate variable; pandas `Index.name` vs `Index` values; xarray `dims` vs `coords`.
@@ -122,7 +122,7 @@ Do **not** conflate them:
 
 **Coordinate labels ≠ a query index by default.** Storing labels enables **name → integer index** resolution at plan time. Fast **filter / group-by** on high-cardinality keys may additionally need an auxiliary lookup structure (sorted coords, hash map, optional on-disk index) — a separate layout/query decision, not automatic from storing strings.
 
-See [query engine — dimension names vs coordinates](query_engine.md#dimension-names-vs-coordinate-labels-planned).
+See [query engine — dimension names vs coordinates](query_engine.md#dimension-names-vs-coordinate-labels).
 
 ## Chunk index region
 

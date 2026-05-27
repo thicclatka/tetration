@@ -13,14 +13,19 @@ words:
   - cvtps
   - ddof
   - DTYPE
+  - einsum
   - elems
   - Embedder
   - embedders
+  - entr
   - hyperslab
   - hyperslabs
   - indicatif
   - inmem
+  - libhdf
+  - libnetcdf
   - loadu
+  - matmul
   - maturin
   - mdformat
   - memcpy
@@ -34,6 +39,7 @@ words:
   - qhist
   - reprojection
   - rkyv
+  - roundtrips
   - rustdoc
   - storeu
   - subslices

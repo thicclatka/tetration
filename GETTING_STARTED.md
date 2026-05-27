@@ -152,13 +152,13 @@ tet info data.tet --json | jq '.summary.datasets'
 - [x] **Rust embedder create + use (wire)** — [`TetWriterSession::open_append`](src/catalog/session.rs); streaming via [`commit_with_fill`](src/catalog/session.rs); catalog [`append_multi_raw_array_file`](src/catalog/append.rs).
 - [x] **File header metadata (footer JSON)** — `metadata.file` in `THST` footer (`tool`, `library_version`, `created_at`); [`TetWriterSession::metadata`](src/catalog/session.rs); `tet info` text + `--json`.
 - [x] **Dataset attributes (footer JSON)** — `metadata.datasets[name].attrs` + optional `dim_names`; session flush; [`read_tet_summary_v1`](src/catalog/mod.rs) / `tet info` roundtrip.
-- [x] **Axis metadata (baseline)** — `dim_names` + inline **`coords`** (≤64 labels/axis) in footer metadata on **`tet convert`** (HDF5 CF `coordinates`, 1D coord arrays) and [`TetWriterSession`](src/catalog/session.rs) commit; see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-planned-phase-7).
+- [x] **Axis metadata (baseline)** — `dim_names` + inline **`coords`** (≤64 labels/axis) in footer metadata on **`tet convert`** (HDF5 CF `coordinates`, 1D coord arrays) and [`TetWriterSession`](src/catalog/session.rs) commit; see [`docs/layout_v1.md`](docs/layout_v1.md#axis-metadata-phase-7-baseline).
 - [x] **Session / writer API** — [`TetWriterSession`](src/catalog/session.rs) queues attrs / `dim_names` / `coords`, optional [`push_history_event`](src/catalog/session.rs) (default `write` + path on commit when empty); footer flush on `commit` / `commit_with_fill`.
 - [x] **Import preservation (baseline)** — HDF5/NetCDF/Zarr v3 scalar attrs → footer `metadata.datasets` on `tet convert`; NetCDF `dim_names` from dimension names.
 
 ## Phase 8 — Dtypes & file health (done)
 
-**Goal:** **`tet verify`** / **`tet repair`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query) before larger query-semantics work. Distinct from Phase 7 metadata; Phase 9 covers named axes, coord selection, and interchange.
+**Goal:** **`tet verify`** / **`tet repair`** and additional **wire dtypes** (`u8`, `u16`, …) end-to-end (writers, convert, query). Distinct from Phase 7 metadata; Phase 9 (named axes, coord selection, interchange) is **done**.
 
 **Baseline (May 2026):** file health + wire tags `1`–`10` (`f32`–`u64`, including **`f16`** tag `9`); booleans import as **`u8`**. `tet verify` is a **quick scan** (first 128 chunk decode-checks on large files); use **`tet verify --deep`** for a full payload decode pass.
 
@@ -184,7 +184,7 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (`5`), **`u16`** (`6
 - [x] **More dtypes (`u32`, `f16`, `u64`)** — wire tags `8`/`9`/`10`; query materialize/fold, convert (Zarr `float16`/`uint32`/`uint64`, HDF5 unsigned `U4`/`U8`), verify fixtures.
 - [x] **Integer SIMD (bulk sum/var/min-max)** — [`variance_simd.rs`](src/query/fold/variance_simd.rs): `f32`/`f16` (via `f32` chunks), `i32` (SSE2/NEON), `u8`/`u16` (SSE2 unpack), `u32`/`i64`/`u64` (SSE2 pairs); slab [`push_*_le_bytes`](src/query/fold/reduction.rs) + [`linear_scan.rs`](src/query/fold/linear_scan.rs) for all wire integer/float tags on tier-A/B ops.
 
-## Phase 9 — Query ops & interchange (later)
+## Phase 9 — Query ops & interchange
 
 **Goal:** extend tier A–C **`operation`** and export paths when the result is still a **reduction, QC stat, or interchange artifact** — builds on Phase 7 metadata and Phase 8 dtype/verify baseline.
 
@@ -204,9 +204,9 @@ v1 already ships boolean **`any_nan`** and **`all_finite`** (scalar + partial ax
 - [x] **`inf_count`** — count of ±infinity elements (`inf_count`; integers contribute 0).
 - [ ] **Related counts (as needed)** — e.g. `finite_count` or combined non-finite tallies; deferred.
 
-See [`docs/query_engine.md` — Phase 9 planned](docs/query_engine.md#phase-9-planned-ops).
+See [`docs/query_engine.md` — Phase 9 ops](docs/query_engine.md#phase-9-ops-shipped).
 
-See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-vs-coordinate-labels-planned).
+See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-vs-coordinate-labels).
 
 ### Interchange & format
 
@@ -299,6 +299,6 @@ TET_QUERY_HISTORY_FILE=/tmp/tet_history.jsonl tet query …
 10. ~~**File health (Phase 8):** `tet verify` / `tet repair` + verify fixtures.~~ **Done** — includes `--deep` decode and dataset tensor byte cross-check.
 11. ~~**Dtypes (Phase 8):** additional wire tags through write → query smoke.~~ **Done** — tags `5`–`10` (`u8`–`u64`, incl. `f16`); booleans import as `u8`; SIMD slab paths for tier-A/B ops.
 12. ~~**Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.~~ **Done**
-13. **Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.
-14. **QC counts (Phase 9):** `nan_count`, `null_count` (fill-aware), related non-finite / invalid counts — complements shipped `any_nan` / `all_finite`.
+13. ~~**Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.~~ **Done**
+14. ~~**QC counts + export (Phase 9):** `nan_count`, `null_count`, `inf_count`; `tet export` → Zarr v3; covariance/correlation.~~ **Done** — deferred: `finite_count` / combined non-finite tallies.
 15. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.

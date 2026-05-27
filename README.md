@@ -15,8 +15,8 @@
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
-- **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export ([`docs/query_engine.md`](docs/query_engine.md)).
-- **Import** — `tet convert` from HDF5, NetCDF, Zarr v3 directory stores.
+- **JSON query + execute** — flat query documents, streaming reductions, tier-C stats, spill export; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
+- **Import / export** — `tet convert` from HDF5, NetCDF, Zarr v3; **`tet export`** back to Zarr v3 (stored chunk bytes, nested groups).
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
 
@@ -67,11 +67,13 @@ export PATH="$PWD/target/release:$PATH"   # or: alias tet="$PWD/target/release/t
 
 ```bash
 tet convert volume.h5 volume.tet          # HDF5 / NetCDF / Zarr v3 → .tet
+tet export volume.tet volume.zarr/      # .tet → Zarr v3 directory (empty or new dir)
 
 tet info volume.tet
 tet verify volume.tet
 tet verify --deep volume.tet -q    # full chunk decode (large files sample 128 by default)
 tet query '{"dataset":"<name>","mean":[]}' -t volume.tet -x -q   # <name> from info output
+tet query '{"dataset":"<name>","inf_count":[]}' -t volume.tet -x -q
 ```
 
 **Daily driver:** plan + execute with readable stdout:
@@ -88,14 +90,15 @@ Query JSON is **flat** (e.g. `"mean": []`, `"spill": "slice.bin"`); nested `"ope
 
 Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the installed binary).
 
-| Command                                        | Alias  | Role                                                       |
-| ---------------------------------------------- | ------ | ---------------------------------------------------------- |
-| [`tet info`](#tet-info) `<path.tet>`           | —      | Summarize a file (default: dataset table)                  |
-| [`tet verify`](#tet-verify) `<path.tet>`       | —      | Layout health check (exit 1 on failure); `--json` / `-q`   |
-| [`tet repair`](#tet-repair) `<path.tet>`       | —      | Plan or apply safe in-place fixes (e.g. bad footer)        |
-| [`tet query`](#tet-query) `[QUERY]`            | `q`    | Validate JSON; optional catalog + execute against `-t`     |
-| [`tet qhist`](#tet-qhist) `[list\|run]`        | `hist` | Recent queries (platform cache; **not** the `.tet` footer) |
-| [`tet convert`](#tet-convert) `<in> <out.tet>` | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                           |
+| Command                                            | Alias  | Role                                                       |
+| -------------------------------------------------- | ------ | ---------------------------------------------------------- |
+| [`tet info`](#tet-info) `<path.tet>`               | —      | Summarize a file (default: dataset table)                  |
+| [`tet verify`](#tet-verify) `<path.tet>`           | —      | Layout health check (exit 1 on failure); `--json` / `-q`   |
+| [`tet repair`](#tet-repair) `<path.tet>`           | —      | Plan or apply safe in-place fixes (e.g. bad footer)        |
+| [`tet query`](#tet-query) `[QUERY]`                | `q`    | Validate JSON; optional catalog + execute against `-t`     |
+| [`tet qhist`](#tet-qhist) `[list\|run]`            | `hist` | Recent queries (platform cache; **not** the `.tet` footer) |
+| [`tet convert`](#tet-convert) `<in> <out.tet>`     | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                           |
+| [`tet export`](#tet-export) `<in.tet> <out.zarr/>` | —      | `.tet` → Zarr v3 directory store                           |
 
 ### `tet info`
 
@@ -166,6 +169,16 @@ Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file.
 | ---------- | ------------------------------------------------------------------------------ |
 | `--jobs N` | Parallel chunk read workers (`0` = host `available_parallelism`, capped at 64) |
 
+### `tet export`
+
+| Flag / arg | Effect                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------- |
+| `<in.tet>` | Source file (mmap read + catalog summary)                                              |
+| `<out>`    | Zarr v3 **directory**; must be missing or **empty** (creates `zarr.json` + chunk tree) |
+| _(stderr)_ | Progress line: dataset count, chunks written, elapsed seconds                          |
+
+Preserves per-dataset **raw** or **zstd** chunk bytes; slash-separated dataset names become nested groups (`primary/f32`). Library: [`export_tet_to_zarr`](https://docs.rs/tetration/latest/tetration/export/fn.export_tet_to_zarr.html).
+
 More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 ## Documentation map
@@ -183,7 +196,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 **JSON is the control plane**, not the storage encoding: hosts validate input, cap size, and enforce spill path policy ([security notes](docs/query_engine.md#json-security-input-and-output)).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phase 8** (file health + wire dtypes through **`u64`/`f16`**) is **done**; **Phase 9** is richer query ops (named axes, histogram edges, **fill/NaN QC counts** such as `nan_count` / `null_count`, covariance/correlation) and interchange export; Python wheels and a narrow C ABI are Phase 11; the layout spec is the portable floor.
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. GPU use is “materialize on CPU (or spill), then copy to device” in bindings—see Phase 10 in [`GETTING_STARTED.md`](GETTING_STARTED.md). **Phases 8–9** are **done** (verify/repair, wire dtypes through **`u64`/`f16`**, named axes, coord labels, histogram edges, QC counts, covariance/correlation, **`tet export`**). **Next:** Phase 10 GPU hooks, Phase 11 Python wheels + narrow C ABI; the layout spec is the portable floor.
 
 ## Library use
 
@@ -194,7 +207,27 @@ tetration = "0.1"
 
 ```rust
 use tetration::prelude::*;
-// or: tetration::layout::mmap_file_read, tetration::query::{parse_query_json, …}
+// TetWriterSession, TetFile, parse_query_json, execute_query_json, verify_tet_file, …
 ```
 
-Embedders get the full [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html); the CLI uses [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout modes. **Session API:** [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) (or [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html)). **Verify / repair:** [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), [`repair_tet_file`](https://docs.rs/tetration/latest/tetration/repair/fn.repair_tet_file.html) (`VerifyOptions::deep_decode` mirrors `tet verify --deep`). **Examples:** `cargo run --example create_and_query`, `inspect_catalog`, `session_write`, `gen_small_tet_fixtures` (tracked [`fixtures/small/tet/`](fixtures/small/tet/)). Next query-semantics work: [GETTING_STARTED.md — Phase 9](GETTING_STARTED.md#phase-9--query-ops--interchange-later).
+### Rust API by phase
+
+Phases **0–9** below are **done** in this repo unless marked _later_. Full checklist: [`GETTING_STARTED.md`](GETTING_STARTED.md).
+
+| Phase  | Status  | You get                                                                                              | Rust / CLI entry points                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------ | ------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **1**  | Done    | **Create `.tet` on disk** (superblock, catalog, chunk payloads)                                      | [`create_empty_v1_file`](https://docs.rs/tetration/latest/tetration/layout/fn.create_empty_v1_file.html), [`write_raw_array_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_raw_array_file.html), [`write_one_chunk_raw_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_one_chunk_raw_file.html) — low-level; tests/fixtures use these directly                                                                                                            |
+| **4**  | Done    | **Query engine** (plan, mmap decode, streaming fold, spill, tier-C stats)                            | [`plan_query_with_tet_mmap_ex`](https://docs.rs/tetration/latest/tetration/query/fn.plan_query_with_tet_mmap_ex.html), [`build_execution_preview`](https://docs.rs/tetration/latest/tetration/query/fn.build_execution_preview.html); CLI `tet query … -x`                                                                                                                                                                                                                                       |
+| **5**  | Done    | **Import** HDF5 / NetCDF / Zarr v3 → `.tet`                                                          | [`tetration::convert`](https://docs.rs/tetration/latest/tetration/convert/index.html); CLI `tet convert`                                                                                                                                                                                                                                                                                                                                                                                         |
+| **7**  | Done    | **Embedder session types** — queue datasets + footer metadata/history, commit, mmap-open for queries | [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetDatasetWrite`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetDatasetWrite.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html) — re-exported in [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html) |
+| **8**  | Done    | **File health** + wire dtypes through **`u64` / `f16`**                                              | [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), [`repair_tet_file`](https://docs.rs/tetration/latest/tetration/repair/fn.repair_tet_file.html); CLI `tet verify` / `tet repair` (`VerifyOptions::deep_decode` = `tet verify --deep`)                                                                                                                                                                                                             |
+| **9**  | Done    | Named axes, coord **label** selection, QC counts, covariance/correlation, **Zarr export**            | Resolved at plan time inside `execute_query_*`; CLI `tet export`; details in [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                                                                                                                                                                                                                                                                      |
+| **10** | _Later_ | Optional GPU materialize after CPU decode                                                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **11** | _Later_ | Python wheels (+ narrow C ABI when needed)                                                           | Separate repo; pins crates.io `tetration`                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+**Typical embedder flow (Phase 7 on top of Phase 1 + 4):**
+
+1. **Write** — `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming tiles).
+2. **Read / aggregate** — `TetFile::open` → `execute_query_json` → [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html) (CLI: [`format_query_response`](https://docs.rs/tetration/latest/tetration/query/fn.format_query_response.html) for stdout).
+
+**Examples:** `cargo run --example create_and_query`, `session_write`, `inspect_catalog` (see [`src/catalog/session.rs`](src/catalog/session.rs)). **Smoke fixtures:** `cargo run --example gen_small_tet_fixtures` → [`fixtures/small/tet/`](fixtures/small/tet/).

@@ -1,6 +1,6 @@
 //! **tetration** — Rust library for the Tetration mmap-oriented chunked tensor format.
 //!
-//! Public API: [`catalog`], [`convert`], [`layout`], [`query`], [`verify`], [`repair`], and [`prelude`]
+//! Public API: [`catalog`], [`convert`], [`export`], [`layout`], [`query`], [`verify`], [`repair`], and [`prelude`]
 //! for common embedder imports. The companion CLI is **`tet`** (`src/bin/tet.rs`, `src/bin/tet/`).
 //!
 //! **Embedder walkthrough:** `cargo run --example session_write` (or `create_and_query`,

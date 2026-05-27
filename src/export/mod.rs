@@ -1,4 +1,4 @@
-//! `.tet` → foreign interchange export (Phase 9).
+//! `.tet` → foreign interchange export (Zarr v3 directory store).
 
 mod zarr;
 

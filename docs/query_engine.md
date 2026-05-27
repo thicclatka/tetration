@@ -295,14 +295,12 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 ## Related docs
 
 - On-disk layout (TIDX execution header): [`layout_v1.md`](layout_v1.md)
-- Axis metadata (dimension names vs coordinates): [`layout_v1.md` — axis metadata](layout_v1.md#axis-metadata-planned-phase-7)
+- Axis metadata (dimension names vs coordinates): [`layout_v1.md` — axis metadata](layout_v1.md#axis-metadata-phase-7-baseline)
 - Roadmap checklist: [`GETTING_STARTED.md`](../GETTING_STARTED.md)
 
-## Dimension names vs coordinate labels (planned)
+## Dimension names vs coordinate labels
 
-v1 queries use **decimal axis indices** only (`"mean": 0`). Each **query document** names **one dataset** in the `.tet` file (`"dataset": "temperature"`); multi-dataset join/group is out of scope (see [Tier 3](#tier-3--not-operation-enum-variants)).
-
-Future metadata ([`layout_v1.md — axis metadata`](layout_v1.md#axis-metadata-planned-phase-7)) adds two layers:
+Each **query document** names **one dataset** in the `.tet` file (`"dataset": "temperature"`); multi-dataset join/group is out of scope (see [Tier 3](#tier-3--not-operation-enum-variants)). Decimal axis indices remain the internal wire form; footer metadata ([`layout_v1.md — axis metadata`](layout_v1.md#axis-metadata-phase-7-baseline)) enables two user-facing layers:
 
 ### Dimension names (axis names)
 
@@ -350,7 +348,7 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 | `"execution": { "fold_parallel": false }`                       | Force sequential chunk visits (not linear scan); default is policy-driven         |
 | `"spill": "slice.bin"`                                          | Full logical tensor export beside the `.tet` parent (allowlist applies)           |
 
-`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis specs accept **non-negative decimals** (`0`) or **dimension names** (`"time"`) when `dim_names` is in footer metadata — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels-planned).
+`memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis specs accept **non-negative decimals** (`0`) or **dimension names** (`"time"`) when `dim_names` is in footer metadata — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels).
 
 At most **one** reduction key per document. Unknown top-level fields are rejected (`deny_unknown_fields` style in [`parse_query_value`](../src/query/document_wire.rs)).
 
@@ -460,14 +458,14 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Phase 9 ops (shipped)
 
-See [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange-later).
+See [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange).
 
 | Op (wire key)                | Tier (typical) | Notes                                                                                                                         |
 | ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **`nan_count`**              | A/B            | Count of NaN elements; complements **`any_nan`** (boolean).                                                                 |
+| **`nan_count`**              | A/B            | Count of NaN elements; complements **`any_nan`** (boolean).                                                                   |
 | **`inf_count`**              | A/B            | Count of ±infinity; complements **`all_finite`** (boolean).                                                                   |
-| **`null_count`**             | A/B            | Fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`).                                        |
-| **Related QC counts**        | A/B            | Deferred — e.g. `finite_count`.                                                                                             |
+| **`null_count`**             | A/B            | Fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`).                                         |
+| **Related QC counts**        | A/B            | Deferred — e.g. `finite_count`.                                                                                               |
 | **Histogram `min` / `max`**  | C              | **Done** — caller-supplied bin edges on scalar histogram (both required when either set).                                     |
 | **Covariance / correlation** | C              | **Done** — rank-2; `axis` = observation dimension (`operation_covariance` / `operation_correlation` row-major `order×order`). |
 | **Named axis in JSON**       | —              | `"mean": "time"` via `dim_names` (resolver only).                                                                             |
@@ -477,17 +475,17 @@ See [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--i
 
 These match the product vision but belong **beside** the reduction enum:
 
-| Capability                                | Why separate                                                                                                                                        |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability                                | Why separate                                                                                                                                                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)); **`.tet` → Zarr v3** via `tet export` ([`export`](../src/export/mod.rs)). |
-| **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                 |
-| **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                     |
-| **Coordinate labels / filter-by-value**   | Per-index coords in metadata; slice resolver; optional lookup index (Phase 7 storage + Phase 9 query).                                              |
-| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                   |
-| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                  |
-| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                     |
-| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                                     |
-| **CLI query history**                     | **Done** — platform cache JSONL (`tet qhist list` / `run`; `hist` alias); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer via `tet info --history`. |
+| **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                                          |
+| **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                                              |
+| **Coordinate labels / filter-by-value**   | **Slice by label** shipped (`start_label` / `stop_label`); filter-by-value / group-by and optional lookup index remain later.                                                |
+| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                                            |
+| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                                           |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                                              |
+| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                                                              |
+| **CLI query history**                     | **Done** — platform cache JSONL (`tet qhist list` / `run`; `hist` alias); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer via `tet info --history`.                          |
 
 ### Non-goals for the JSON `operation` field
 
@@ -521,7 +519,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 1. **Typed `serde` deserialization** — JSON maps into fixed structs/enums ([`QueryDocument`](../src/query/types/document.rs), [`Operation`](../src/query/types/document.rs)); there is no dynamic “operation name → callback” table fed by arbitrary strings.
 2. **Closed `operation` enum** — Only the v1 ops listed above deserialize; unknown tags fail at parse time.
-3. **Axis tokens restricted** — `operation.axes` entries must be non-empty **ASCII decimal** strings (e.g. `"0"`), not arbitrary expressions or Unicode axis names ([`validate_operation_axis_token`](../src/query/document.rs)).
+3. **Axis tokens restricted** — `operation.axes` entries must be non-empty **ASCII decimal** indices (e.g. `"0"`) or **dimension names** (e.g. `"time"`); arbitrary expressions and coordinate values are rejected ([`validate_operation_axis_token`](../src/query/document.rs)).
 4. **Slice sanity** — `step != 0`; when both `start` and `stop` are set, `start < stop`.
 5. **Non-empty `dataset`** — Whitespace-only names rejected.
 6. **Catalog binding** — After parse, selection rank/shape and axis indices are checked against the mmap’d dataset ([`plan_query_with_tet_mmap`](../src/query/engine/run.rs), [`resolved_dense_global_box`](../src/query/plan/selection.rs)); JSON cannot name chunk file offsets directly.
@@ -580,12 +578,13 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 - SIMD bulk folds vs scalar reference: [`src/tests/variance_simd.rs`](../src/tests/variance_simd.rs).
 - Bulk variance vs Welford reference: [`src/tests/reduction.rs`](../src/tests/reduction.rs).
 - File health: [`src/verify/`](../src/verify/), [`src/tests/verify.rs`](../src/tests/verify.rs), [`src/tests/repair.rs`](../src/tests/repair.rs), [`src/tests/verify_fixtures.rs`](../src/tests/verify_fixtures.rs), committed CLI smoke [`fixtures/small/tet/`](../fixtures/small/tet/README.md).
+- Phase 9 ops + export: [`src/tests/resolve_axes.rs`](../src/tests/resolve_axes.rs), [`resolve_selection.rs`](../src/tests/resolve_selection.rs), [`covariance.rs`](../src/tests/covariance.rs), [`export.rs`](../src/tests/export.rs).
 - Payload decode uses [`src/utils/le_pod.rs`](../src/utils/le_pod.rs) (`f32_le` / `f64_le` / …; bytemuck; aligned cast when possible).
 
 ## Intentional gaps (v1)
 
 - Direct callers can still use **`materialize_read_plan_f32_le`** / **`_f64_le`** (always sequential) or **`_parallel`** twins; execution picks parallel decode/fold per `FoldIoPolicy` (see [Adaptive fold I/O](#adaptive-fold-io)).
-- **`operation.axes`** uses **decimal dimension indices**, not dimension names or coordinate labels ([planned](#dimension-names-vs-coordinate-labels-planned)).
+- Filter-by-value and **group-by** on coordinate labels remain deferred; **`operation.axes`** accepts decimal indices or **dimension names** (`dim_names`), not coordinate values — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels).
 - Spill path must lie under default roots (canonical **`.tet` parent** and descendants + platform `…/tetration` cache dirs) or `--spill-allow`; relative **`"spill"`** paths resolve against the **`.tet` directory** (not shell cwd).
 - Integer and narrow float dtypes (`u8`–`u64`, `f16`) are supported in writers, convert, and query execution (tier-A/B aggregates promote to `f64` for fold paths).
 - JSON hardening: byte size, depth, `deny_unknown_fields`, and string/rank caps are implemented via **`QueryLimits`**; spill path policy is enforced via **`SpillPathAllowlist`** (see [JSON security](#json-security-input-and-output)).
