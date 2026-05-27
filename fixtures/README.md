@@ -95,10 +95,10 @@ Sequential per **tier**, then wipe the whole **format** tree before the next for
 
 **Interpreting the device column (Phase 10):**
 
-| Tier      | ~size   | Typical result                                                                                                                                           |
-| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **large** | 6.7 GiB | `metal` or `cuda` when built with GPU features and host-RAM gate allows — GPU does sum/mean/min/max; **var/std use host SIMD** after materialize.        |
-| **extra** | 20 GiB  | `cpu (gpu_host_materialize_exceeded)` on most machines — **CPU streaming** (~2 s/op), correct aggregates; not slower than a failed full-RAM GPU attempt. |
+| Tier      | ~size   | Typical result                                                                                                                                                        |
+| --------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **large** | 6.7 GiB | `metal` or `cuda` when built with GPU features and host-RAM gate allows — GPU does sum/mean/min/max; **var/std use host SIMD** after materialize.                     |
+| **extra** | 20 GiB  | Usually **CPU** or **streaming GPU** (dense path blocked by host-RAM gate) — ~2 s/op with CPU streaming; GPU may route via per-chunk streaming when features enabled. |
 
 For CPU-only timing comparisons, use **`mise run bench:cpu`**. GPU backends are optional crate features; default `cargo build` does not link Metal/CUDA.
 

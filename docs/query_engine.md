@@ -74,17 +74,19 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 
 ## Phase 10 — optional GPU (experimental)
 
-**Status:** scaffold on `feat/phase10-gpu-scaffold` — routing + CUDA/Metal kernels ship behind optional features; **CPU streaming fold remains the fast, correct default** for large and extra-large selections on Apple Silicon benches.
+**Status:** merged on `main` ([PR #12](https://github.com/thicclatka/tetration/pull/12)). Routing, CUDA/Metal/ROCm kernels, **streaming per-chunk GPU fold**, decode∥GPU pipeline, and multi-GPU sharding ship behind optional crate features. **CPU streaming fold remains the fast, correct default** for large and extra-large selections on typical Apple Silicon benches.
 
 ### What it does today
 
 1. **Host decode** — mmap + chunk decode unchanged (raw **0** / zstd **1**).
-2. **GPU path (when routed)** — dense host **`f32`** materialize (`vec` sized to logical selection), then:
-   - **Device:** `sum`, `mean`, `min`, `max`, `count` via block-reduce kernels (`tetration-metal` on macOS, `tetration-gpu` on CUDA).
-   - **Host (`f64` SIMD):** population **`var`** / **`std`** (`ddof = 0`) — same accumulators as streaming CPU fold; **not** device tree-reduce (f32 GPU sum-of-squares was numerically wrong at ~10⁹ elements).
+2. **GPU path (when routed)** — tier-A/B **`f32`** or **`f16`** (promoted to **`f32`** per chunk on device):
+   - **Dense:** host **`f32`** materialize when the host-RAM gate allows, then block-reduce on device for **`sum`**, **`mean`**, **`min`**, **`max`**, **`count`** (`tetration-metal` / `tetration-gpu` / `tetration-rocm`).
+   - **Streaming:** per-chunk decode + device partials + host merge ([`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)) when a full dense buffer does not fit; optional decode∥GPU pipeline when `chunk_count > 1`.
+   - **Multi-GPU:** `cuda:multi` / `rocm:multi` shard chunks across visible devices ([`multi.rs`](../src/query/gpu/multi.rs)).
+   - **Host (`f64` SIMD):** population **`var`** / **`std`** (`ddof = 0`) — per-chunk on the streaming path; dense path uses host SIMD after materialize (GPU f32 sumsq was numerically wrong at ~10⁹ elements).
 3. **CPU streaming** — parallel chunk fold or out-of-core linear scan when GPU is not selected or falls back.
 
-Preview JSON / **`stats`** format: `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`.
+Preview JSON / **`stats`**: `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`, `device_gpu_pipeline`, `device_gpu_multi`.
 
 ### `execution.device` / `--device`
 
@@ -110,46 +112,47 @@ Constants: [`GPU_HOST_MATERIALIZE_RAM_FRACTION`](../src/query/device.rs), [`GPU_
 
 ### Other fallback reasons
 
-| `device_fallback_reason`        | Meaning                                                                     |
-| ------------------------------- | --------------------------------------------------------------------------- |
-| `gpu_feature_disabled`          | Requested GPU but crate not built with `tetration-metal` / `tetration-gpu`. |
-| `gpu_host_materialize_exceeded` | Selection too large for host materialize budget (see above).                |
-| `auto_below_size_threshold`     | `auto` and logical selection &lt; 64 MiB.                                   |
-| `gpu_unsupported_dtype`         | Not dense **`f32`**.                                                        |
-| `gpu_unsupported_op`            | Tier-C / partial-axis / unsupported scalar op.                              |
-| `tier_c_materialize`            | `median` / `quantile` / `histogram` need full materialize path.             |
-| `preview_or_spill_only`         | No `operation` in query.                                                    |
+| `device_fallback_reason`        | Meaning                                                                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gpu_feature_disabled`          | Requested GPU but crate not built with `tetration-metal` / `tetration-gpu`.                                                                   |
+| `gpu_host_materialize_exceeded` | Dense host buffer over budget; engine may still use **streaming GPU fold** when GPU features are enabled (not an automatic CPU-only refusal). |
+| `auto_below_size_threshold`     | `auto` and logical selection &lt; 64 MiB.                                                                                                     |
+| `gpu_unsupported_dtype`         | Not dense **`f32`**.                                                                                                                          |
+| `gpu_unsupported_op`            | Tier-C / partial-axis / unsupported scalar op.                                                                                                |
+| `tier_c_materialize`            | `median` / `quantile` / `histogram` need full materialize path.                                                                               |
+| `preview_or_spill_only`         | No `operation` in query.                                                                                                                      |
 
 Runtime GPU failures (VRAM, decode, kernel) fall back to CPU with reasons such as `gpu_vram_exceeded`, `gpu_runtime_error`, `gpu_host_decode_failed` (see [`scalar_fold.rs`](../src/query/gpu/scalar_fold.rs)).
 
 ### Build features
 
 ```bash
-cargo build --release --features tetration-metal   # macOS
+cargo build --release --features tetration-metal   # macOS only (Metal dep is target-gated)
 cargo build --release --features tetration-gpu     # Linux/Windows + NVIDIA
+# tetration-rocm — same CUDA/NVRTC path today; mutually exclusive with tetration-gpu
 ```
 
-Default crate features do **not** link GPU backends.
+Default crate features do **not** link GPU backends. CI uses platform feature sets (not `--all-features` on Linux/Windows) — see [`AGENTS.md`](../AGENTS.md).
 
 ### Bench expectations ([`fixtures/README.md`](../fixtures/README.md))
 
-| Tier                 | Typical `device` (auto / metal on M4 Max) | Notes                                             |
-| -------------------- | ----------------------------------------- | ------------------------------------------------- |
-| **large** (~6.7 GiB) | `metal` when RAM allows                   | sum/mean/min/max on GPU; var/std on host SIMD.    |
-| **extra** (~20 GiB)  | `cpu (gpu_host_materialize_exceeded)`     | CPU streaming ~2 s/op; matches source aggregates. |
+| Tier                 | Typical `device` (auto / metal on M4 Max)  | Notes                                                                                        |
+| -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| **large** (~6.7 GiB) | `metal` when RAM allows                    | sum/mean/min/max on GPU; var/std on host SIMD.                                               |
+| **extra** (~20 GiB)  | `cpu` or streaming GPU when built + routed | Dense path refused by host-RAM gate on most laptops; streaming GPU or CPU streaming ~2 s/op. |
 
 Use **`mise run bench:cpu`** for apples-to-apples CPU timing; **`bench:metal`** / **`bench:gpu`** to exercise device routing.
 
 ### Device tokens (Phase 10)
 
-| Token | Meaning |
-| ----- | ------- |
-| `cpu` | Host streaming fold only. |
-| `auto` | Metal (macOS) or CUDA device 0 when features enabled; skips GPU &lt; 64 MiB. |
-| `metal` | Apple GPU. |
-| `cuda` / `cuda:N` | NVIDIA GPU *N*. |
-| `cuda:multi` | Shard chunks across all visible CUDA devices (Rayon + merge). |
-| `rocm` / `rocm:N` / `rocm:multi` | ROCm build (`tetration-rocm`); same kernel path as CUDA today. |
+| Token                            | Meaning                                                                      |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `cpu`                            | Host streaming fold only.                                                    |
+| `auto`                           | Metal (macOS) or CUDA device 0 when features enabled; skips GPU &lt; 64 MiB. |
+| `metal`                          | Apple GPU.                                                                   |
+| `cuda` / `cuda:N`                | NVIDIA GPU _N_.                                                              |
+| `cuda:multi`                     | Shard chunks across all visible CUDA devices (Rayon + merge).                |
+| `rocm` / `rocm:N` / `rocm:multi` | ROCm build (`tetration-rocm`); same kernel path as CUDA today.               |
 
 Execution preview: `device_gpu_pipeline`, `device_gpu_multi`.
 
@@ -170,11 +173,11 @@ Write (once)  →  seal .tet  →  N readers (mmap, independent queries)
                          cuda:multi / rocm:multi shard across devices
 ```
 
-| Milestone                  | What                                                                                           | Unlocks                                                       |
-| -------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| **A — read-many contract** | Document + test sealed-file concurrent readers                                                 | Many CPU workers / hosts on one `.tet` without format changes |
+| Milestone                  | What                                                                                           | Unlocks                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **A — read-many contract** | Document + test sealed-file concurrent readers                                                 | Many CPU workers / hosts on one `.tet` without format changes   |
 | **B — streaming GPU fold** | Per-chunk decode + device partials ([`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)) | Large `f32` tier-A/B without full-RAM `vec![f32; n]` — **done** |
-| **C — overlap I/O**        | Decode ∥ GPU pipeline in [`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)             | Throughput — **done**                                         |
+| **C — overlap I/O**        | Decode ∥ GPU pipeline in [`streaming_fold.rs`](../src/query/gpu/streaming_fold.rs)             | Throughput — **done**                                           |
 | **D — multi-GPU**          | `cuda:multi` / `rocm:multi` chunk shards ([`multi.rs`](../src/query/gpu/multi.rs))             | Machine-scale throughput — **done**                             |
 
 **A** does not require GPU. **B–D** reuse the CPU fold merge algebra on the host.
@@ -183,15 +186,15 @@ Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_quer
 
 ## Module map
 
-| Submodule          | Files                                                                                                                                              | Responsibility                                                                                                                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                     | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
-| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                                   | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
-| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                      | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
+| Submodule          | Files                                                                                                                                          | Responsibility                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                 | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
+| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                               | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
+| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                  | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
 | **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
-| **`dispatch.rs`**  | —                                                                                                                                                  | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
-| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                          | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
-| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                                | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
+| **`dispatch.rs`**  | —                                                                                                                                              | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
+| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                      | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
+| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                            | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
 
 Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
 
@@ -280,10 +283,10 @@ flowchart TD
     Read -->|no| MmapSpan["mmap contiguous span"]
 ```
 
-| Mode                      | When                                                                                                      | I/O pattern                                                                                                     |
-| ------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Parallel chunk fold**   | In-core, `chunk_count > 1`, not linear scan                                                               | Rayon over chunks; mmap/decode per chunk; bulk SIMD per slab when geometry allows                               |
-| **Sequential chunk fold** | In-core single chunk, or out-of-core without linear-scan eligibility, or `execution.fold_parallel: false` | Chunks in catalog order or ascending `payload_offset` when `sequential_io`                                      |
+| Mode                      | When                                                                                                      | I/O pattern                                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Parallel chunk fold**   | In-core, `chunk_count > 1`, not linear scan                                                               | Rayon over chunks; mmap/decode per chunk; bulk SIMD per slab when geometry allows                                           |
+| **Sequential chunk fold** | In-core single chunk, or out-of-core without linear-scan eligibility, or `execution.fold_parallel: false` | Chunks in catalog order or ascending `payload_offset` when `sequential_io`                                                  |
 | **Linear scan**           | Out-of-core + full dense unit-step selection + raw codec + adjacent payloads summing to logical size      | One contiguous byte span; 64 MiB windows; [`push_f32_le_bytes`](../src/query/fold/reduction/value_accum.rs) SIMD per window |
 
 **Linear scan eligibility:** [`detect_contiguous_raw_span`](../src/query/fold/linear_scan.rs) requires every touched chunk to use **raw codec 0**, payloads **abutting in plan order**, and total raw bytes = logical selection size. Converted multi-chunk **`f32`** grids from `write_raw_array_file` typically satisfy this; zstd chunks or strided partial selections do not.
