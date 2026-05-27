@@ -8,6 +8,7 @@ from pathlib import Path
 
 from benchmark.constants import (
     DEFAULT_OPS,
+    DEFAULT_TET_DEVICE,
     OpName,
     RESULTS_DIR,
     RESULTS_FILE,
@@ -84,6 +85,7 @@ def _build_markdown_lines(
     jobs: int,
     ops: tuple[OpName, ...],
     skip_ops: bool,
+    tet_device: str | None,
     rows: list[BenchRow],
     git_rev: str,
     run_id: str,
@@ -100,7 +102,8 @@ def _build_markdown_lines(
         *report_metadata_lines(convert_jobs_requested=jobs),
         f"- **Ops:** {', '.join(ops)} (tier-A/B streaming; population var/std ddof=0)",
         f"- **Source:** Python {slab_mib} MiB slabs, warm 2nd pass (skipped when not comparable)",
-        "- **`.tet`:** `tet query --execute` streaming fold, warm 2nd pass",
+        f"- **`.tet`:** `tet query --execute --device {tet_device or DEFAULT_TET_DEVICE}` "
+        "(stats JSON), streaming fold, warm 2nd pass",
         f"- **Ops skipped:** {skip_ops}",
         "",
         "## Notes",
@@ -135,8 +138,18 @@ def _build_markdown_lines(
     )
     lines.append("")
 
-    op_headers = ["format", "tier", "GiB", "source (s)", ".tet (s)", "source", ".tet", "note"]
-    op_aligns = ["left", "left", "right", "right", "right", "right", "right", "left"]
+    op_headers = [
+        "format",
+        "tier",
+        "GiB",
+        "source (s)",
+        ".tet (s)",
+        "source",
+        ".tet",
+        "device",
+        "note",
+    ]
+    op_aligns = ["left", "left", "right", "right", "right", "right", "right", "left", "left"]
 
     for op in ops:
         lines.extend([f"## {op}", ""])
@@ -163,6 +176,7 @@ def _build_markdown_lines(
                     _cell(r.tet_s),
                     src_v,
                     tet_v,
+                    r.tet_device or "-",
                     note,
                 ]
             )
@@ -178,6 +192,7 @@ def _build_json_payload(
     jobs: int,
     ops: tuple[OpName, ...],
     skip_ops: bool,
+    tet_device: str | None,
     rows: list[BenchRow],
 ) -> dict:
     sys_info = probe_system(convert_jobs_requested=jobs)
@@ -207,6 +222,7 @@ def _build_json_payload(
                     "tet_s": r.tet_s,
                     "source_value": r.source_value,
                     "tet_value": r.tet_value,
+                    "tet_device": r.tet_device,
                     "mismatch": r.mismatch,
                     "note": r.note,
                 }
@@ -229,6 +245,7 @@ def _build_json_payload(
             "gpu_vram_gib": sys_info.gpu_vram_gib,
         },
         "convert_jobs_requested": jobs,
+        "tet_device": tet_device or DEFAULT_TET_DEVICE,
         "ops": list(ops),
         "skip_ops": skip_ops,
         "convert": convert,
@@ -241,6 +258,7 @@ def write_report(
     jobs: int,
     ops: tuple[OpName, ...],
     skip_ops: bool,
+    tet_device: str | None = None,
     rows: list[BenchRow],
     run_id: str | None = None,
     no_clobber: bool = False,
@@ -259,6 +277,7 @@ def write_report(
         jobs=jobs,
         ops=ops,
         skip_ops=skip_ops,
+        tet_device=tet_device,
         rows=rows,
         git_rev=git_rev,
         run_id=run_id,
@@ -275,6 +294,7 @@ def write_report(
                 jobs=jobs,
                 ops=ops,
                 skip_ops=skip_ops,
+                tet_device=tet_device,
                 rows=rows,
             ),
             indent=2,

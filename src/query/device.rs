@@ -1,7 +1,8 @@
-//! Phase 10: optional GPU execution routing (scaffold — CPU path until `tetration-gpu` kernels land).
+//! Phase 10: optional GPU execution routing (CUDA / Metal scalar `f32` reductions).
 //!
 //! Decode and mmap stay on the host; [`DeviceRoute`] records what was requested vs what ran.
 
+use crate::query::fold::reduction::ReductionKind;
 use crate::query::types::{ExecutionDeviceHint, ExecutionHints, Operation, ReadPlan};
 use crate::utils::dtype::ElementDtype;
 
@@ -15,6 +16,8 @@ pub struct DeviceRoute {
     pub used: &'static str,
     pub fallback_reason: Option<&'static str>,
     pub gpu_reduce: bool,
+    /// CUDA device index when [`Self::used`] is `"cuda"`.
+    pub cuda_device: Option<usize>,
 }
 
 impl DeviceRoute {
@@ -25,11 +28,42 @@ impl DeviceRoute {
             used: "cpu",
             fallback_reason: None,
             gpu_reduce: false,
+            cuda_device: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn cpu_fallback(
+        requested: Option<ExecutionDeviceHint>,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            requested,
+            used: "cpu",
+            fallback_reason: Some(reason),
+            gpu_reduce: false,
+            cuda_device: None,
         }
     }
 }
 
-/// Pick host vs (future) device reduction for this execute.
+#[must_use]
+pub fn cuda_backend_available() -> bool {
+    cfg!(feature = "tetration-gpu")
+}
+
+/// Apple Metal path (`tetration-metal`, macOS only).
+#[must_use]
+pub fn metal_backend_available() -> bool {
+    cfg!(all(feature = "tetration-metal", target_os = "macos"))
+}
+
+#[must_use]
+pub fn gpu_backend_available() -> bool {
+    cuda_backend_available() || metal_backend_available()
+}
+
+/// Pick host vs device reduction for this execute.
 #[must_use]
 pub fn resolve_device_route(
     hints: Option<&ExecutionHints>,
@@ -42,23 +76,13 @@ pub fn resolve_device_route(
     };
 
     if operation.is_none() {
-        return DeviceRoute {
-            requested: Some(requested),
-            used: "cpu",
-            fallback_reason: Some("preview_or_spill_only"),
-            gpu_reduce: false,
-        };
+        return DeviceRoute::cpu_fallback(Some(requested), "preview_or_spill_only");
     }
 
     if let Some(op) = operation
         && op.requires_materialize()
     {
-        return DeviceRoute {
-            requested: Some(requested),
-            used: "cpu",
-            fallback_reason: Some("tier_c_materialize"),
-            gpu_reduce: false,
-        };
+        return DeviceRoute::cpu_fallback(Some(requested), "tier_c_materialize");
     }
 
     if matches!(requested, ExecutionDeviceHint::Cpu) {
@@ -67,7 +91,23 @@ pub fn resolve_device_route(
             used: "cpu",
             fallback_reason: None,
             gpu_reduce: false,
+            cuda_device: None,
         };
+    }
+
+    if dtype != ElementDtype::F32 {
+        return DeviceRoute::cpu_fallback(Some(requested), "gpu_unsupported_dtype");
+    }
+
+    let scalar_kind = operation.and_then(|op| {
+        if op.axes().is_empty() && !op.requires_materialize() {
+            Some(ReductionKind::from(op))
+        } else {
+            None
+        }
+    });
+    if scalar_kind.is_none_or(|k| !gpu_supports_scalar_kind(k)) {
+        return DeviceRoute::cpu_fallback(Some(requested), "gpu_unsupported_op");
     }
 
     let logical_bytes = u64::try_from(plan.logical_f32_element_count)
@@ -76,44 +116,79 @@ pub fn resolve_device_route(
 
     if matches!(requested, ExecutionDeviceHint::Auto) {
         let Some(bytes) = logical_bytes else {
-            return DeviceRoute {
-                requested: Some(requested),
-                used: "cpu",
-                fallback_reason: Some("auto_unknown_logical_bytes"),
-                gpu_reduce: false,
-            };
+            return DeviceRoute::cpu_fallback(Some(requested), "auto_unknown_logical_bytes");
         };
         if bytes < GPU_AUTO_MIN_LOGICAL_BYTES {
-            return DeviceRoute {
-                requested: Some(requested),
-                used: "cpu",
-                fallback_reason: Some("auto_below_size_threshold"),
-                gpu_reduce: false,
-            };
+            return DeviceRoute::cpu_fallback(Some(requested), "auto_below_size_threshold");
         }
     }
 
-    if !gpu_backend_available() {
-        return DeviceRoute {
-            requested: Some(requested),
-            used: "cpu",
-            fallback_reason: Some("gpu_feature_disabled"),
-            gpu_reduce: false,
-        };
-    }
-
-    // Feature enabled but kernels not wired yet.
-    DeviceRoute {
-        requested: Some(requested),
-        used: "cpu",
-        fallback_reason: Some("gpu_not_implemented"),
-        gpu_reduce: false,
+    match requested {
+        ExecutionDeviceHint::Metal => {
+            if !metal_backend_available() {
+                return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
+            }
+            DeviceRoute {
+                requested: Some(requested),
+                used: "metal",
+                fallback_reason: None,
+                gpu_reduce: true,
+                cuda_device: None,
+            }
+        }
+        ExecutionDeviceHint::Cuda(idx) => {
+            if !cuda_backend_available() {
+                return DeviceRoute::cpu_fallback(Some(requested), "gpu_feature_disabled");
+            }
+            DeviceRoute {
+                requested: Some(requested),
+                used: "cuda",
+                fallback_reason: None,
+                gpu_reduce: true,
+                cuda_device: Some(idx),
+            }
+        }
+        ExecutionDeviceHint::Auto => auto_device_route(Some(requested)),
+        ExecutionDeviceHint::Cpu => unreachable!("handled above"),
     }
 }
 
+/// `device: auto` — Metal on macOS when enabled, else CUDA when enabled.
+fn auto_device_route(requested: Option<ExecutionDeviceHint>) -> DeviceRoute {
+    if metal_backend_available() {
+        return DeviceRoute {
+            requested,
+            used: "metal",
+            fallback_reason: None,
+            gpu_reduce: true,
+            cuda_device: None,
+        };
+    }
+    if cuda_backend_available() {
+        return DeviceRoute {
+            requested,
+            used: "cuda",
+            fallback_reason: None,
+            gpu_reduce: true,
+            cuda_device: Some(0),
+        };
+    }
+    DeviceRoute::cpu_fallback(requested, "gpu_feature_disabled")
+}
+
+/// Tier-A/B scalar ops implemented on GPU for dense `f32` (population var/std).
 #[must_use]
-pub fn gpu_backend_available() -> bool {
-    cfg!(feature = "tetration-gpu")
+pub(crate) fn gpu_supports_scalar_kind(kind: ReductionKind) -> bool {
+    matches!(
+        kind,
+        ReductionKind::Sum
+            | ReductionKind::Mean
+            | ReductionKind::Min
+            | ReductionKind::Max
+            | ReductionKind::Count
+            | ReductionKind::Var
+            | ReductionKind::Std
+    )
 }
 
 pub(crate) fn attach_device_fields(

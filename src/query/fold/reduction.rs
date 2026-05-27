@@ -1049,7 +1049,7 @@ pub(crate) struct ScalarReductionResult {
 }
 
 impl ScalarReductionResult {
-    fn default_fields(element_count: usize) -> Self {
+    pub(crate) fn default_fields(element_count: usize) -> Self {
         Self {
             element_count,
             sum_scalar: None,

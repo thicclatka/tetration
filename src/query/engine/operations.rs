@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use crate::query::{
-    dispatch,
+    device, dispatch,
     engine::{budget, spill_policy},
-    fold,
+    fold, gpu,
     materialize::{self, stats::run_tier_c_operation},
     types,
 };
@@ -86,15 +86,8 @@ fn preview_from_bundle(
     })
 }
 
-fn stamp_device_route(
-    preview: &mut types::QueryExecutionPreview,
-    execution: Option<&types::ExecutionHints>,
-    plan: &types::ReadPlan,
-    dtype: ElementDtype,
-    operation: Option<&types::Operation>,
-) {
-    let route = crate::query::device::resolve_device_route(execution, plan, dtype, operation);
-    crate::query::device::attach_device_fields(preview, route);
+fn stamp_device_route(preview: &mut types::QueryExecutionPreview, route: device::DeviceRoute) {
+    device::attach_device_fields(preview, route);
 }
 
 fn attach_budget_fields(
@@ -128,8 +121,7 @@ fn fold_outcome_to_preview(
     plan: &types::ReadPlan,
     dtype: ElementDtype,
     fold_policy: fold::fold_policy::FoldIoPolicy,
-    execution: Option<&types::ExecutionHints>,
-    operation: Option<&types::Operation>,
+    device_route: device::DeviceRoute,
 ) -> types::QueryExecutionPreview {
     let mut preview = preview_from_bundle(
         folded.total_bytes_read_from_disk,
@@ -161,8 +153,37 @@ fn fold_outcome_to_preview(
         None,
     );
     attach_budget_fields(&mut preview, budget, plan, dtype, Some(fold_policy));
-    stamp_device_route(&mut preview, execution, plan, dtype, operation);
+    stamp_device_route(&mut preview, device_route);
     preview
+}
+
+fn try_gpu_scalar_fold_or_cpu(
+    mmap: &[u8],
+    plan: &types::ReadPlan,
+    max_preview: usize,
+    kind: fold::reduction::ReductionKind,
+    dtype: ElementDtype,
+    policy: &fold::fold_policy::FoldIoPolicy,
+    tet_path: Option<&Path>,
+    execution: Option<&types::ExecutionHints>,
+    op: &types::Operation,
+) -> Result<(fold::FoldPlanOutcome, device::DeviceRoute), types::TetError> {
+    let route = device::resolve_device_route(execution, plan, dtype, Some(op));
+    if route.gpu_reduce && dtype == ElementDtype::F32 {
+        match gpu::try_scalar_f32_fold(mmap, plan, max_preview, kind, route) {
+            Ok(pair) => return Ok(pair),
+            Err(reason) => {
+                let folded =
+                    dispatch::scalar_fold(mmap, plan, max_preview, kind, dtype, policy, tet_path)?;
+                return Ok((
+                    folded,
+                    device::DeviceRoute::cpu_fallback(route.requested, reason),
+                ));
+            }
+        }
+    }
+    let folded = dispatch::scalar_fold(mmap, plan, max_preview, kind, dtype, policy, tet_path)?;
+    Ok((folded, route))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -194,7 +215,8 @@ fn run_materialize_required_operation(
         None,
     );
     attach_budget_fields(&mut preview, *budget, plan, dtype, None);
-    stamp_device_route(&mut preview, execution, plan, dtype, Some(op));
+    let device_route = device::resolve_device_route(execution, plan, dtype, Some(op));
+    stamp_device_route(&mut preview, device_route);
     Ok(preview)
 }
 
@@ -316,7 +338,10 @@ fn build_decode_preview(
             Some(spill_bytes),
         );
         attach_budget_fields(&mut preview, budget, plan, dtype, None);
-        stamp_device_route(&mut preview, execution, plan, dtype, None);
+        stamp_device_route(
+            &mut preview,
+            device::resolve_device_route(execution, plan, dtype, None),
+        );
         return Ok(preview);
     }
     if budget.full_tensor_exceeds_budget(plan, dtype)? && max_preview == 0 {
@@ -339,7 +364,10 @@ fn build_decode_preview(
         None,
     );
     attach_budget_fields(&mut preview, budget, plan, dtype, None);
-    stamp_device_route(&mut preview, execution, plan, dtype, None);
+    stamp_device_route(
+        &mut preview,
+        device::resolve_device_route(execution, plan, dtype, None),
+    );
     Ok(preview)
 }
 
@@ -377,8 +405,17 @@ fn build_operation_preview(
     }
     let fold_policy = fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
-        let folded =
-            dispatch::scalar_fold(mmap, plan, max_preview, kind, dtype, &fold_policy, tet_path)?;
+        let (folded, device_route) = try_gpu_scalar_fold_or_cpu(
+            mmap,
+            plan,
+            max_preview,
+            kind,
+            dtype,
+            &fold_policy,
+            tet_path,
+            execution,
+            op,
+        )?;
         return Ok(fold_outcome_to_preview(
             folded,
             budget::MemoryStrategy::StreamingFold,
@@ -386,8 +423,7 @@ fn build_operation_preview(
             plan,
             dtype,
             fold_policy,
-            execution,
-            Some(op),
+            device_route,
         ));
     }
     let kind = fold::reduction::ReductionKind::from(op);
@@ -400,6 +436,7 @@ fn build_operation_preview(
         dtype,
         &fold_policy,
     )?;
+    let device_route = device::resolve_device_route(execution, plan, dtype, Some(op));
     Ok(fold_outcome_to_preview(
         folded,
         budget::MemoryStrategy::StreamingFold,
@@ -407,7 +444,6 @@ fn build_operation_preview(
         plan,
         dtype,
         fold_policy,
-        execution,
-        Some(op),
+        device_route,
     ))
 }

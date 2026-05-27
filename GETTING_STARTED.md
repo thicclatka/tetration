@@ -82,7 +82,7 @@ Use this as a working checklist. The repo today has a **v1 `.tet` layout** (supe
 - [x] **Streaming write** — one chunk in RAM at a time (≈ **`jobs` × tile** under parallel import); sequential payload append when layout allows.
 - [x] **Fixtures + tests** — `fixtures/small/` (`tensor_*`, `groups_3d`, `cf_3d`, zarr) in `src/tests/convert.rs`; `fixtures/large/` / `fixtures/extra_large/` for local stress (gitignored, `mise run fixtures:large` / `fixtures:extra-large-*`).
 
-**Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks, warm 2nd pass):** see [`fixtures/bench_results/latest.md`](fixtures/bench_results/latest.md). Regenerate with `mise run bench:h5` (or `bench:netcdf` / `bench:zarr`).
+**Local bench (extra_large f32 slab, `--jobs 0`, 320 × 64 MiB chunks, warm 2nd pass):** see [`fixtures/bench_results/latest.md`](fixtures/bench_results/latest.md). Regenerate with `mise run bench:h5` (or `bench:netcdf` / `bench:zarr`). Device mode: `mise run bench:auto` (default via `bench`), `bench:cpu`, or `bench:gpu` (`cuda`).
 
 | Regime                         | Machine                         | 20 GiB `.tet` mean (approx.)            |
 | ------------------------------ | ------------------------------- | --------------------------------------- |
@@ -228,16 +228,31 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 **Goal:** optional **device materialization** after CPU decode — format stays mmap-first; GPU is a binding/runtime choice, not a different wire layout.
 
-### Phase 10a — routing scaffold (in progress on `feat/phase10-gpu-scaffold`)
+### Phase 10a — routing scaffold
 
-- [x] **`execution.device` / `--device`** — `cpu`, `auto`, `cuda`, `cuda:N`; CLI overrides query JSON ([`device.rs`](src/query/device.rs)).
-- [x] **Execution preview** — `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce` (CPU path until kernels ship).
+- [x] **`execution.device` / `--device`** — `cpu`, `auto`, `metal`, `cuda`, `cuda:N`; CLI overrides query JSON ([`device.rs`](src/query/device.rs)).
+- [x] **Execution preview** — `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`.
 - [x] **`auto` threshold** — skip GPU below 64 MiB logical selection; tier-C / preview-only stay CPU.
-- [x] **`tetration-gpu` Cargo feature** — reserved for CUDA kernels (`--features tetration-gpu`).
-- [ ] **CUDA reduction kernels** — tier-A/B ops on contiguous `f32` after host decode.
+
+### Phase 10b — CUDA (NVIDIA)
+
+- [x] **`tetration-gpu`** — `cudarc` block-reduce kernels for scalar tier-A/B **`f32`** ([`gpu/cuda.rs`](src/query/gpu/cuda.rs)).
 - [ ] **Batched host→device copy** — overlap decode with async H2D.
-- [ ] **VRAM guardrails** — cap in-flight bytes; fall back to CPU on OOM.
-- [ ] **Alignment / dtype notes** — row-major `f32` / `f16` expectations for fast paths.
+- [ ] **Multi-GPU** — `cuda:N` device selection beyond routing.
+
+### Phase 10c — Metal (Apple)
+
+- [x] **`tetration-metal`** — Metal compute kernels for scalar tier-A/B **`f32`** on macOS ([`gpu/metal.rs`](src/query/gpu/metal.rs)); `device: metal` or `auto` on macOS when built with `--features tetration-metal`.
+- [ ] **Async command buffers** — overlap decode with GPU queue.
+
+### Phase 10d — ROCm / AMD (later)
+
+- [ ] **`device: rocm`** (or `hip`) — AMD GPUs on Linux; separate backend like CUDA/Metal.
+
+### Shared (all backends)
+
+- [x] **VRAM guardrails (v1)** — best-effort budget check before upload; CPU fallback `gpu_vram_exceeded`.
+- [ ] **Alignment / dtype notes** — row-major `f16` fast paths.
 
 ## Phase 11 — Bindings (Python & C ABI)
 

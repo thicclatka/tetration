@@ -80,22 +80,41 @@ description = "Remove generated files under fixtures/extra_large/"
 confirm = "Delete all files in fixtures/extra_large/?"
 run = "rm -rf fixtures/extra_large"
 
-[tasks.bench]
-description = "Sequential large/extra_large convert+query bench (generates, times, deletes per format)"
+[tasks."bench:auto"]
+description = "Large/extra_large bench — .tet queries with execution.device auto (all formats)"
 depends = ["fixtures:sync"]
-run = "cargo build --release && uv run --directory fixtures bench-large"
+run = "cargo build --release && uv run --directory fixtures bench-large --tet-device auto"
+
+[tasks."bench:cpu"]
+description = "Large/extra_large bench — .tet queries forced to CPU (all formats)"
+depends = ["fixtures:sync"]
+run = "cargo build --release && uv run --directory fixtures bench-large --tet-device cpu"
+
+[tasks."bench:gpu"]
+description = "Large/extra_large bench — .tet queries on CUDA device 0 (all formats; needs --features tetration-gpu)"
+depends = ["fixtures:sync"]
+run = "cargo build --release --features tetration-gpu && uv run --directory fixtures bench-large --tet-device cuda"
+
+[tasks."bench:metal"]
+description = "Large/extra_large bench — .tet queries on Metal (macOS; --features tetration-metal)"
+depends = ["fixtures:sync"]
+run = "cargo build --release --features tetration-metal && uv run --directory fixtures bench-large --tet-device metal"
+
+[tasks.bench]
+description = "Alias for bench:auto (device routing auto)"
+depends = ["bench:auto"]
 
 [tasks."bench:h5"]
-description = "Benchmark large + extra_large HDF5 only"
+description = "Benchmark large + extra_large HDF5 only (device auto; use bench:cpu / bench:gpu for other modes)"
 depends = ["fixtures:sync"]
-run = "cargo build --release && uv run --directory fixtures bench-large h5"
+run = "cargo build --release && uv run --directory fixtures bench-large h5 --tet-device auto"
 
 [tasks."bench:netcdf"]
-description = "Benchmark large + extra_large NetCDF only"
+description = "Benchmark large + extra_large NetCDF only (device auto)"
 depends = ["fixtures:sync"]
-run = "cargo build --release && uv run --directory fixtures bench-large netcdf"
+run = "cargo build --release && uv run --directory fixtures bench-large netcdf --tet-device auto"
 
 [tasks."bench:zarr"]
-description = "Benchmark large + extra_large Zarr only"
+description = "Benchmark large + extra_large Zarr only (device auto)"
 depends = ["fixtures:sync"]
-run = "cargo build --release && uv run --directory fixtures bench-large zarr"
+run = "cargo build --release && uv run --directory fixtures bench-large zarr --tet-device auto"

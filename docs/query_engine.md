@@ -68,7 +68,7 @@ Success stdout is formatted by [`format_query_response`](../src/query/cli/output
 | `quiet`          | `-q`  | One line: `dataset=… status=… op=…` + primary aggregate (best after **`-x`** with `operation`)                                                 |
 | `table`          | —     | ASCII tables: query summary, `read_plan`, execution I/O, scalar/partial **result**, optional **preview** sample (like `tet info`)              |
 
-**Phase 10 (device routing):** optional `execution.device` or `tet query … --device` (`cpu`, `auto`, `cuda`, `cuda:N`). Decode stays on the host; tier-A/B reductions record `device_used` / `device_fallback_reason` in `execution` (GPU kernels require `tetration-gpu` when implemented). `auto` skips GPU below 64 MiB logical selection.
+**Phase 10 (device routing):** optional `execution.device` or `tet query … --device` (`cpu`, `auto`, `metal`, `cuda`, `cuda:N`). Decode stays on the host; tier-A/B scalar **`f32`** reductions can run on device when built with **`tetration-metal`** (macOS) or **`tetration-gpu`** (CUDA). Preview records `device_used` / `device_fallback_reason`. `auto` picks Metal on macOS when enabled, else CUDA, else CPU; skips GPU below 64 MiB logical selection.
 
 Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-query-output).
 

@@ -67,6 +67,7 @@ class OpResult:
     source_value: float | None = None
     tet_s: float | None = None
     tet_value: float | None = None
+    tet_device: str | None = None
     skip_source: bool = False
     note: str | None = None
     mismatch: bool = False
@@ -87,6 +88,7 @@ def bench_case(
     jobs: int,
     ops: tuple[OpName, ...],
     skip_ops: bool,
+    tet_device: str | None = None,
 ) -> BenchRow:
     log(f"=== {case.format} / {case.tier} (~{case.logical_gib} GiB) ops={','.join(ops)} ===")
     generate_for_bench(case.gen_target, case)
@@ -124,7 +126,9 @@ def bench_case(
         for op in ops:
             result = op_results[op]
             try:
-                result.tet_s, result.tet_value, op_chunks = run_tet_op(tet, case.tet_out, case, op)
+                result.tet_s, result.tet_value, op_chunks, result.tet_device = run_tet_op(
+                    tet, case.tet_out, case, op, device=tet_device
+                )
                 chunks = chunks or op_chunks
             except Exception as exc:  # noqa: BLE001
                 result.note = (result.note or "") + f"; tet failed: {exc}"

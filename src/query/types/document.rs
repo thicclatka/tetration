@@ -254,11 +254,12 @@ pub struct ExecutionHints {
 pub enum ExecutionDeviceHint {
     Cpu,
     Auto,
+    Metal,
     Cuda(usize),
 }
 
 impl ExecutionDeviceHint {
-    /// Parse `cpu`, `auto`, `cuda`, or `cuda:N`.
+    /// Parse `cpu`, `auto`, `metal`, `cuda`, or `cuda:N`.
     ///
     /// # Errors
     ///
@@ -276,6 +277,9 @@ impl ExecutionDeviceHint {
         if t.eq_ignore_ascii_case("auto") {
             return Ok(Self::Auto);
         }
+        if t.eq_ignore_ascii_case("metal") {
+            return Ok(Self::Metal);
+        }
         if t.eq_ignore_ascii_case("cuda") {
             return Ok(Self::Cuda(0));
         }
@@ -288,7 +292,7 @@ impl ExecutionDeviceHint {
             return Ok(Self::Cuda(idx));
         }
         Err(TetError::Validation(format!(
-            "unknown device `{token}` (expected cpu, auto, cuda, or cuda:N)"
+            "unknown device `{token}` (expected cpu, auto, metal, cuda, or cuda:N)"
         )))
     }
 
@@ -297,6 +301,7 @@ impl ExecutionDeviceHint {
         match self {
             Self::Cpu => "cpu",
             Self::Auto => "auto",
+            Self::Metal => "metal",
             Self::Cuda(0) => "cuda:0",
             Self::Cuda(n) => {
                 // Stable tokens for JSON; cuda:1+ formatted at serialize time in wire layer.
@@ -312,6 +317,7 @@ impl ExecutionDeviceHint {
         match self {
             Self::Cpu => "cpu".to_string(),
             Self::Auto => "auto".to_string(),
+            Self::Metal => "metal".to_string(),
             Self::Cuda(0) => "cuda".to_string(),
             Self::Cuda(n) => format!("cuda:{n}"),
         }

@@ -3,8 +3,8 @@
 use super::fixture;
 use crate::layout::mmap_file_read;
 use crate::query::{
-    ExecutionDeviceHint, gpu_backend_available, plan_query_with_tet_mmap, resolve_device_route,
-    validate_query,
+    ExecutionDeviceHint, cuda_backend_available, metal_backend_available,
+    plan_query_with_tet_mmap, resolve_device_route, validate_query,
 };
 use crate::utils::dtype::ElementDtype;
 
@@ -26,7 +26,11 @@ fn execution_device_hint_parse_tokens() {
         ExecutionDeviceHint::parse("cuda:2").unwrap(),
         ExecutionDeviceHint::Cuda(2)
     );
-    assert!(ExecutionDeviceHint::parse("metal").is_err());
+    assert_eq!(
+        ExecutionDeviceHint::parse("metal").unwrap(),
+        ExecutionDeviceHint::Metal
+    );
+    assert!(ExecutionDeviceHint::parse("rocm").is_err());
 }
 
 #[test]
@@ -65,8 +69,8 @@ fn resolve_device_auto_small_selection_stays_cpu() {
 }
 
 #[test]
-fn resolve_device_cuda_falls_back_without_gpu_feature() {
-    if gpu_backend_available() {
+fn resolve_device_cuda_falls_back_without_cuda_feature() {
+    if cuda_backend_available() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -87,4 +91,63 @@ fn resolve_device_cuda_falls_back_without_gpu_feature() {
         Some("gpu_feature_disabled")
     );
     assert_eq!(ex.device_gpu_reduce, Some(false));
+}
+
+#[test]
+fn resolve_device_metal_falls_back_without_metal_feature() {
+    if metal_backend_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.tet");
+    fixture::write_verify_large_f32(&path, "a");
+    let doc = crate::query::parse_query_json(
+        r#"{"dataset":"a","mean":[],"execution":{"device":"metal"}}"#,
+    )
+    .unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let response = plan_query_with_tet_mmap(&doc, None, &mmap, Some(0)).unwrap();
+    let ex = response.execution.as_ref().unwrap();
+    assert_eq!(ex.device_requested.as_deref(), Some("metal"));
+    assert_eq!(ex.device_used, Some("cpu"));
+    assert_eq!(
+        ex.device_fallback_reason.as_deref(),
+        Some("gpu_feature_disabled")
+    );
+}
+
+#[cfg(all(feature = "tetration-metal", target_os = "macos"))]
+#[test]
+fn resolve_device_auto_large_prefers_metal_when_enabled() {
+    use crate::query::types::ReadPlan;
+    use crate::query::GPU_AUTO_MIN_LOGICAL_BYTES;
+
+    let doc = crate::query::parse_query_json(r#"{"dataset":"a","mean":[]}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let elems = usize::try_from(GPU_AUTO_MIN_LOGICAL_BYTES / 4 + 1).unwrap();
+    let plan = ReadPlan {
+        chunk_touch_policy: "dense",
+        chunk_count: 0,
+        total_stored_bytes: 0,
+        chunks: vec![],
+        dataset_shape: vec![elems as u64],
+        chunk_shape: vec![elems as u64],
+        selection_box_start: vec![0],
+        selection_box_stop_exclusive: vec![elems as u64],
+        selection_step: vec![1],
+        logical_selection_shape: vec![elems as u64],
+        logical_f32_element_count: elems,
+    };
+    let route = resolve_device_route(
+        Some(&crate::query::ExecutionHints {
+            device: Some(ExecutionDeviceHint::Auto),
+            ..Default::default()
+        }),
+        &plan,
+        ElementDtype::F32,
+        doc.operation.as_ref(),
+    );
+    assert_eq!(route.used, "metal");
+    assert!(route.gpu_reduce);
 }
