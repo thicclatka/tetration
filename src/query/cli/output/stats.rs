@@ -155,6 +155,26 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
         "operation_histogram_edges",
         ex.operation_histogram_edges.as_ref(),
     );
+    opt_vec_f64(
+        map,
+        "operation_covariance",
+        ex.operation_covariance.as_ref(),
+    );
+    opt_u64(
+        map,
+        "operation_covariance_order",
+        ex.operation_covariance_order,
+    );
+    opt_vec_f64(
+        map,
+        "operation_correlation",
+        ex.operation_correlation.as_ref(),
+    );
+    opt_u64(
+        map,
+        "operation_correlation_order",
+        ex.operation_correlation_order,
+    );
 }
 
 fn push_execution_reduced_operation_stats(

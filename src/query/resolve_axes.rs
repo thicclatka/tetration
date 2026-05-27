@@ -112,7 +112,9 @@ fn resolve_operation_axes(
         | Operation::ArgMax { axes }
         | Operation::Median { axes }
         | Operation::Quantile { axes, .. }
-        | Operation::Histogram { axes, .. } => axes,
+        | Operation::Histogram { axes, .. }
+        | Operation::Covariance { axes }
+        | Operation::Correlation { axes } => axes,
     };
     for label in axes.iter_mut() {
         *label = resolve_one_axis_label(label, dim_names, ndim)?;
@@ -168,37 +170,4 @@ fn resolve_one_axis_label(
         )));
     }
     Ok(idx.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::catalog::DatasetMetadataV1;
-    use crate::query::types::Operation;
-
-    #[test]
-    fn resolve_time_to_zero() {
-        let meta = DatasetMetadataV1 {
-            dim_names: Some(vec!["time".into(), "lat".into()]),
-            ..Default::default()
-        };
-        let mut op = Operation::Mean {
-            axes: vec!["time".into()],
-        };
-        resolve_operation_axes(&mut op, meta.dim_names.as_deref(), 2).unwrap();
-        assert_eq!(op.axes(), &["0"]);
-    }
-
-    #[test]
-    fn unknown_name_errors() {
-        let meta = DatasetMetadataV1 {
-            dim_names: Some(vec!["x".into()]),
-            ..Default::default()
-        };
-        let mut op = Operation::Sum {
-            axes: vec!["y".into()],
-        };
-        let err = resolve_operation_axes(&mut op, meta.dim_names.as_deref(), 1).unwrap_err();
-        assert!(err.to_string().contains("unknown dimension name"));
-    }
 }

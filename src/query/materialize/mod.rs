@@ -1,5 +1,6 @@
 //! Decode planned chunk payloads into logical row-major tensors.
 
+pub(crate) mod covariance;
 mod f16;
 mod f32;
 mod f64;

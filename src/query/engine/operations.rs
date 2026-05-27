@@ -18,9 +18,11 @@ enum OperationMaterializeTier {
 impl types::Operation {
     fn materialize_tier(&self) -> OperationMaterializeTier {
         match self {
-            Self::Median { .. } | Self::Quantile { .. } | Self::Histogram { .. } => {
-                OperationMaterializeTier::MaterializeRequired
-            }
+            Self::Median { .. }
+            | Self::Quantile { .. }
+            | Self::Histogram { .. }
+            | Self::Covariance { .. }
+            | Self::Correlation { .. } => OperationMaterializeTier::MaterializeRequired,
             _ => OperationMaterializeTier::Streaming,
         }
     }
@@ -197,9 +199,7 @@ fn run_materialize_required_operation(
     Ok(preview)
 }
 
-fn scalar_reduction_kind(
-    op: &types::Operation,
-) -> Option<fold::reduction::ReductionKind> {
+fn scalar_reduction_kind(op: &types::Operation) -> Option<fold::reduction::ReductionKind> {
     op.axes()
         .is_empty()
         .then(|| fold::reduction::ReductionKind::from(op))

@@ -310,6 +310,8 @@ fn operation_name(op: &Operation) -> &'static str {
         Operation::Median { .. } => "median",
         Operation::Quantile { .. } => "quantile",
         Operation::Histogram { .. } => "histogram",
+        Operation::Covariance { .. } => "covariance",
+        Operation::Correlation { .. } => "correlation",
     }
 }
 
@@ -484,6 +486,38 @@ fn scalar_operation_display(
                 ),
             ))
         }
+        Operation::Covariance { .. } => {
+            let order = ex
+                .operation_covariance_order
+                .ok_or_else(|| missing_field("operation_covariance_order"))?;
+            let mat = ex
+                .operation_covariance
+                .as_ref()
+                .ok_or_else(|| missing_field("operation_covariance"))?;
+            Ok((
+                "covariance",
+                format!(
+                    "order={order} matrix={}",
+                    fmt_f64_list(mat, QUIET_VEC_INLINE_MAX)
+                ),
+            ))
+        }
+        Operation::Correlation { .. } => {
+            let order = ex
+                .operation_correlation_order
+                .ok_or_else(|| missing_field("operation_correlation_order"))?;
+            let mat = ex
+                .operation_correlation
+                .as_ref()
+                .ok_or_else(|| missing_field("operation_correlation"))?;
+            Ok((
+                "correlation",
+                format!(
+                    "order={order} matrix={}",
+                    fmt_f64_list(mat, QUIET_VEC_INLINE_MAX)
+                ),
+            ))
+        }
     }
 }
 
@@ -558,6 +592,10 @@ fn partial_operation_values(op: &Operation, ex: &QueryExecutionPreview) -> Resul
         Operation::Histogram { .. } => quiet_reduced_f64(
             "operation_reduced_histogram_counts",
             ex.operation_reduced_histogram_counts.as_ref(),
+        ),
+        Operation::Covariance { .. } | Operation::Correlation { .. } => Err(
+            "covariance/correlation are not partial-axis reductions (use rank-2 selection)"
+                .to_string(),
         ),
     }
 }

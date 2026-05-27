@@ -159,7 +159,15 @@ fn validate_operation_params(op: &Operation) -> Result<(), TetError> {
             )),
             _ => Ok(()),
         },
-        Operation::NullCount { fill: None, .. } => Ok(()),
+        Operation::Covariance { axes } | Operation::Correlation { axes } => {
+            if axes.len() != 1 {
+                return Err(TetError::Validation(
+                    "covariance/correlation require exactly one observation axis (e.g. `\"axis\": 0`)"
+                        .into(),
+                ));
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }

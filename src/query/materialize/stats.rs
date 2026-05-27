@@ -12,7 +12,8 @@ use crate::query::engine::budget::MemoryStrategy;
 use crate::query::fold::partial_geometry::{partial_axis_layout, reduced_index};
 
 use super::{
-    LogicalF32Backing, LogicalF64Backing, MaterializedLogical, materialized_logical_as_f64,
+    LogicalF32Backing, LogicalF64Backing, MaterializedLogical,
+    covariance::run_covariance_correlation, materialized_logical_as_f64,
 };
 
 struct HistogramTierCParams<'a> {
@@ -372,6 +373,14 @@ pub(crate) fn run_tier_c_operation(
                     range_max: *max,
                 },
             )
+        }
+        (_, Operation::Covariance { .. }) | (_, Operation::Correlation { .. }) => {
+            let obs_axis: usize = axes[0]
+                .parse()
+                .map_err(|_| TetError::Validation("invalid observation axis index".into()))?;
+            let values = materialized_logical_as_f64(materialized)?;
+            let correlation = matches!(op, Operation::Correlation { .. });
+            run_covariance_correlation(&values, shape, obs_axis, correlation)
         }
         _ => Err(TetError::Validation(format!(
             "unsupported materialize-required operation: {op:?}"

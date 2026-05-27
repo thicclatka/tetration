@@ -12,8 +12,8 @@ mod execute;
 pub(crate) mod fold;
 pub(crate) mod materialize;
 mod plan;
-mod resolve_axes;
-mod resolve_selection;
+pub(crate) mod resolve_axes;
+pub(crate) mod resolve_selection;
 pub(crate) mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;

@@ -516,6 +516,8 @@ fn operation_label(op: Option<&Operation>) -> &'static str {
         Some(Operation::Median { .. }) => "median",
         Some(Operation::Quantile { .. }) => "quantile",
         Some(Operation::Histogram { .. }) => "histogram",
+        Some(Operation::Covariance { .. }) => "covariance",
+        Some(Operation::Correlation { .. }) => "correlation",
     }
 }
 

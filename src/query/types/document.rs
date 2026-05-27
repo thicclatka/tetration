@@ -96,6 +96,14 @@ pub enum Operation {
         axes: Vec<String>,
         fill: Option<f64>,
     },
+    /// Population covariance matrix (variables × variables) with samples along `axes[0]`.
+    Covariance {
+        axes: Vec<String>,
+    },
+    /// Pearson correlation matrix with samples along `axes[0]`.
+    Correlation {
+        axes: Vec<String>,
+    },
 }
 
 impl Operation {
@@ -121,7 +129,9 @@ impl Operation {
             | Self::Quantile { axes, .. }
             | Self::Histogram { axes, .. }
             | Self::NanCount { axes }
-            | Self::NullCount { axes, .. } => axes,
+            | Self::NullCount { axes, .. }
+            | Self::Covariance { axes }
+            | Self::Correlation { axes } => axes,
         }
     }
 }

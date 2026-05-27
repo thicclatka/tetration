@@ -1284,6 +1284,56 @@ fn selection_coord_labels_resolve_to_row_slice() {
 }
 
 #[test]
+fn covariance_on_2x3_selection_obs_axis_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cov.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(
+        r#"{"dataset":"a","covariance":1,"execution":{"memory_budget_bytes":999999}}"#,
+    )
+    .unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_covariance_order, Some(2));
+    let cov = ex.operation_covariance.as_ref().unwrap();
+    assert_eq!(cov.len(), 4);
+    assert_eq!(ex.operation_element_count, Some(6));
+    let expected = crate::query::materialize::covariance::run_covariance_correlation(
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        &[2, 3],
+        1,
+        false,
+    )
+    .unwrap()
+    .covariance
+    .unwrap();
+    for (a, b) in cov.iter().zip(expected.iter()) {
+        assert!((a - b).abs() < 1e-5, "got {a} expected {b}");
+    }
+}
+
+#[test]
+fn correlation_on_2x3_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("corr.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let mmap = mmap_file_read(&path).unwrap();
+    let doc = parse_query_json(
+        r#"{"dataset":"a","correlation":{"axis":1},"execution":{"memory_budget_bytes":999999}}"#,
+    )
+    .unwrap();
+    let resp =
+        plan_query_with_tet_mmap(&doc, Some(path.to_str().unwrap()), &mmap, Some(0)).unwrap();
+    let ex = resp.execution.as_ref().unwrap();
+    assert_eq!(ex.operation_correlation_order, Some(2));
+    let corr = ex.operation_correlation.as_ref().unwrap();
+    assert!((corr[0] - 1.0).abs() < 1e-9);
+    assert!((corr[3] - 1.0).abs() < 1e-9);
+}
+
+#[test]
 fn plan_query_operation_histogram_scalar() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.tet");

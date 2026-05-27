@@ -92,6 +92,12 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_null_count: Option<Vec<f64>>,
     pub reduced_argmin: Option<Vec<u64>>,
     pub reduced_argmax: Option<Vec<u64>>,
+    /// Row-major `order × order` population covariance (`ddof = 0`).
+    pub covariance: Option<Vec<f64>>,
+    pub covariance_order: Option<u64>,
+    /// Row-major `order × order` Pearson correlation.
+    pub correlation: Option<Vec<f64>>,
+    pub correlation_order: Option<u64>,
 }
 
 /// I/O and spill metadata when building a [`QueryExecutionPreview`].
@@ -260,6 +266,14 @@ pub struct QueryExecutionPreview {
     pub operation_reduced_argmin: Option<Vec<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_argmax: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_covariance: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_covariance_order: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_correlation: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_correlation_order: Option<u64>,
 }
 
 impl From<OperationPreviewFields> for QueryExecutionPreview {
@@ -305,6 +319,10 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_null_count: operation.reduced_null_count,
             operation_reduced_argmin: operation.reduced_argmin,
             operation_reduced_argmax: operation.reduced_argmax,
+            operation_covariance: operation.covariance,
+            operation_covariance_order: operation.covariance_order,
+            operation_correlation: operation.correlation,
+            operation_correlation_order: operation.correlation_order,
             ..Self::default()
         }
     }

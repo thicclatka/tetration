@@ -45,7 +45,11 @@ impl From<&Operation> for ReductionKind {
             }
             Operation::ArgMin { .. } => Self::ArgMin,
             Operation::ArgMax { .. } => Self::ArgMax,
-            Operation::Median { .. } | Operation::Quantile { .. } | Operation::Histogram { .. } => {
+            Operation::Median { .. }
+            | Operation::Quantile { .. }
+            | Operation::Histogram { .. }
+            | Operation::Covariance { .. }
+            | Operation::Correlation { .. } => {
                 unreachable!("tier-C stats use materialize-required execution path")
             }
         }
@@ -430,7 +434,7 @@ impl ValueAccum {
         }
         let vals: &[i32] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -455,9 +459,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -489,7 +490,7 @@ impl ValueAccum {
         }
         let vals = raw;
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -514,9 +515,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -549,7 +547,7 @@ impl ValueAccum {
         }
         let vals: &[i64] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -574,9 +572,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -609,7 +604,7 @@ impl ValueAccum {
         }
         let vals: &[u32] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -634,9 +629,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -669,7 +661,7 @@ impl ValueAccum {
         }
         let vals: &[u64] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -694,9 +686,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -729,7 +718,7 @@ impl ValueAccum {
         }
         let vals: &[i16] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -754,9 +743,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();
@@ -789,7 +775,7 @@ impl ValueAccum {
         }
         let vals: &[u16] = bytemuck::cast_slice(raw);
         match kind {
-            ReductionKind::Count => {
+            ReductionKind::Count | ReductionKind::NanCount => {
                 self.count += vals.len();
             }
             ReductionKind::Sum | ReductionKind::Mean => {
@@ -814,9 +800,6 @@ impl ValueAccum {
                     self.max = slab_max;
                     self.have_min_max = true;
                 }
-            }
-            ReductionKind::NanCount => {
-                self.count += vals.len();
             }
             ReductionKind::NullCount { fill } => {
                 self.count += vals.len();

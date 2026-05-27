@@ -10,6 +10,4 @@ pub use error::TetError;
 pub use plan::{CHUNK_TOUCH_POLICY, ChunkTouchPolicy, PlannedChunkIo, ReadPlan};
 pub use response::{DatasetResolution, QueryExecutionPreview, QueryResponse};
 
-pub(crate) use response::{
-    ExecutionPreviewIo, OperationPreviewFields, QueryExecutionPreviewBuild,
-};
+pub(crate) use response::{ExecutionPreviewIo, OperationPreviewFields, QueryExecutionPreviewBuild};

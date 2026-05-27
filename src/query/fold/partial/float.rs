@@ -142,8 +142,7 @@ fn run_partial_f32(
     ctx: &mut PartialFoldCtx<'_>,
     preview: &mut [f32],
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order =
-        fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
     match ctx.kind {
         reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
             let mut cells = vec![reduction::ArgIndexAccum::default(); ctx.layout.out_len];
@@ -215,18 +214,14 @@ fn run_partial_f64(
     ctx: &mut PartialFoldCtx<'_>,
     preview: &mut [f64],
 ) -> Result<OperationPreviewFields, TetError> {
-    let chunk_order =
-        fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
+    let chunk_order = fold_policy::chunk_indices_for_fold(ctx.plan, ctx.sequential_io);
     match ctx.kind {
         reduction::ReductionKind::ArgMin | reduction::ReductionKind::ArgMax => {
             let mut cells = vec![reduction::ArgIndexAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
                 let c = &ctx.plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(
-                    ctx.mmap,
-                    ctx.plan,
-                    c,
-                    |li, v| {
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_f64(ctx.mmap, ctx.plan, c, |li, v| {
                         *ctx.saw_any = true;
                         if li < ctx.preview_cap {
                             preview[li] = v;
@@ -244,8 +239,7 @@ fn run_partial_f64(
                         )? as u64;
                         cells[oi].push_f64(fi, v, ctx.kind);
                         Ok(())
-                    },
-                )?;
+                    })?;
                 dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
             Ok(partial_arg_fields(
@@ -259,11 +253,8 @@ fn run_partial_f64(
             let mut cells = vec![reduction::ValueAccum::default(); ctx.layout.out_len];
             for i in chunk_order {
                 let c = &ctx.plan.chunks[i];
-                let chunk_bytes = chunk_decode::visit_planned_chunk_f64(
-                    ctx.mmap,
-                    ctx.plan,
-                    c,
-                    |li, v| {
+                let chunk_bytes =
+                    chunk_decode::visit_planned_chunk_f64(ctx.mmap, ctx.plan, c, |li, v| {
                         *ctx.saw_any = true;
                         if li < ctx.preview_cap {
                             preview[li] = v;
@@ -276,8 +267,7 @@ fn run_partial_f64(
                         )?;
                         cells[oi].push_f64(v);
                         Ok(())
-                    },
-                )?;
+                    })?;
                 dispatch::accumulate_chunk_read_bytes(ctx.total_bytes, chunk_bytes)?;
             }
             let reduced: Vec<f64> = cells.iter().map(|c| c.finish_f64(ctx.kind)).collect();

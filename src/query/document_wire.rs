@@ -33,6 +33,8 @@ const OP_KEYS: &[&str] = &[
     "histogram",
     "nan_count",
     "null_count",
+    "covariance",
+    "correlation",
 ];
 
 const RESERVED_KEYS: &[&str] = &[
@@ -310,6 +312,14 @@ fn parse_operation(name: &str, v: &Value) -> Result<Operation, TetError> {
                 Ok(Operation::NullCount { axes, fill: None })
             }
         }
+        "covariance" => {
+            let axes = parse_axis_spec(v)?;
+            Ok(Operation::Covariance { axes })
+        }
+        "correlation" => {
+            let axes = parse_axis_spec(v)?;
+            Ok(Operation::Correlation { axes })
+        }
         other => {
             let axes = parse_axis_spec(v)?;
             Ok(operation_from_axes(other, axes))
@@ -549,6 +559,12 @@ where
                 extra,
             };
             map.serialize_entry("null_count", &wire)?;
+        }
+        Operation::Covariance { axes } => {
+            map.serialize_entry("covariance", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::Correlation { axes } => {
+            map.serialize_entry("correlation", &AxisSpecWire::from_axes(axes))?;
         }
     }
     Ok(())

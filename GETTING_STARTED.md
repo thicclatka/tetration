@@ -191,7 +191,7 @@ Today: **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`** (`5`), **`u16`** (`6
 ### Stats lane
 
 - [x] **Histogram** — caller-supplied `min` / `max` bin edges (already on slice list).
-- [ ] **Covariance / correlation** along an axis (tier C; materialize or multi-pass).
+- [x] **Covariance / correlation** — rank-2 selection; `covariance` / `correlation` with one observation `axis`.
 - [x] **Dimension names in query** — resolve `"mean": "time"` → axis index via Phase 7 metadata (decimal indices remain the internal wire).
 - [x] **Coordinate-aware selection** — `selection[].start_label` / `stop_label` resolve via footer `coords` (+ `dim_names` axis key) at plan time.
 

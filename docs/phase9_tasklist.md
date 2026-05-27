@@ -7,7 +7,7 @@ Branch: **`phase9/query-ops`** → merge to `main` when complete. Phase 6 (TOML 
 | 1 | **Named axes** — `"mean": "time"` via footer `dim_names` | done |
 | 2 | **Histogram** — caller `min` / `max` bin edges | done |
 | 3 | **QC counts** — `nan_count`, `null_count` (fill-aware) | done |
-| 4 | **Covariance / correlation** — tier C along axis | pending |
+| 4 | **Covariance / correlation** — tier C along axis | done (rank-2) |
 | 5 | **Coordinate selection** — `start_label` / `stop_label` on `selection` | done |
 | 6 | **Export** — `.tet` → Zarr directory | pending |
 | 7 | Docs + tests + `GETTING_STARTED` checkboxes | ongoing |
