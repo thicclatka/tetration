@@ -76,6 +76,7 @@ fn run(cli: Cli) -> Result<(), String> {
             quiet,
             preview,
             spill_allow,
+            device,
         } => {
             let stdout = resolve_stdout(quiet, format);
             let (raw, path_hint) = read_query_payload(query.as_deref()).map_err(cli_error)?;
@@ -89,6 +90,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 stdout,
                 preview,
                 spill_allow,
+                device,
                 record_history: true,
             })
         }

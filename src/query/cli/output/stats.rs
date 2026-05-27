@@ -126,6 +126,14 @@ fn push_execution_io_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPrev
     opt_usize(map, "fold_workers", ex.fold_workers);
     opt_str(map, "io_regime", ex.io_regime);
     opt_bool(map, "fold_linear_scan", ex.fold_linear_scan);
+    opt_str(map, "device_requested", ex.device_requested.as_deref());
+    opt_str(map, "device_used", ex.device_used);
+    opt_str(
+        map,
+        "device_fallback_reason",
+        ex.device_fallback_reason.as_deref(),
+    );
+    opt_bool(map, "device_gpu_reduce", ex.device_gpu_reduce);
 }
 
 fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &QueryExecutionPreview) {

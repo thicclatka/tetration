@@ -236,6 +236,7 @@ fn policy_fold_parallel_false_enables_sequential_io() {
         memory_budget_bytes: None,
         memory_budget_percent_bps: None,
         fold_parallel: Some(false),
+        device: None,
     };
     let policy =
         FoldIoPolicy::resolve(&plan, &budget, Some(&hints), ElementDtype::F32).expect("resolve");

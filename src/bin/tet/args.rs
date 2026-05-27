@@ -94,6 +94,9 @@ pub enum Commands {
         /// Extra spill directory roots (repeatable; needs `-x` and `-t`).
         #[arg(long, requires = "execute", requires = "tet")]
         spill_allow: Vec<PathBuf>,
+        /// Device for tier-A/B reductions: `cpu`, `auto`, `cuda`, `cuda:N` (overrides query `execution.device`).
+        #[arg(long, value_name = "DEVICE", requires = "execute")]
+        device: Option<String>,
     },
     /// Verify a `.tet` file (layout, catalog, chunk index, payloads, footer).
     Verify {

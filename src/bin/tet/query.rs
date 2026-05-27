@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use tetration::layout::mmap_file_read;
 use tetration::query::{
-    QueryDocument, QueryOutputFormat, SpillPathAllowlist, append_cli_query_history,
-    format_query_response, format_query_stderr_hints, plan_query_empty,
+    ExecutionDeviceHint, QueryDocument, QueryOutputFormat, SpillPathAllowlist,
+    append_cli_query_history, format_query_response, format_query_stderr_hints, plan_query_empty,
     plan_query_with_tet_mmap_ex, validate_query,
 };
 
@@ -21,7 +21,22 @@ pub(crate) struct QueryRunOpts {
     pub stdout: QueryOutputFormat,
     pub preview: Option<usize>,
     pub spill_allow: Vec<PathBuf>,
+    pub device: Option<String>,
     pub record_history: bool,
+}
+
+/// Apply CLI `--device` over any `execution.device` in the query document.
+pub(crate) fn merge_cli_device(
+    doc: &mut QueryDocument,
+    device: Option<String>,
+) -> Result<(), String> {
+    let Some(token) = device else {
+        return Ok(());
+    };
+    let parsed = ExecutionDeviceHint::parse(&token).map_err(|e| e.to_string())?;
+    let execution = doc.execution.get_or_insert_with(Default::default);
+    execution.device = Some(parsed);
+    Ok(())
 }
 
 pub(crate) fn resolve_execute_preview_limit(
@@ -52,8 +67,11 @@ pub(crate) fn run_query(opts: QueryRunOpts) -> Result<(), String> {
         stdout,
         preview,
         spill_allow,
+        device,
         record_history,
     } = opts;
+    let mut doc = doc;
+    merge_cli_device(&mut doc, device).map_err(cli_error)?;
     validate_query(&doc).map_err(cli_error)?;
     let preview = resolve_execute_preview_limit(execute, stdout, preview).map_err(cli_error)?;
     let mut spill_owned = None;

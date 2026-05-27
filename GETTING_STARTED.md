@@ -228,10 +228,16 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 **Goal:** optional **device materialization** after CPU decode — format stays mmap-first; GPU is a binding/runtime choice, not a different wire layout.
 
-- [ ] **Explicit device routing** — CLI flag or API knob (`cpu` / `cuda:0` / auto with fallback); document when transfer overhead dominates.
-- [ ] **Batched host→device copy** — overlap decode/decompress on CPU with async copies where frameworks allow.
-- [ ] **VRAM guardrails** — cap in-flight bytes, check free device memory, fall back to CPU on OOM.
-- [ ] **Alignment / dtype notes** — document row-major chunk payloads and `f32` / `f16` expectations for fast paths (see README “GPUs and tensors”).
+### Phase 10a — routing scaffold (in progress on `feat/phase10-gpu-scaffold`)
+
+- [x] **`execution.device` / `--device`** — `cpu`, `auto`, `cuda`, `cuda:N`; CLI overrides query JSON ([`device.rs`](src/query/device.rs)).
+- [x] **Execution preview** — `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce` (CPU path until kernels ship).
+- [x] **`auto` threshold** — skip GPU below 64 MiB logical selection; tier-C / preview-only stay CPU.
+- [x] **`tetration-gpu` Cargo feature** — reserved for CUDA kernels (`--features tetration-gpu`).
+- [ ] **CUDA reduction kernels** — tier-A/B ops on contiguous `f32` after host decode.
+- [ ] **Batched host→device copy** — overlap decode with async H2D.
+- [ ] **VRAM guardrails** — cap in-flight bytes; fall back to CPU on OOM.
+- [ ] **Alignment / dtype notes** — row-major `f32` / `f16` expectations for fast paths.
 
 ## Phase 11 — Bindings (Python & C ABI)
 

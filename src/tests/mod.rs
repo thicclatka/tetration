@@ -8,6 +8,7 @@ mod cli_info;
 mod cli_output;
 mod convert;
 mod covariance;
+mod device;
 mod export;
 mod fixture;
 mod fold;

@@ -22,6 +22,8 @@ no-default-features = true
 default = ["tetration-netcdf", "tetration-hdf5"]
 tetration-netcdf = ["dep:netcdf"]
 tetration-hdf5 = ["dep:hdf5-metno"]
+# Phase 10: GPU reduction kernels (scaffold: routing only until implemented).
+tetration-gpu = []
 
 [[bin]]
 name = "tet"

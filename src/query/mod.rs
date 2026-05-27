@@ -4,6 +4,7 @@
 
 mod cli;
 mod decode;
+mod device;
 mod dispatch;
 mod document;
 mod document_toml;
@@ -28,6 +29,9 @@ pub use cli::{
     history_entry_mode, info_view_sections_from_flags, list_cli_query_history,
     parse_history_execute_filter,
 };
+pub use device::{
+    DeviceRoute, GPU_AUTO_MIN_LOGICAL_BYTES, gpu_backend_available, resolve_device_route,
+};
 pub use document::{
     QueryInputFormat, QueryLimits, detect_query_input_format, parse_query_json, parse_query_text,
     validate_query,
@@ -48,7 +52,7 @@ pub use engine::{
 };
 pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 pub use types::{
-    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionHints, Operation,
-    OutputHint, OutputHints, PlannedChunkIo, QueryDocument, QueryExecutionPreview, QueryResponse,
-    ReadPlan, TetError,
+    AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionDeviceHint,
+    ExecutionHints, Operation, OutputHint, OutputHints, PlannedChunkIo, QueryDocument,
+    QueryExecutionPreview, QueryResponse, ReadPlan, TetError,
 };
