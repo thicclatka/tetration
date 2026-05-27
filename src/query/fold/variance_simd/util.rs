@@ -79,20 +79,20 @@ pub(super) mod x86 {
     use std::arch::x86_64::*;
 
     #[inline]
-    unsafe fn accum_f64_quad(sum: &mut f64, sumsq: &mut f64, lo: [f64; 2], hi: [f64; 2]) {
+    fn accum_f64_quad(sum: &mut f64, sumsq: &mut f64, lo: [f64; 2], hi: [f64; 2]) {
         *sum += lo[0] + lo[1] + hi[0] + hi[1];
         *sumsq += lo[0] * lo[0] + lo[1] * lo[1] + hi[0] * hi[0] + hi[1] * hi[1];
     }
 
     #[inline]
-    unsafe fn accum_f64_pair(sum: &mut f64, sumsq: &mut f64, lo: f64, hi: f64) {
+    fn accum_f64_pair(sum: &mut f64, sumsq: &mut f64, lo: f64, hi: f64) {
         *sum += lo + hi;
         *sumsq += lo * lo + hi * hi;
     }
 
     /// Four `f32` lanes → `f64` sum/sumsq accumulators (SSE2).
     #[inline]
-    pub(super) unsafe fn accum_f32x4(sum: &mut f64, sumsq: &mut f64, ptr: *const f32) {
+    pub unsafe fn accum_f32x4(sum: &mut f64, sumsq: &mut f64, ptr: *const f32) {
         // SAFETY: caller aligns `ptr` to a 4-lane chunk inside the slice.
         let (lo_arr, hi_arr) = unsafe {
             let v = _mm_loadu_ps(ptr);
@@ -109,7 +109,7 @@ pub(super) mod x86 {
 
     /// Four `i32` lanes promoted to `f64` sum/sumsq (SSE2).
     #[inline]
-    pub(super) unsafe fn accum_i32x4(sum: &mut f64, sumsq: &mut f64, ptr: *const i32) {
+    pub unsafe fn accum_i32x4(sum: &mut f64, sumsq: &mut f64, ptr: *const i32) {
         let (lo_arr, hi_arr) = unsafe {
             let v = _mm_loadu_si128(ptr as *const __m128i);
             let lo = _mm_cvtepi32_pd(v);
@@ -125,7 +125,7 @@ pub(super) mod x86 {
 
     /// Two `i64` / `u64` lanes as `f64` (SSE2).
     #[inline]
-    pub(super) unsafe fn accum_i64x2(sum: &mut f64, sumsq: &mut f64, ptr: *const i64) {
+    pub unsafe fn accum_i64x2(sum: &mut f64, sumsq: &mut f64, ptr: *const i64) {
         // SAFETY: caller aligns `ptr` to a 2-lane chunk inside the slice.
         unsafe {
             let v = _mm_loadu_si128(ptr as *const __m128i);

@@ -12,8 +12,6 @@ pub(crate) fn scalar_i32_sum_sumsq(vals: &[i32]) -> (f64, f64) {
 
 #[cfg(target_arch = "x86_64")]
 mod i32_arch {
-    use std::arch::x86_64::*;
-
     #[target_feature(enable = "sse2")]
     pub(super) unsafe fn i32_sum_sumsq_sse2(vals: &[i32]) -> (f64, f64) {
         use crate::query::fold::variance_simd::util::x86;
@@ -190,8 +188,6 @@ pub(crate) fn scalar_i64_sum_sumsq(vals: &[i64]) -> (f64, f64) {
 
 #[cfg(target_arch = "x86_64")]
 mod i64_arch {
-    use std::arch::x86_64::*;
-
     #[target_feature(enable = "sse2")]
     pub(super) unsafe fn i64_sum_sumsq_sse2(vals: &[i64]) -> (f64, f64) {
         use crate::query::fold::variance_simd::util::x86;
@@ -203,7 +199,7 @@ mod i64_arch {
                 unsafe { x86::accum_i64x2(sum, sumsq, ptr.add(*i)) };
                 *i += 2;
             },
-            tail_load: |p: *const i64| unsafe { *p } as f64
+            tail_load: |p: *const i64| *p as f64
         )
     }
 }
@@ -300,8 +296,6 @@ pub(crate) fn scalar_u64_sum_sumsq(vals: &[u64]) -> (f64, f64) {
 
 #[cfg(target_arch = "x86_64")]
 mod u64_arch {
-    use std::arch::x86_64::*;
-
     #[target_feature(enable = "sse2")]
     pub(super) unsafe fn u64_sum_sumsq_sse2(vals: &[u64]) -> (f64, f64) {
         use crate::query::fold::variance_simd::util::x86;
@@ -313,7 +307,7 @@ mod u64_arch {
                 unsafe { x86::accum_i64x2(sum, sumsq, ptr.add(*i) as *const i64) };
                 *i += 2;
             },
-            tail_load: |p: *const u64| unsafe { *p } as f64
+            tail_load: |p: *const u64| *p as f64
         )
     }
 }
