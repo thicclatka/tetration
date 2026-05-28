@@ -1,13 +1,13 @@
 [package]
 name = "tetration"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.95"
 authors = ["AHurowitz <thicclatka@users.noreply.github.com>"]
-description = "Tetration tensor file format: Rust library (tetration) and tet CLI"
+description = "Chunked tensor .tet format, tet CLI, and optional C ABI (tetration-ffi)"
 license = "MIT or Apache-2.0"
-repository = "https://github.com/thicclatka/tetration"
-homepage = "https://github.com/thicclatka/tetration"
+repository = "https://github.com/Latka-Industries/tetration"
+homepage = "https://github.com/Latka-Industries/tetration"
 documentation = "https://docs.rs/tetration"
 readme = "README.md"
 keywords = ["tensor", "data", "format", "mmap"]
@@ -20,6 +20,7 @@ crate-type = ["rlib", "cdylib"]
 # rustdoc on docs.rs: build with default features off (avoid native NetCDF/HDF5; gate optional imports).
 [package.metadata.docs.rs]
 no-default-features = true
+features = ["tetration-ffi"]
 
 [features]
 default = ["tetration-netcdf", "tetration-hdf5"]

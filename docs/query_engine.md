@@ -74,7 +74,7 @@ Errors always go to **stderr** with non-zero exit. See [CLI query output](#cli-q
 
 ## Phase 10 — optional GPU (experimental)
 
-**Status:** merged on `main` ([PR #12](https://github.com/thicclatka/tetration/pull/12)). Routing, CUDA/Metal/ROCm kernels, **streaming per-chunk GPU fold**, decode∥GPU pipeline, and multi-GPU sharding ship behind optional crate features. **CPU streaming fold remains the fast, correct default** for large and extra-large selections on typical Apple Silicon benches.
+**Status:** merged on `main` ([PR #12](https://github.com/Latka-Industries/tetration/pull/12)). Routing, CUDA/Metal/ROCm kernels, **streaming per-chunk GPU fold**, decode∥GPU pipeline, and multi-GPU sharding ship behind optional crate features. **CPU streaming fold remains the fast, correct default** for large and extra-large selections on typical Apple Silicon benches.
 
 ### What it does today
 
@@ -716,7 +716,7 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 | Redaction mode for echoed fields           | Out       | Multi-tenant logging                                                                                        |
 | Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical`                                             |
 | Parallel streaming fold (tier A/B ops)     | In        | **Done** — Rayon over chunks when in-core; see [Adaptive fold I/O](#adaptive-fold-io)                       |
-| Out-of-core linear scan                    | In        | **Done** — contiguous raw hyperslab + SIMD windows; [PR #7](https://github.com/thicclatka/tetration/pull/7) |
+| Out-of-core linear scan                    | In        | **Done** — contiguous raw hyperslab + SIMD windows; [PR #7](https://github.com/Latka-Industries/tetration/pull/7) |
 
 ## Robustness (catalog index)
 
