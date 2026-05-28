@@ -20,7 +20,7 @@
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
 - **Optional GPU (Phase 10, experimental)** — `execution.device` / `tet query --device` for tier-A/B **`f32`** (and **`f16`** on device); Metal (`tetration-metal`, macOS), CUDA (`tetration-gpu`), streaming fold + multi-GPU when host RAM does not fit a dense buffer. CPU streaming fold remains the default for large selections.
-- **C ABI (Phase 11)** — feature **`tetration-ffi`**, [`include/tetration.h`](include/tetration.h), [`docs/ffi.md`](docs/ffi.md); Python bindings planned in a **separate repo (TBD)**.
+- **C ABI** — feature **`tetration-ffi`**, [`include/tetration.h`](include/tetration.h), [`docs/ffi.md`](docs/ffi.md).
 
 **Wire dtypes** (tags `1`–`10`, row-major chunks): **`f32`**, **`f64`**, **`i32`**, **`i64`**, **`u8`**, **`u16`**, **`i16`**, **`u32`**, **`f16`**, **`u64`**. Booleans import as **`u8`**. See [`docs/layout_v1.md`](docs/layout_v1.md#dataset-record-concatenated-variable-length-per-record).
 
@@ -214,7 +214,7 @@ More examples: [`fixtures/queries/`](fixtures/queries/), [`docs/query_engine.md`
 
 Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrency-informative).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. **Phase 10 (experimental, [PR #12](https://github.com/Latka-Industries/tetration/pull/12)):** optional Metal/CUDA/ROCm for tier-A/B **`f32`**/**`f16`** — dense or streaming device fold; CPU streaming stays the practical default on large unified-memory hosts. See [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental). **Phase 11 ([PR #13](https://github.com/Latka-Industries/tetration/pull/13)):** C ABI via **`tetration-ffi`** — see [`docs/ffi.md`](docs/ffi.md). **Python wheels** remain a separate repository (TBD).
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. Optional GPU: [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental).
 
 ## Library use
 
@@ -228,21 +228,7 @@ use tetration::prelude::*;
 // TetWriterSession, TetFile, parse_query_json, parse_query_toml, execute_query_json, verify_tet_file, …
 ```
 
-### Roadmap at a glance
-
-| Area                                                                                                                                                                                                                       | Status                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phases **0–3** (layout, writers, `ReadPlan`, zstd)                                                                                                                                                                         | **Done**                                                                                                                                                                                |
-| Phase **4** (query execute: fold, spill, tier-C, SIMD)                                                                                                                                                                     | **Done** — [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                               |
-| Phase **5** (`tet convert` import)                                                                                                                                                                                         | **Done**                                                                                                                                                                                |
-| Phase **6** (CLI UX: `--format`, `qhist`, `tet info` table)                                                                                                                                                                | **Done** — JSON + **TOML** profiles, **`--format table`**, [`fixtures/queries/`](fixtures/queries/)                                                                                     |
-| Phase **7** ([`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html) / [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), footer metadata) | **Done**                                                                                                                                                                                |
-| Phase **8** (`tet verify` / `repair`, dtypes **`f32`–`u64`**)                                                                                                                                                              | **Done**                                                                                                                                                                                |
-| Phase **9** (named axes, coord labels, QC counts, `tet export`)                                                                                                                                                            | **Done**                                                                                                                                                                                |
-| Phase **10** (optional GPU: `execution.device`, Metal/CUDA/ROCm, streaming + multi-GPU)                                                                                                                                    | **Experimental** ([PR #12](https://github.com/Latka-Industries/tetration/pull/12)); CPU streaming default; [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental) |
-| Phase **11** (C ABI; Python in separate repo TBD)                                                                                                                                                                          | **Done** ([PR #13](https://github.com/Latka-Industries/tetration/pull/13)) — [`docs/ffi.md`](docs/ffi.md)                                                                               |
-
-### Embedder flow (Phase 7)
+### Embedder flow
 
 1. **Write** — `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming).
 2. **Read / aggregate** — `TetFile::open` → `execute_query_json` → [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html).
@@ -267,14 +253,8 @@ mean = [] # scalar reduction
 
 Library: [`parse_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_json.html), [`parse_query_toml`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_toml.html), [`parse_query_text`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_text.html) (auto-detect).
 
-### Rust API by phase (detail)
+Further API and wire detail: [`docs/layout_v1.md`](docs/layout_v1.md), [`docs/query_engine.md`](docs/query_engine.md), [`docs/ffi.md`](docs/ffi.md).
 
-| Phase             | Status | You get                                          | Entry points                                                                                                                                                                                                                                                           |
-| ----------------- | ------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1**             | Done   | Write `.tet` bytes (low-level)                   | [`write_raw_array_file`](https://docs.rs/tetration/latest/tetration/catalog/fn.write_raw_array_file.html), [`create_empty_v1_file`](https://docs.rs/tetration/latest/tetration/layout/fn.create_empty_v1_file.html)                                                    |
-| **4**             | Done   | Query plan + execute                             | [`execute_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.execute_query_json.html), `tet query -x`                                                                                                                                                    |
-| **5**             | Done   | Import                                           | `tet convert`, [`convert`](https://docs.rs/tetration/latest/tetration/convert/index.html)                                                                                                                                                                              |
-| **7**             | Done   | **Embedder session API**                         | [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html) |
-| **8**             | Done   | Verify / repair                                  | [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), `tet verify`                                                                                                                                                           |
-| **9**             | Done   | Named axes, export                               | `tet export`, [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                                                                                                           |
-| **0–3, 6, 10–11** | —      | Spec, `ReadPlan`, zstd, CLI formats, GPU, Python | [`docs/layout_v1.md`](docs/layout_v1.md), [`docs/query_engine.md`](docs/query_engine.md), [`docs/ffi.md`](docs/ffi.md)                                                                                                                                                 |
+---
+
+**Python wrapper:** TBA (separate repository; will pin the published `tetration` crate).
