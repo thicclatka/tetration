@@ -151,7 +151,7 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 
 ### `tet qhist`
 
-Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [`docs/query_engine.md` — CLI query history](docs/query_engine.md#json-wire-format-and-cli-mapping).
+Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [`docs/query_engine.md` — end-to-end flow](docs/query_engine.md#end-to-end-flow) (`tet qhist`); roadmap row under [operations](docs/query_engine.md#operations-roadmap-planned).
 
 | Subcommand / flag                                                | Effect                                                                                                              |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -186,11 +186,12 @@ More examples: [`fixtures/queries/`](fixtures/queries/), [`docs/query_engine.md`
 
 ## Documentation map
 
-| Doc                                            | Contents                                                                                                                                |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                                                                    |
-| [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                                                                          |
-| [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`queries/`](fixtures/queries/) JSON/TOML profiles, [`small/tet/`](fixtures/small/tet/) verify smoke    |
+| Doc                                                | Contents                                                                                                                                             |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`docs/layout_v1.md`](docs/layout_v1.md)           | On-disk **layout v1**: superblock, dataset catalog, chunk index, codecs, footer metadata/history, concurrency                                        |
+| [`docs/query_engine.md`](docs/query_engine.md)     | **Query** JSON/TOML wire, planning, fold/spill execution, optional GPU, `tet` CLI mapping, JSON security                                             |
+| [`docs/ffi.md`](docs/ffi.md)                       | **C ABI** (`tetration-ffi`): [`include/tetration.h`](include/tetration.h), linking, [`examples/ffi_query.c`](examples/ffi_query.c), release archives |
+| [docs.rs / `tetration`](https://docs.rs/tetration) | Rust crate API (`prelude`, `TetFile`, `execute_query_json`, convert, verify, …)                                                                      |
 
 ## Design stance (short)
 
@@ -220,7 +221,7 @@ Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrenc
 
 ```toml
 [dependencies]
-tetration = "0.1"
+tetration = "0.1.6"
 ```
 
 ```rust
@@ -253,8 +254,11 @@ mean = [] # scalar reduction
 
 Library: [`parse_query_json`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_json.html), [`parse_query_toml`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_toml.html), [`parse_query_text`](https://docs.rs/tetration/latest/tetration/query/fn.parse_query_text.html) (auto-detect).
 
-Further API and wire detail: [`docs/layout_v1.md`](docs/layout_v1.md), [`docs/query_engine.md`](docs/query_engine.md), [`docs/ffi.md`](docs/ffi.md).
+See **Documentation map** above for layout, query engine, FFI, fixtures, and [docs.rs](https://docs.rs/tetration).
 
 ---
 
-**Python wrapper:** TBA (separate repository; will pin the published `tetration` crate).
+## To do
+
+- [ ] **Python wrapper** — separate repository (TBA); will pin crates.io `tetration`
+- [ ] **docs.rs examples** — match on-disk guarantees when the format stabilizes

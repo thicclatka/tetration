@@ -704,18 +704,18 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 ### Hardening roadmap
 
-| Item                                       | Direction | Notes                                                                                                       |
-| ------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------- |
-| Input size / depth limits                  | In        | **Done** — `QueryLimits::DEFAULT`                                                                           |
-| `deny_unknown_fields`                      | In        | **Done** on query input types                                                                               |
-| Dataset / axis length caps                 | In        | **Done** in `validate_query` via `QueryLimits`                                                              |
-| Spill path allowlist                       | In/out    | **Done** — `SpillPathAllowlist`, `plan_query_with_tet_mmap_ex`, CLI `--spill-allow`                         |
-| Response schema version + stability        | Out       | Document breaking changes                                                                                   |
-| Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `src/tests/query.rs`; TOML smoke in same module                                       |
-| TOML query front-end                       | In        | **Done** — [`parse_query_toml`](../src/query/document_toml.rs), CLI `.toml` + auto-detect                   |
-| Redaction mode for echoed fields           | Out       | Multi-tenant logging                                                                                        |
-| Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical`                                             |
-| Parallel streaming fold (tier A/B ops)     | In        | **Done** — Rayon over chunks when in-core; see [Adaptive fold I/O](#adaptive-fold-io)                       |
+| Item                                       | Direction | Notes                                                                                                             |
+| ------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| Input size / depth limits                  | In        | **Done** — `QueryLimits::DEFAULT`                                                                                 |
+| `deny_unknown_fields`                      | In        | **Done** on query input types                                                                                     |
+| Dataset / axis length caps                 | In        | **Done** in `validate_query` via `QueryLimits`                                                                    |
+| Spill path allowlist                       | In/out    | **Done** — `SpillPathAllowlist`, `plan_query_with_tet_mmap_ex`, CLI `--spill-allow`                               |
+| Response schema version + stability        | Out       | Document breaking changes                                                                                         |
+| Fuzz `parse_query_json` / `validate_query` | In        | **Basic** proptest in `src/tests/query.rs`; TOML smoke in same module                                             |
+| TOML query front-end                       | In        | **Done** — [`parse_query_toml`](../src/query/document_toml.rs), CLI `.toml` + auto-detect                         |
+| Redaction mode for echoed fields           | Out       | Multi-tenant logging                                                                                              |
+| Capped preview without full-buffer alloc   | In        | **Done** — bounded scatter buffer when `max_elements < logical`                                                   |
+| Parallel streaming fold (tier A/B ops)     | In        | **Done** — Rayon over chunks when in-core; see [Adaptive fold I/O](#adaptive-fold-io)                             |
 | Out-of-core linear scan                    | In        | **Done** — contiguous raw hyperslab + SIMD windows; [PR #7](https://github.com/Latka-Industries/tetration/pull/7) |
 
 ## Robustness (catalog index)

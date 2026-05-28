@@ -12,15 +12,15 @@ Until then: shell **`tet`**, embed **Rust**, use this C ABI, or implement reader
 
 **ABI v1** behind Cargo feature **`tetration-ffi`**:
 
-| Symbol | Role |
-| ------ | ---- |
-| `tet_abi_version` | Must match `#define TET_ABI_VERSION` in the header |
-| `tet_open` / `tet_close` | Read-only `.tet` handle |
-| `tet_last_error` / `tet_clear_error` | Thread-local UTF-8 error text |
-| `tet_summary_json` | Catalog summary JSON |
-| `tet_query_json` | Query document JSON → `QueryResponse` JSON |
-| `tet_verify_json` | Quick verify report JSON (path only) |
-| `tet_string_free` | Free buffers from `*_json` |
+| Symbol                               | Role                                               |
+| ------------------------------------ | -------------------------------------------------- |
+| `tet_abi_version`                    | Must match `#define TET_ABI_VERSION` in the header |
+| `tet_open` / `tet_close`             | Read-only `.tet` handle                            |
+| `tet_last_error` / `tet_clear_error` | Thread-local UTF-8 error text                      |
+| `tet_summary_json`                   | Catalog summary JSON                               |
+| `tet_query_json`                     | Query document JSON → `QueryResponse` JSON         |
+| `tet_verify_json`                    | Quick verify report JSON (path only)               |
+| `tet_string_free`                    | Free buffers from `*_json`                         |
 
 Header: [`include/tetration.h`](../include/tetration.h). Example: [`examples/ffi_query.c`](../examples/ffi_query.c).
 
@@ -38,11 +38,11 @@ Lean builds only compile Zarr-side convert code; `src/convert/mod.rs` allows exp
 
 Artifacts:
 
-| Platform | Library |
-| -------- | ------- |
-| Linux | `target/release/libtetration.so` |
-| macOS | `target/release/libtetration.dylib` |
-| Windows | `target/release/tetration.dll` |
+| Platform | Library                             |
+| -------- | ----------------------------------- |
+| Linux    | `target/release/libtetration.so`    |
+| macOS    | `target/release/libtetration.dylib` |
+| Windows  | `target/release/tetration.dll`      |
 
 Header / symbol sync (CI and local):
 
