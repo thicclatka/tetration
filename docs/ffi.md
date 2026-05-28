@@ -34,6 +34,8 @@ cargo test --lib --features tetration-ffi ffi
 cargo build --release --no-default-features --features tetration-ffi
 ```
 
+Lean builds only compile Zarr-side convert code; `src/convert/mod.rs` allows expected `dead_code` / `unused_imports` there when both import features are off. Default-feature builds are unchanged.
+
 Artifacts:
 
 | Platform | Library |

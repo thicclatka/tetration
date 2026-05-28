@@ -1,4 +1,15 @@
 //! Foreign format → `.tet` conversion (Phase 5).
+//!
+//! With neither `tetration-hdf5` nor `tetration-netcdf` (e.g. lean `libtetration` for FFI),
+//! HDF5/NetCDF-only helpers in this tree are unused; see the `allow` below.
+
+#![cfg_attr(
+    all(
+        not(feature = "tetration-hdf5"),
+        not(feature = "tetration-netcdf")
+    ),
+    allow(dead_code, unused_imports)
+)]
 
 use std::path::Path;
 
