@@ -10,7 +10,13 @@ Until then: shell **`tet`**, embed **Rust**, or implement readers from [`layout_
 
 ## Status
 
-**Not implemented yet.** Planned surface is documented in [`GETTING_STARTED.md` — Phase 11](../GETTING_STARTED.md#phase-11--c-abi-cdylib).
+**Initial ABI (v1)** behind Cargo feature **`tetration-ffi`**: `tet_open`, `tet_close`, `tet_summary_json`, `tet_query_json`, `tet_verify_json`, `tet_last_error`, `tet_string_free`. Header: [`include/tetration.h`](../include/tetration.h).
+
+```bash
+cargo test --lib --features tetration-ffi --no-default-features ffi
+cargo build --release --features tetration-ffi --no-default-features
+# shared library: target/release/libtetration.so (Linux), libtetration.dylib (macOS), tetration.dll (Windows)
+```
 
 ## Design principles (v1)
 

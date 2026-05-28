@@ -11,6 +11,8 @@ mod convert;
 mod covariance;
 mod device;
 mod export;
+#[cfg(feature = "tetration-ffi")]
+mod ffi;
 mod fixture;
 mod fold;
 mod layout_roundtrip;

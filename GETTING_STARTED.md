@@ -287,10 +287,10 @@ Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_
 
 ### Implementation slices (this repo)
 
-1. [ ] **`tetration-ffi` feature** + `[lib] crate-type = ["rlib", "cdylib"]` (or small `tetration-ffi` sub-crate) — `default-features = false`, no HDF5/NetCDF/GPU in the shared library.
-2. [ ] **`include/tetration.h`** — `extern "C"`, `#[repr(C)]` status codes, documented ownership (caller frees JSON buffers returned by `tet_*_json`).
-3. [ ] **`cbindgen`** (or hand-maintained header) in CI — header matches symbols.
-4. [ ] **FFI tests** — `src/tests/ffi.rs` or `tests/ffi_c.c` against a built `.so`/`.dylib`; smoke: open fixture `.tet`, `tet_query_json` mean/sum golden.
+1. [x] **`tetration-ffi` feature** + `[lib] crate-type = ["rlib", "cdylib"]` — lean builds: `--no-default-features --features tetration-ffi`.
+2. [x] **`include/tetration.h`** — hand-maintained; caller frees `tet_*_json` with `tet_string_free`.
+3. [ ] **`cbindgen`** (or header check) in CI — header matches symbols.
+4. [x] **FFI tests** — [`src/tests/ffi.rs`](src/tests/ffi.rs); smoke on `fixtures/small/tet/sample.tet`.
 5. [ ] **`docs/ffi.md`** — ABI stability rules (semver on `TET_ABI_VERSION`), linking, panic = abort policy, platform matrix.
 6. [ ] **Release artifact** — optional GitHub release zip: `libtetration` + header (Linux/macOS/Windows when CI allows).
 

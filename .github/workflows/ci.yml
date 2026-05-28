@@ -80,6 +80,9 @@ jobs:
       - name: Run tests
         run: cargo test --features ${{ steps.cargo_features.outputs.value }} --verbose
 
+      - name: FFI tests (Phase 11)
+        run: cargo test --lib --features ${{ steps.cargo_features.outputs.value }},tetration-ffi ffi --verbose
+
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest
