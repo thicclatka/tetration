@@ -13,7 +13,7 @@ Tracked binaries for **manual** CLI checks and `src/tests/small_tet_fixtures.rs`
 
 **Dataset names:** `sample.tet` → **`temperature`**; `multichunk_*.tet` → **`a`**.
 
-Example query profiles (JSON + TOML): [`fixtures/queries/`](../../queries/README.md).
+Example query profiles (JSON + TOML): [`fixtures/queries/`](../../queries/README.md). C ABI smoke: [`examples/ffi_query.c`](../../../examples/ffi_query.c) or `./.github/scripts/build-ffi-example.sh`.
 
 ## Manual (from repo root)
 

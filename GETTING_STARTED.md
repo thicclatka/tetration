@@ -289,14 +289,14 @@ Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_
 
 1. [x] **`tetration-ffi` feature** + `[lib] crate-type = ["rlib", "cdylib"]` — lean builds: `--no-default-features --features tetration-ffi`.
 2. [x] **`include/tetration.h`** — hand-maintained; caller frees `tet_*_json` with `tet_string_free`.
-3. [ ] **`cbindgen`** (or header check) in CI — header matches symbols.
+3. [x] **Header check** — [`.github/scripts/check-ffi-header.sh`](.github/scripts/check-ffi-header.sh) + `ffi_header_in_sync_with_rust` in CI.
 4. [x] **FFI tests** — [`src/tests/ffi.rs`](src/tests/ffi.rs); smoke on `fixtures/small/tet/sample.tet`.
-5. [ ] **`docs/ffi.md`** — ABI stability rules (semver on `TET_ABI_VERSION`), linking, panic = abort policy, platform matrix.
+5. [x] **`docs/ffi.md`** — linking, build, stability (`TET_ABI_VERSION`).
 6. [ ] **Release artifact** — optional GitHub release zip: `libtetration` + header (Linux/macOS/Windows when CI allows).
 
 ### Consumers
 
-- [ ] **Reference binding** — minimal C example or `examples/ffi_query.c` in-repo.
+- [x] **Reference binding** — [`examples/ffi_query.c`](examples/ffi_query.c); [`.github/scripts/build-ffi-example.sh`](.github/scripts/build-ffi-example.sh) on Linux/macOS CI.
 - [ ] **Downstream** — Julia / R / Go bind `tet_open` + `tet_query_json` first; expand only when a second consumer needs write/convert.
 
 ### Already available (no binding required)

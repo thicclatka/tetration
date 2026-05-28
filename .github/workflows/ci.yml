@@ -83,6 +83,15 @@ jobs:
       - name: FFI tests (Phase 11)
         run: cargo test --lib --features ${{ steps.cargo_features.outputs.value }},tetration-ffi ffi --verbose
 
+      - name: Check FFI header sync
+        shell: bash
+        run: ./.github/scripts/check-ffi-header.sh
+
+      - name: Build and run C FFI example
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./.github/scripts/build-ffi-example.sh
+
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest

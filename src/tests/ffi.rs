@@ -1,4 +1,4 @@
-//! C ABI smoke tests (`cargo test --lib --features tetration-ffi --no-default-features ffi`).
+//! C ABI smoke tests (`cargo test --lib --features tetration-ffi ffi`).
 
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -9,6 +9,46 @@ use crate::ffi::{
 };
 
 use super::fixture::tracked_small_tet_dir;
+
+const FFI_EXPORTS: &[&str] = &[
+    "tet_abi_version",
+    "tet_clear_error",
+    "tet_close",
+    "tet_last_error",
+    "tet_open",
+    "tet_query_json",
+    "tet_string_free",
+    "tet_summary_json",
+    "tet_verify_json",
+];
+
+fn header_abi_version(header: &str) -> u32 {
+    for line in header.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#define TET_ABI_VERSION") {
+            let digits: String = rest.chars().filter(char::is_ascii_digit).collect();
+            return digits.parse().expect("TET_ABI_VERSION digits");
+        }
+    }
+    panic!("TET_ABI_VERSION not found in include/tetration.h");
+}
+
+#[test]
+fn ffi_header_in_sync_with_rust() {
+    let header = include_str!("../../include/tetration.h");
+    let rust_src = include_str!("../ffi/mod.rs");
+    assert_eq!(header_abi_version(header), TET_ABI_VERSION);
+    for sym in FFI_EXPORTS {
+        assert!(
+            header.contains(&format!("{sym}(")),
+            "{sym} missing from include/tetration.h"
+        );
+        assert!(
+            rust_src.contains(&format!("fn {sym}")),
+            "{sym} missing from src/ffi/mod.rs"
+        );
+    }
+}
 
 fn sample_path() -> CString {
     let p = tracked_small_tet_dir().join("sample.tet");
