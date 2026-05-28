@@ -639,7 +639,7 @@ These match the product vision but belong **beside** the reduction enum:
 - Arbitrary per-chunk user callbacks (needs a sandbox and stable ABI).
 - Plugin codecs or filters beyond the v1 catalog codec tags.
 - Guarantees about numerical order beyond logical row-major **preview** order (aggregates are commutative where noted).
-- **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (see Phase 11 Python).
+- **FFT, CWT, convolution, and ML ops** — export a hyperslab, then run ecosystem libraries (future Python bindings repo — see [`ffi.md`](ffi.md)).
 - **Query replay / result cache in `.tet`** — use optional client-side memoization (`tet qhist` stores recent query JSON in platform cache only; does not mutate the file or skip decode by default).
 
 When adding an op, update this table, [`Operation`](../src/query/types/document.rs), `validate_query` / `document.rs`, `reduction/` / `operations.rs` / `partial/`, and (if tier **C**) `materialize_stats.rs`.

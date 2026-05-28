@@ -216,7 +216,7 @@ See [dimension names vs coordinate labels](docs/query_engine.md#dimension-names-
 
 ### Out of scope for JSON `operation`
 
-- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled slabs (Phase 11 Python).
+- **Spectral / ML transforms** — FFT, CWT, convolution, `matmul`, `einsum`, training/inference → NumPy / SciPy / PyTorch / JAX on spilled slabs (future **Python repo, TBD**).
 - **Optional client cache** — memoize `(catalog hash, query hash) → plan or result` in CLI session or bindings; never append query logs to `.tet`.
 
 ### Already shipped (Phase 4)
@@ -267,22 +267,37 @@ Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_
 - [x] **Streaming GPU fold** — per-chunk decode + device partials + host merge ([`gpu/streaming_fold.rs`](src/query/gpu/streaming_fold.rs)); dense materialize when host RAM allows; `var`/`std` stream on host per chunk.
 - [ ] **Native HIP kernels** — when cudarc exposes ROCm without CUDA-compat layer.
 
-## Phase 11 — Bindings (Python & C ABI)
+## Phase 11 — C ABI (`cdylib`)
 
-**Goal:** ship **language bindings** after the CLI and on-disk story are stable — separate Python repo (PyPI rename) pinning published **`tetration`** on crates.io; optional **`cdylib`** for other FFIs.
+**Goal:** a **stable, narrow C surface** in this repo so Julia / R / Go / Swift / etc. can bind without reimplementing layout v1. Ship after Phases 0–9 are stable; keep the ABI smaller than the Rust crate.
 
-### Python package (separate repo)
+**Python:** intentionally **out of scope here**. A PyPI package (PyO3 / maturin, `default-features = false` wheels) will live in a **separate repository** (name TBD) that pins published **`tetration`** on crates.io — same split as today’s Rust `tet convert` vs a future `h5py`/`zarr`-native import path. Track Python milestones there, not in this checklist.
 
-- [ ] **PyPI package** (PyO3 / maturin) — `tetration = "x.y.z"` from crates.io (`default-features = false` for lean wheels); NumPy buffer views where dtypes align.
-- [ ] **Read / query** — open `.tet`, catalog summary, validate + plan + execute query documents (parity with key `tet query --execute` paths).
-- [ ] **Write path** — stable Rust writer API for tile/chunk append; Python fills buffers from NumPy.
-- [ ] **Convert via Python stack** — optional extras (`h5py`, `netCDF4`, `xarray`, `zarr`, …) read foreign formats → numpy tiles → Rust writer; not the Rust `tetration-hdf5` / `tetration-netcdf` link chain.
-- [ ] **Tests** — shared or submodule `fixtures/small/`; byte roundtrips + query golden cases against pinned crate releases.
+### v1 C API (proposed)
 
-### C ABI (`cdylib`) — when needed
+| Area | Functions (illustrative) | Notes |
+| ---- | ------------------------ | ----- |
+| **Lifecycle** | `tet_open`, `tet_close` | Opaque `TetHandle*`; mmap read-only file |
+| **Errors** | `tet_last_error`, `tet_clear_error` | Thread-local or handle-scoped UTF-8 message; numeric `tet_status` |
+| **Catalog** | `tet_summary_json` | Parity with `read_tet_summary_v1` / `tet info --json` subset |
+| **Query** | `tet_query_json` | Query document JSON in → `QueryResponse` JSON out (`execute_query_json` + `format_query_response` stats/json) |
+| **Health** | `tet_verify_json` (optional) | Quick verify report JSON; skip `--deep` in v1 ABI unless needed |
 
-- [ ] **Stable C headers** — narrow API: open, close, last error, list datasets, run query JSON, optional convert entrypoint.
-- [ ] **Consumers** — Julia / R / Go / etc. via their FFI.
+**Deferred from v1 ABI:** `tet convert` / HDF5 / NetCDF (pulls native deps); writer session (`TetWriterSession`); GPU device strings; query history. Callers shell `tet convert` or use Rust until a later ABI revision.
+
+### Implementation slices (this repo)
+
+1. [x] **`tetration-ffi` feature** + `[lib] crate-type = ["rlib", "cdylib"]` — lean builds: `--no-default-features --features tetration-ffi`.
+2. [x] **`include/tetration.h`** — hand-maintained; caller frees `tet_*_json` with `tet_string_free`.
+3. [x] **Header check** — [`.github/scripts/check-ffi-header.sh`](.github/scripts/check-ffi-header.sh) + `ffi_header_in_sync_with_rust` in CI.
+4. [x] **FFI tests** — [`src/tests/ffi.rs`](src/tests/ffi.rs); smoke on `fixtures/small/tet/sample.tet`.
+5. [x] **`docs/ffi.md`** — linking, build, stability (`TET_ABI_VERSION`).
+6. [ ] **Release artifact** — optional GitHub release zip: `libtetration` + header (Linux/macOS/Windows when CI allows).
+
+### Consumers
+
+- [x] **Reference binding** — [`examples/ffi_query.c`](examples/ffi_query.c); [`.github/scripts/build-ffi-example.sh`](.github/scripts/build-ffi-example.sh) on Linux/macOS CI.
+- [ ] **Downstream** — Julia / R / Go bind `tet_open` + `tet_query_json` first; expand only when a second consumer needs write/convert.
 
 ### Already available (no binding required)
 
@@ -334,7 +349,7 @@ Quick map for embedders and contributors. **Phases 0–9** are **done** unless m
 | Phase **8**    | **Done** — verify/repair, dtypes                                                                                                   |
 | Phase **9**    | **Done** — named axes, coord labels, export                                                                                        |
 | Phase **10**   | **Experimental** ([PR #12](https://github.com/thicclatka/tetration/pull/12)) — Metal/CUDA/ROCm, streaming + multi-GPU; CPU default |
-| Phase **11**   | _Later_ — Python bindings                                                                                                          |
+| Phase **11**   | _Next_ — C ABI (`cdylib`); Python in **separate repo (TBD)**                                                                     |
 
 ### Per-phase Rust / CLI
 
@@ -351,7 +366,7 @@ Quick map for embedders and contributors. **Phases 0–9** are **done** unless m
 | **8**  | Done                                                                     | `tet verify` / `tet repair`, dtypes **`f32`–`u64`**                         | [`src/verify/`](src/verify/), [`src/repair/`](src/repair/)                                                                                                                                         |
 | **9**  | Done                                                                     | Named axes, coord labels, QC counts, `tet export`                           | [`resolve_axes.rs`](src/query/resolve_axes.rs), [`resolve_selection.rs`](src/query/resolve_selection.rs), [`src/export/`](src/export/)                                                             |
 | **10** | Experimental ([PR #12](https://github.com/thicclatka/tetration/pull/12)) | `execution.device`, dense + streaming GPU fold, `cuda:multi` / `rocm:multi` | [`device.rs`](src/query/device.rs), [`gpu/`](src/query/gpu/); CLI `--device`; [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental)                                   |
-| **11** | _Later_                                                                  | Python bindings repo                                                        | —                                                                                                                                                                                                  |
+| **11** | _Next_                                                                   | C ABI (`cdylib`) + header; Python **separate repo (TBD)**                   | [`docs/ffi.md`](docs/ffi.md) (planned); `tetration-ffi` feature                                                                                                                                  |
 
 **Typical embedder path:** Phase **7** on top of **1** (bytes) and **4** (query engine):
 
@@ -389,4 +404,5 @@ mean = []
 12. ~~**Named axes (Phase 9):** `"mean": "time"` via footer `dim_names`.~~ **Done**
 13. ~~**Histogram (Phase 9):** caller-supplied `min` / `max` for bin edges.~~ **Done**
 14. ~~**QC counts + export (Phase 9):** `nan_count`, `null_count`, `inf_count`; `tet export` → Zarr v3; covariance/correlation.~~ **Done** — deferred: `finite_count` / combined non-finite tallies.
-15. **Python repo scaffold (Phase 11):** separate repo, maturin, pinned `tetration`, `open` / `info` / one query execute smoke test.
+15. **C ABI (Phase 11):** `tetration-ffi` + `tet_open` / `tet_query_json` / `tet_summary_json` + header + C smoke test on [`fixtures/small/tet/`](fixtures/small/tet/).
+16. **Python bindings (separate repo, TBD):** maturin wheel pinning crates.io `tetration`; not tracked in this repo’s Phase 11 checklist.

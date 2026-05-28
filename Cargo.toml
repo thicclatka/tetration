@@ -14,12 +14,17 @@ keywords = ["tensor", "data", "format", "mmap"]
 categories = ["encoding", "filesystem", "command-line-utilities"]
 default-run = "tet"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 # rustdoc on docs.rs: build with default features off (avoid native NetCDF/HDF5; gate optional imports).
 [package.metadata.docs.rs]
 no-default-features = true
 
 [features]
 default = ["tetration-netcdf", "tetration-hdf5"]
+# Phase 11: C ABI (`include/tetration.h`, `src/ffi/`). Build shared lib: `cargo build --features tetration-ffi`.
+tetration-ffi = []
 tetration-netcdf = ["dep:netcdf"]
 tetration-hdf5 = ["dep:hdf5-metno"]
 # Phase 10b: CUDA scalar f32 reductions (Linux/Windows + NVIDIA).

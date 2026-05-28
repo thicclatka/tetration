@@ -16,6 +16,9 @@ pub mod query;
 pub mod repair;
 pub mod verify;
 
+#[cfg(feature = "tetration-ffi")]
+pub mod ffi;
+
 /// Common embedder imports: query document types, parse/validate/plan, mmap open.
 pub mod prelude {
     pub use crate::catalog::{
