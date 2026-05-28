@@ -1,6 +1,6 @@
 # Fixtures
 
-Python generators and checked-in tensors for **convert**, **query**, and **memory-stress** work. See [`GETTING_STARTED.md`](../GETTING_STARTED.md) for the full phase checklist.
+Python generators and checked-in tensors for **convert**, **query**, and **memory-stress** work. See [`README.md`](../README.md) and [`docs/query_engine.md`](../docs/query_engine.md).
 
 ## By phase
 
@@ -162,4 +162,4 @@ uv run generate-fixtures small
 uv run bench-large h5
 ```
 
-Other dense formats (**`.npy`**, GRIB, GeoTIFF, …) get fixtures only if/when convert support is added — see Phase 5 “could add later” in [`GETTING_STARTED.md`](../GETTING_STARTED.md).
+Other dense formats (**`.npy`**, GRIB, GeoTIFF, …) get fixtures only if/when convert support is added.

@@ -105,6 +105,6 @@ Each contains `include/tetration.h`, `lib/` (`.so` / `.dylib` / `.dll`), and `RE
 
 ## See also
 
-- Embedder Rust API: [`GETTING_STARTED.md` — Rust API by phase](../GETTING_STARTED.md#rust-api-by-phase)
+- Embedder Rust API: [`README.md` — Library use](../README.md#library-use)
 - Query JSON wire: [`query_engine.md`](query_engine.md)
 - Layout for standalone readers: [`layout_v1.md`](layout_v1.md)

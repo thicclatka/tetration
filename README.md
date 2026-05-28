@@ -151,7 +151,7 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 
 ### `tet qhist`
 
-Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [`GETTING_STARTED.md` — qhist](GETTING_STARTED.md#cli-query-history-tet-qhist).
+Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [`docs/query_engine.md` — CLI query history](docs/query_engine.md#json-wire-format-and-cli-mapping).
 
 | Subcommand / flag                                                | Effect                                                                                                              |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -182,13 +182,12 @@ Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file.
 
 Preserves per-dataset **raw** or **zstd** chunk bytes; slash-separated dataset names become nested groups (`primary/f32`). Library: [`export_tet_to_zarr`](https://docs.rs/tetration/latest/tetration/export/fn.export_tet_to_zarr.html).
 
-More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
+More examples: [`fixtures/queries/`](fixtures/queries/), [`docs/query_engine.md`](docs/query_engine.md).
 
 ## Documentation map
 
 | Doc                                            | Contents                                                                                                                                |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [`GETTING_STARTED.md`](GETTING_STARTED.md)     | Phased checklist, [Rust API by phase](GETTING_STARTED.md#rust-api-by-phase), library/roadmap summary in [README](README.md#library-use) |
 | [`docs/layout_v1.md`](docs/layout_v1.md)       | Wire layout, superblock, chunk index, footer history                                                                                    |
 | [`docs/query_engine.md`](docs/query_engine.md) | Planning, execution strategies, spill allowlist, JSON security                                                                          |
 | [`fixtures/README.md`](fixtures/README.md)     | Test tensors, convert fixtures, [`queries/`](fixtures/queries/) JSON/TOML profiles, [`small/tet/`](fixtures/small/tet/) verify smoke    |
@@ -215,7 +214,7 @@ More examples and roadmap: [`GETTING_STARTED.md`](GETTING_STARTED.md).
 
 Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrency-informative).
 
-**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. **Phase 10 (experimental, [PR #12](https://github.com/Latka-Industries/tetration/pull/12)):** optional Metal/CUDA/ROCm for tier-A/B **`f32`**/**`f16`** — dense or streaming device fold; CPU streaming stays the practical default on large unified-memory hosts. See [`GETTING_STARTED.md`](GETTING_STARTED.md#phase-10--gpu-experimental) and [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental). **Phase 11 ([PR #13](https://github.com/Latka-Industries/tetration/pull/13)):** C ABI via **`tetration-ffi`** — see [`docs/ffi.md`](docs/ffi.md). **Python wheels** remain a separate repository (TBD).
+**Non-goals (v1):** SQL-on-files, arbitrary codec plugins, GPU codecs in the file format. **Phase 10 (experimental, [PR #12](https://github.com/Latka-Industries/tetration/pull/12)):** optional Metal/CUDA/ROCm for tier-A/B **`f32`**/**`f16`** — dense or streaming device fold; CPU streaming stays the practical default on large unified-memory hosts. See [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental). **Phase 11 ([PR #13](https://github.com/Latka-Industries/tetration/pull/13)):** C ABI via **`tetration-ffi`** — see [`docs/ffi.md`](docs/ffi.md). **Python wheels** remain a separate repository (TBD).
 
 ## Library use
 
@@ -242,8 +241,6 @@ use tetration::prelude::*;
 | Phase **9** (named axes, coord labels, QC counts, `tet export`)                                                                                                                                                            | **Done**                                                                                                                                                                                |
 | Phase **10** (optional GPU: `execution.device`, Metal/CUDA/ROCm, streaming + multi-GPU)                                                                                                                                    | **Experimental** ([PR #12](https://github.com/Latka-Industries/tetration/pull/12)); CPU streaming default; [`docs/query_engine.md`](docs/query_engine.md#phase-10--optional-gpu-experimental) |
 | Phase **11** (C ABI; Python in separate repo TBD)                                                                                                                                                                          | **Done** ([PR #13](https://github.com/Latka-Industries/tetration/pull/13)) — [`docs/ffi.md`](docs/ffi.md)                                                                               |
-
-Checklist + per-phase Rust paths: [`GETTING_STARTED.md`](GETTING_STARTED.md). Agent handoff: [`AGENTS.md`](AGENTS.md).
 
 ### Embedder flow (Phase 7)
 
@@ -280,4 +277,4 @@ Library: [`parse_query_json`](https://docs.rs/tetration/latest/tetration/query/f
 | **7**             | Done   | **Embedder session API**                         | [`TetWriterSession`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetWriterSession.html), [`TetFile`](https://docs.rs/tetration/latest/tetration/catalog/struct.TetFile.html), [`prelude`](https://docs.rs/tetration/latest/tetration/prelude/index.html) |
 | **8**             | Done   | Verify / repair                                  | [`verify_tet_file`](https://docs.rs/tetration/latest/tetration/verify/fn.verify_tet_file.html), `tet verify`                                                                                                                                                           |
 | **9**             | Done   | Named axes, export                               | `tet export`, [`docs/query_engine.md`](docs/query_engine.md)                                                                                                                                                                                                           |
-| **0–3, 6, 10–11** | —      | Spec, `ReadPlan`, zstd, CLI formats, GPU, Python | Full table: [GETTING_STARTED — Rust API by phase](GETTING_STARTED.md#rust-api-by-phase)                                                                                                                                                                                |
+| **0–3, 6, 10–11** | —      | Spec, `ReadPlan`, zstd, CLI formats, GPU, Python | [`docs/layout_v1.md`](docs/layout_v1.md), [`docs/query_engine.md`](docs/query_engine.md), [`docs/ffi.md`](docs/ffi.md)                                                                                                                                                 |

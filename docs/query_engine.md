@@ -132,7 +132,7 @@ cargo build --release --features tetration-gpu     # Linux/Windows + NVIDIA
 # tetration-rocm — same CUDA/NVRTC path today; mutually exclusive with tetration-gpu
 ```
 
-Default crate features do **not** link GPU backends. CI uses platform feature sets (not `--all-features` on Linux/Windows) — see [`AGENTS.md`](../AGENTS.md).
+Default crate features do **not** link GPU backends. CI uses platform feature sets (not `--all-features` on Linux/Windows) — see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 ### Bench expectations ([`fixtures/README.md`](../fixtures/README.md))
 
@@ -411,7 +411,7 @@ Stable tokens on `ReadPlan.chunk_touch_policy` (see [`CHUNK_TOUCH_POLICY`](../sr
 
 - On-disk layout (TIDX execution header): [`layout_v1.md`](layout_v1.md)
 - Axis metadata (dimension names vs coordinates): [`layout_v1.md` — axis metadata](layout_v1.md#axis-metadata-phase-7-baseline)
-- Roadmap checklist: [`GETTING_STARTED.md`](../GETTING_STARTED.md)
+- Roadmap summary: [`README.md`](../README.md#library-use)
 
 ## Dimension names vs coordinate labels
 
@@ -605,7 +605,7 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Phase 9 ops (shipped)
 
-See [GETTING_STARTED.md — Phase 9](../GETTING_STARTED.md#phase-9--query-ops--interchange).
+See [README — Library use](../README.md#library-use) and Phase 9 notes in this file.
 
 | Op (wire key)                | Tier (typical) | Notes                                                                                                                         |
 | ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |

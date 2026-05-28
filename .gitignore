@@ -49,5 +49,5 @@ test-data/
 
 .vscode/
 
-# Local scratch docs (not for PR / not tracked)
+# Local maintainer docs (not for PR / not tracked)
 docs/.local/
