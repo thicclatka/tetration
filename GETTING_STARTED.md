@@ -292,7 +292,7 @@ Detail: [`docs/query_engine.md#phase-10--optional-gpu-experimental`](docs/query_
 3. [x] **Header check** — [`.github/scripts/check-ffi-header.sh`](.github/scripts/check-ffi-header.sh) + `ffi_header_in_sync_with_rust` in CI.
 4. [x] **FFI tests** — [`src/tests/ffi.rs`](src/tests/ffi.rs); smoke on `fixtures/small/tet/sample.tet`.
 5. [x] **`docs/ffi.md`** — linking, build, stability (`TET_ABI_VERSION`).
-6. [ ] **Release artifact** — optional GitHub release zip: `libtetration` + header (Linux/macOS/Windows when CI allows).
+6. [x] **Release artifact** — tag push builds `tetration-ffi-$TAG-{linux-x86_64,macos-aarch64,windows-x86_64}.tar.gz` ([`package-ffi-release.sh`](.github/scripts/package-ffi-release.sh), [release workflow](.github/workflows/release.yml)).
 
 ### Consumers
 

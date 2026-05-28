@@ -71,6 +71,16 @@ Or run the helper (build + smoke on `sample.tet`):
 ./.github/scripts/build-ffi-example.sh
 ```
 
+### GitHub Releases
+
+On tag push (`v*`), CI attaches per-platform archives to the draft release:
+
+- `tetration-ffi-<tag>-linux-x86_64.tar.gz`
+- `tetration-ffi-<tag>-macos-aarch64.tar.gz`
+- `tetration-ffi-<tag>-windows-x86_64.tar.gz`
+
+Each contains `include/tetration.h`, `lib/` (`.so` / `.dylib` / `.dll`), and `README.txt`. Built with `--no-default-features --features tetration-ffi`.
+
 ## Linking notes
 
 - Link against **`libtetration`** and ship the shared library next to your binary, or set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` during development.
