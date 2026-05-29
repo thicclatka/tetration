@@ -104,6 +104,14 @@ impl ValueAccum {
         }
     }
 
+    pub(crate) fn push_nan_mean_f64(&mut self, v: f64) {
+        self.push_nan_mean_values(std::iter::once(v));
+    }
+
+    pub(crate) fn push_nan_std_f64(&mut self, v: f64) {
+        self.push_nan_std_values(std::iter::once(v));
+    }
+
     fn push_all_finite_slice<V>(&mut self, vals: &[V], is_finite: impl Fn(V) -> bool)
     where
         V: Copy,

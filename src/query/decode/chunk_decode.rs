@@ -389,6 +389,8 @@ where
             ReductionKind::NanCount => value.push_nan_f64(E::as_f64(v)),
             ReductionKind::InfCount => value.push_inf_f64(E::as_f64(v)),
             ReductionKind::NullCount { fill } => value.push_null_f64(E::as_f64(v), fill),
+            ReductionKind::NanMean => value.push_nan_mean_f64(E::as_f64(v)),
+            ReductionKind::NanStd => value.push_nan_std_f64(E::as_f64(v)),
             _ => E::push_value(value, v),
         }
         if li < preview_len {
