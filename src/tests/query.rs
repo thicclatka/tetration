@@ -1501,23 +1501,30 @@ fn pop_std_1_to_6() -> f64 {
 }
 
 #[test]
-fn parses_zscore_and_write_roundtrip() {
-    let json = r#"{"dataset":"a","zscore":[],"write":"ram"}"#;
+fn parses_transform_zscore_and_write_roundtrip() {
+    let json = r#"{"dataset":"a","transform":{"method":"zscore"},"write":"ram"}"#;
     let doc = parse_query_json(json).unwrap();
     validate_query(&doc).unwrap();
-    assert!(matches!(doc.operation, Some(Operation::Zscore { .. })));
+    assert!(matches!(
+        doc.operation,
+        Some(Operation::Transform {
+            method: crate::query::TransformMethod::Zscore,
+            ..
+        })
+    ));
     assert_eq!(
         doc.write.as_ref().unwrap().target,
         crate::query::WriteTarget::Ram
     );
     let roundtrip = serde_json::to_string(&doc).unwrap();
-    assert!(roundtrip.contains(r#""zscore":[]"#));
+    assert!(roundtrip.contains(r#""transform""#));
+    assert!(roundtrip.contains(r#""method":"zscore""#));
     assert!(roundtrip.contains(r#""write":"ram""#));
 }
 
 #[test]
 fn rejects_spill_and_write_together() {
-    let json = r#"{"dataset":"a","zscore":[],"spill":"out.bin","write":"ram"}"#;
+    let json = r#"{"dataset":"a","transform":{"method":"zscore"},"spill":"out.bin","write":"ram"}"#;
     let doc = parse_query_json(json).unwrap();
     let err = validate_query(&doc).unwrap_err();
     assert!(err.to_string().contains("spill"), "{err}");
@@ -1528,7 +1535,8 @@ fn plan_query_zscore_scalar_ram() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("zscore.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","zscore":[],"write":"ram"}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","transform":{"method":"zscore"},"write":"ram"}"#)
+        .unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let policy =
@@ -1558,11 +1566,12 @@ fn plan_query_zscore_scalar_ram() {
 }
 
 #[test]
-fn plan_query_min_max_normalize_scalar_ram() {
+fn plan_query_minmax_scalar_ram() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("minmax.tet");
     write_multichunk_2x3_tiles(&path, "a");
-    let doc = parse_query_json(r#"{"dataset":"a","min_max_normalize":[],"write":"ram"}"#).unwrap();
+    let doc = parse_query_json(r#"{"dataset":"a","transform":{"method":"minmax"},"write":"ram"}"#)
+        .unwrap();
     validate_query(&doc).unwrap();
     let mmap = mmap_file_read(&path).unwrap();
     let policy =
@@ -1590,7 +1599,7 @@ fn plan_query_zscore_switch_spills_when_over_budget() {
     let path = dir.path().join("zscore_spill.tet");
     write_multichunk_2x3_tiles(&path, "a");
     let doc = parse_query_json(
-        r#"{"dataset":"a","zscore":[],"write":"switch","execution":{"memory_budget_bytes":1}}"#,
+        r#"{"dataset":"a","transform":{"method":"zscore"},"write":"switch","execution":{"memory_budget_bytes":1}}"#,
     )
     .unwrap();
     validate_query(&doc).unwrap();

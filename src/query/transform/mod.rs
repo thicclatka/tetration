@@ -1,8 +1,11 @@
-//! Two-pass element-wise transforms (`zscore`, `min_max_normalize`).
+//! Two-pass element-wise transforms (`transform` wire key).
 
 mod apply;
 mod stats;
 mod target;
+mod warnings;
+
+pub use crate::query::types::TransformMethod;
 
 use std::path::Path;
 
@@ -44,6 +47,7 @@ struct Pass2Outcome {
     spill_bytes: Option<u64>,
     bundle: DecodePreviewBundle,
     pass2_bytes: u64,
+    warnings: warnings::TransformWarnings,
 }
 
 fn capped_preview<T: Copy>(values: &[T], max_preview: usize, logical_len: usize) -> (Vec<T>, bool) {
@@ -62,10 +66,15 @@ fn run_pass2(
     output: target::ResolvedTransformOutput,
 ) -> Result<Pass2Outcome, TetError> {
     let logical_len = input.plan.logical_f32_element_count;
+    let mut warnings = warnings::TransformWarnings::default();
     match (input.dtype, output) {
         (ElementDtype::F32, target::ResolvedTransformOutput::Ram) => {
-            let (values, bytes) =
-                apply::transform_read_plan_f32_le_ram(input.mmap, input.plan, stats)?;
+            let (values, bytes) = apply::transform_read_plan_f32_le_ram(
+                input.mmap,
+                input.plan,
+                stats,
+                &mut warnings,
+            )?;
             let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
             Ok(Pass2Outcome {
                 strategy: MemoryStrategy::TransformRam,
@@ -73,11 +82,16 @@ fn run_pass2(
                 spill_bytes: None,
                 bundle: DecodePreviewBundle::f32_preview(preview, truncated),
                 pass2_bytes: bytes,
+                warnings,
             })
         }
         (ElementDtype::F64, target::ResolvedTransformOutput::Ram) => {
-            let (values, bytes) =
-                apply::transform_read_plan_f64_le_ram(input.mmap, input.plan, stats)?;
+            let (values, bytes) = apply::transform_read_plan_f64_le_ram(
+                input.mmap,
+                input.plan,
+                stats,
+                &mut warnings,
+            )?;
             let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
             Ok(Pass2Outcome {
                 strategy: MemoryStrategy::TransformRam,
@@ -85,13 +99,14 @@ fn run_pass2(
                 spill_bytes: None,
                 bundle: DecodePreviewBundle::f64_preview(preview, truncated),
                 pass2_bytes: bytes,
+                warnings,
             })
         }
         (ElementDtype::F32 | ElementDtype::F64, target::ResolvedTransformOutput::Spill(path)) => {
             spill_pass2(input, stats, &path)
         }
         _ => Err(TetError::Validation(
-            "zscore and min_max_normalize require f32 or f64 datasets".into(),
+            "transform requires f32 or f64 datasets".into(),
         )),
     }
 }
@@ -101,12 +116,17 @@ fn spill_pass2(
     stats: &stats::TransformStats,
     path: &Path,
 ) -> Result<Pass2Outcome, TetError> {
+    let mut warnings = warnings::TransformWarnings::default();
     let pass2_bytes = match input.dtype {
-        ElementDtype::F32 => apply::transform_spill_f32_le(input.mmap, input.plan, path, stats)?,
-        ElementDtype::F64 => apply::transform_spill_f64_le(input.mmap, input.plan, path, stats)?,
+        ElementDtype::F32 => {
+            apply::transform_spill_f32_le(input.mmap, input.plan, path, stats, &mut warnings)?
+        }
+        ElementDtype::F64 => {
+            apply::transform_spill_f64_le(input.mmap, input.plan, path, stats, &mut warnings)?
+        }
         _ => {
             return Err(TetError::Validation(
-                "zscore and min_max_normalize require f32 or f64 datasets".into(),
+                "transform requires f32 or f64 datasets".into(),
             ));
         }
     };
@@ -125,6 +145,7 @@ fn spill_pass2(
         spill_bytes: Some(spill_bytes),
         bundle,
         pass2_bytes,
+        warnings,
     })
 }
 
@@ -154,6 +175,10 @@ pub(crate) fn run_transform(input: &TransformRunInput<'_>) -> Result<TransformOu
         .checked_add(pass2.pass2_bytes)
         .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
     operation.element_count = Some(input.plan.logical_f32_element_count);
+    if pass2.warnings.div_by_zero_count > 0 {
+        operation.transform_div_by_zero_count = Some(pass2.warnings.div_by_zero_count);
+        operation.transform_div_by_zero_indices = Some(pass2.warnings.div_by_zero_indices);
+    }
     Ok(TransformOutcome {
         total_bytes_read_from_disk,
         strategy: pass2.strategy,

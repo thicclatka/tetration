@@ -128,7 +128,3 @@ case "$(uname -s)" in
 esac
 cargo clippy --features "$FEAT" -- -D warnings
 '''
-
-[tasks."clip-featx"]
-description = "cargo clippy -D warnings for each optional feature (and CI bundles)"
-run = "bash scripts/clip-featx.sh"

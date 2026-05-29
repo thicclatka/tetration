@@ -205,12 +205,12 @@ pub fn validate_query(doc: &QueryDocument) -> Result<(), TetError> {
             }
         } else if doc.write.is_some() {
             return Err(TetError::Validation(
-                "`write` is only valid with `zscore` or `min_max_normalize`".into(),
+                "`write` is only valid with `transform`".into(),
             ));
         }
     } else if doc.write.is_some() {
         return Err(TetError::Validation(
-            "`write` requires a transform operation (`zscore` or `min_max_normalize`)".into(),
+            "`write` requires a transform operation".into(),
         ));
     }
     if doc.output.is_some() && doc.write.is_some() {

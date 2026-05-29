@@ -183,6 +183,8 @@ fn partial_f64_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<Vec<
         Operation::Count { .. } => ex.operation_reduced_count.as_ref(),
         Operation::Var { .. } => ex.operation_reduced_var.as_ref(),
         Operation::Std { .. } => ex.operation_reduced_std.as_ref(),
+        Operation::NanMean { .. } => ex.operation_reduced_nan_mean.as_ref(),
+        Operation::NanStd { .. } => ex.operation_reduced_nan_std.as_ref(),
         Operation::Product { .. } => ex.operation_reduced_product.as_ref(),
         Operation::NormL1 { .. } => ex.operation_reduced_norm_l1.as_ref(),
         Operation::NormL2 { .. } => ex.operation_reduced_norm_l2.as_ref(),
@@ -208,7 +210,7 @@ fn partial_f64_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<Vec<
                 "table format: covariance/correlation matrices use --format stats or full".into(),
             );
         }
-        Operation::Zscore { .. } | Operation::MinMaxNormalize { .. } => {
+        Operation::Transform { .. } => {
             return Err(
                 "table format: transforms use the slice preview (see f32_preview / f64_preview)"
                     .into(),

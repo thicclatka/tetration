@@ -7,6 +7,7 @@ use crate::query::fold::variance_simd;
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct ValueAccum {
     count: usize,
+    finite_count: usize,
     sum: f64,
     welford: WelfordAccum,
     product: f64,
@@ -26,6 +27,7 @@ impl Default for ValueAccum {
     fn default() -> Self {
         Self {
             count: 0,
+            finite_count: 0,
             sum: 0.0,
             welford: WelfordAccum::default(),
             product: 1.0,
@@ -165,6 +167,24 @@ impl ValueAccum {
             }
         }
     }
+
+    fn push_nan_mean_values(&mut self, values: impl IntoIterator<Item = f64>) {
+        for v in values {
+            if !v.is_nan() {
+                self.finite_count += 1;
+                self.sum += v;
+            }
+        }
+    }
+
+    fn push_nan_std_values(&mut self, values: impl IntoIterator<Item = f64>) {
+        for v in values {
+            if !v.is_nan() {
+                self.finite_count += 1;
+                self.welford.push(v);
+            }
+        }
+    }
 }
 
 impl ValueAccum {
@@ -255,6 +275,12 @@ impl ValueAccum {
             ReductionKind::NullCount { fill } => {
                 self.push_null_count_values(vals.len(), vals.iter().map(|&v| f64::from(v)), fill);
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| f64::from(v)));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| f64::from(v)));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -317,6 +343,12 @@ impl ValueAccum {
             ReductionKind::NullCount { fill } => {
                 self.push_null_count_values(vals.len(), vals.iter().copied(), fill);
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().copied());
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().copied());
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -363,6 +395,12 @@ impl ValueAccum {
                     self.push_f64(f64::from(v));
                 }
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -407,6 +445,12 @@ impl ValueAccum {
                 for &v in vals {
                     self.push_f64(f64::from(v));
                 }
+            }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
             }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
@@ -454,6 +498,12 @@ impl ValueAccum {
                     self.push_f64(v as f64);
                 }
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -499,6 +549,12 @@ impl ValueAccum {
                 for &v in vals {
                     self.push_f64(f64::from(v));
                 }
+            }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
             }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
@@ -546,6 +602,12 @@ impl ValueAccum {
                     self.push_f64(v as f64);
                 }
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -592,6 +654,12 @@ impl ValueAccum {
                     self.push_f64(f64::from(v));
                 }
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -637,6 +705,12 @@ impl ValueAccum {
                 for &v in vals {
                     self.push_f64(f64::from(v));
                 }
+            }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| v as f64));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| v as f64));
             }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
@@ -692,6 +766,12 @@ impl ValueAccum {
                     self.push_f64(f64::from(v));
                 }
             }
+            ReductionKind::NanMean => {
+                self.push_nan_mean_values(vals.iter().map(|&v| f64::from(v)));
+            }
+            ReductionKind::NanStd => {
+                self.push_nan_std_values(vals.iter().map(|&v| f64::from(v)));
+            }
             ReductionKind::ArgMin | ReductionKind::ArgMax => {
                 unreachable!("argmin/argmax use ArgIndexAccum")
             }
@@ -710,11 +790,25 @@ impl ValueAccum {
                     self.sum / self.count as f64
                 }
             }
+            ReductionKind::NanMean => {
+                if self.finite_count == 0 {
+                    f64::NAN
+                } else {
+                    self.sum / self.finite_count as f64
+                }
+            }
             ReductionKind::Min => self.min,
             ReductionKind::Max => self.max,
             ReductionKind::Count => self.count as f64,
             ReductionKind::Var => self.welford.population_variance(),
             ReductionKind::Std => self.welford.population_std(),
+            ReductionKind::NanStd => {
+                if self.finite_count == 0 {
+                    f64::NAN
+                } else {
+                    self.welford.population_std()
+                }
+            }
             ReductionKind::Product => self.product,
             ReductionKind::NormL1 => self.norm_l1,
             ReductionKind::NormL2 => self.norm_l2_sq.sqrt(),
@@ -753,6 +847,7 @@ impl ValueAccum {
             return;
         }
         self.count += other.count;
+        self.finite_count += other.finite_count;
         self.sum += other.sum;
         self.welford.merge_from(&other.welford);
         self.product *= other.product;
@@ -781,6 +876,8 @@ impl ValueAccum {
         let mut max_scalar = None;
         let mut var_scalar = None;
         let mut std_scalar = None;
+        let mut nan_mean_scalar = None;
+        let mut nan_std_scalar = None;
         let mut product_scalar = None;
         let mut norm_l1_scalar = None;
         let mut norm_l2_scalar = None;
@@ -803,6 +900,8 @@ impl ValueAccum {
             ReductionKind::Max => max_scalar = Some(self.max),
             ReductionKind::Var => var_scalar = Some(self.welford.population_variance()),
             ReductionKind::Std => std_scalar = Some(self.welford.population_std()),
+            ReductionKind::NanMean => nan_mean_scalar = Some(self.finish_f64(kind)),
+            ReductionKind::NanStd => nan_std_scalar = Some(self.finish_f64(kind)),
             ReductionKind::Product => product_scalar = Some(self.product),
             ReductionKind::NormL1 => norm_l1_scalar = Some(self.norm_l1),
             ReductionKind::NormL2 => norm_l2_scalar = Some(self.norm_l2_sq.sqrt()),
@@ -822,6 +921,8 @@ impl ValueAccum {
             max_scalar,
             var_scalar,
             std_scalar,
+            nan_mean_scalar,
+            nan_std_scalar,
             product_scalar,
             norm_l1_scalar,
             norm_l2_scalar,

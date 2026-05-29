@@ -102,6 +102,13 @@ pub(crate) struct OperationPreviewFields {
     /// Row-major `order × order` Pearson correlation.
     pub correlation: Option<Vec<f64>>,
     pub correlation_order: Option<u64>,
+    pub nan_mean: Option<f64>,
+    pub nan_std: Option<f64>,
+    pub reduced_nan_mean: Option<Vec<f64>>,
+    pub reduced_nan_std: Option<Vec<f64>>,
+    pub transform_method: Option<String>,
+    pub transform_div_by_zero_indices: Option<Vec<u64>>,
+    pub transform_div_by_zero_count: Option<u64>,
 }
 
 /// I/O and spill metadata when building a [`QueryExecutionPreview`].
@@ -178,6 +185,10 @@ pub struct QueryExecutionPreview {
     pub operation_var: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_std: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_nan_mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_nan_std: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_product: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,6 +282,10 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_std: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_nan_mean: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_nan_std: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_product: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_norm_l1: Option<Vec<f64>>,
@@ -300,6 +315,12 @@ pub struct QueryExecutionPreview {
     pub operation_correlation: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_correlation_order: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_div_by_zero_indices: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_div_by_zero_count: Option<u64>,
 }
 
 impl From<OperationPreviewFields> for QueryExecutionPreview {
@@ -316,6 +337,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_max: operation.max,
             operation_var: operation.var,
             operation_std: operation.std,
+            operation_nan_mean: operation.nan_mean,
+            operation_nan_std: operation.nan_std,
             operation_product: operation.product,
             operation_norm_l1: operation.norm_l1,
             operation_norm_l2: operation.norm_l2,
@@ -338,6 +361,8 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_count: operation.reduced_count,
             operation_reduced_var: operation.reduced_var,
             operation_reduced_std: operation.reduced_std,
+            operation_reduced_nan_mean: operation.reduced_nan_mean,
+            operation_reduced_nan_std: operation.reduced_nan_std,
             operation_reduced_product: operation.reduced_product,
             operation_reduced_norm_l1: operation.reduced_norm_l1,
             operation_reduced_norm_l2: operation.reduced_norm_l2,
@@ -353,6 +378,9 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_covariance_order: operation.covariance_order,
             operation_correlation: operation.correlation,
             operation_correlation_order: operation.correlation_order,
+            transform_method: operation.transform_method,
+            transform_div_by_zero_indices: operation.transform_div_by_zero_indices,
+            transform_div_by_zero_count: operation.transform_div_by_zero_count,
             ..Self::default()
         }
     }

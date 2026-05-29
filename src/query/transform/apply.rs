@@ -1,48 +1,34 @@
 //! Pass-2 apply transforms while decoding the logical selection.
 
+use std::cell::RefCell;
 use std::path::Path;
 
 use crate::query::decode::chunk_decode::{visit_planned_chunk, visit_planned_chunk_f64};
 use crate::query::fold::partial_geometry;
 use crate::query::materialize::shared::{
-    check_materialized_nan_slice, scatter_fill_chunks, spill_byte_len_from_elem_count,
-    spill_read_plan_pod_le_impl,
+    scatter_fill_chunks, spill_byte_len_from_elem_count, spill_read_plan_pod_le_impl,
 };
-use crate::query::types::{ReadPlan, TetError};
+use crate::query::types::{ReadPlan, TetError, TransformMethod};
 use crate::utils::{f32_le, f64_le};
 
 use super::stats::TransformStats;
+use super::warnings::TransformWarnings;
 
 fn stat_cell_index(li: usize, shape: &[u64], stats: &TransformStats) -> Result<usize, TetError> {
-    match stats {
-        TransformStats::ZscoreScalar { .. } | TransformStats::MinMaxScalar { .. } => Ok(0),
-        TransformStats::ZscorePartial { layout, .. }
-        | TransformStats::MinMaxPartial { layout, .. } => {
-            let (oi, _) = partial_geometry::reduced_cell_index(li, shape, layout)?;
-            Ok(oi)
-        }
+    if let Some(layout) = &stats.layout {
+        let (oi, _) = partial_geometry::reduced_cell_index(li, shape, layout)?;
+        Ok(oi)
+    } else {
+        Ok(0)
     }
 }
 
-fn apply_zscore(x: f64, mean: f64, std: f64) -> f64 {
-    if !x.is_finite() {
-        return x;
+fn div_or_nan(numer: f64, denom: f64, li: usize, warnings: &mut TransformWarnings) -> f64 {
+    if denom == 0.0 || !denom.is_finite() {
+        warnings.record_div_by_zero(li as u64);
+        return f64::NAN;
     }
-    if std == 0.0 || !std.is_finite() {
-        return 0.0;
-    }
-    (x - mean) / std
-}
-
-fn apply_minmax(x: f64, min: f64, max: f64) -> f64 {
-    if !x.is_finite() {
-        return x;
-    }
-    let range = max - min;
-    if range == 0.0 || !range.is_finite() {
-        return 0.0;
-    }
-    (x - min) / range
+    numer / denom
 }
 
 fn transform_f64(
@@ -50,22 +36,48 @@ fn transform_f64(
     li: usize,
     shape: &[u64],
     stats: &TransformStats,
+    warnings: &mut TransformWarnings,
 ) -> Result<f64, TetError> {
+    if !x.is_finite() {
+        return Ok(x);
+    }
     let cell = stat_cell_index(li, shape, stats)?;
-    Ok(match stats {
-        TransformStats::ZscoreScalar { mean, std } => apply_zscore(x, *mean, *std),
-        TransformStats::ZscorePartial { mean, std, .. } => apply_zscore(x, mean[cell], std[cell]),
-        TransformStats::MinMaxScalar { min, max } => apply_minmax(x, *min, *max),
-        TransformStats::MinMaxPartial { min, max, .. } => apply_minmax(x, min[cell], max[cell]),
+    Ok(match stats.method {
+        TransformMethod::Center => x - stats.mean[cell],
+        TransformMethod::Zscore => {
+            let mean = stats.mean[cell];
+            let std = stats.std[cell];
+            div_or_nan(x - mean, std, li, warnings)
+        }
+        TransformMethod::Scale => div_or_nan(x, stats.std[cell], li, warnings),
+        TransformMethod::Minmax => {
+            let min = stats.min[cell];
+            let range = stats.max[cell] - min;
+            div_or_nan(x - min, range, li, warnings)
+        }
+        TransformMethod::L1 => div_or_nan(x, stats.norm_l1[cell], li, warnings),
+        TransformMethod::L2 => div_or_nan(x, stats.norm_l2[cell], li, warnings),
+        TransformMethod::Log1p => (x - stats.min[cell]).ln_1p(),
+        TransformMethod::Sqrt => {
+            let shifted = x - stats.min[cell];
+            if shifted < 0.0 {
+                warnings.record_div_by_zero(li as u64);
+                f64::NAN
+            } else {
+                shifted.sqrt()
+            }
+        }
+        TransformMethod::Softmax => {
+            let max = stats.max[cell];
+            let sum_exp = stats.sum_exp[cell];
+            if sum_exp == 0.0 || !sum_exp.is_finite() {
+                warnings.record_div_by_zero(li as u64);
+                f64::NAN
+            } else {
+                (x - max).exp() / sum_exp
+            }
+        }
     })
-}
-
-fn check_materialized_complete_f32(out: &[f32]) -> Result<(), TetError> {
-    check_materialized_nan_slice(out, f32::is_nan)
-}
-
-fn check_materialized_complete_f64(out: &[f64]) -> Result<(), TetError> {
-    check_materialized_nan_slice(out, f64::is_nan)
 }
 
 fn transform_scatter_fill_f32(
@@ -73,11 +85,13 @@ fn transform_scatter_fill_f32(
     plan: &ReadPlan,
     out: &mut [f32],
     stats: &TransformStats,
+    warnings: &RefCell<TransformWarnings>,
 ) -> Result<u64, TetError> {
     let shape = plan.logical_selection_shape.clone();
     scatter_fill_chunks(mmap, plan, out, |mmap, plan, c, out| {
         visit_planned_chunk(mmap, plan, c, |li, v| {
-            let y = transform_f64(f64::from(v), li, &shape, stats)? as f32;
+            let y =
+                transform_f64(f64::from(v), li, &shape, stats, &mut warnings.borrow_mut())? as f32;
             out[li] = y;
             Ok(())
         })
@@ -89,11 +103,12 @@ fn transform_scatter_fill_f64(
     plan: &ReadPlan,
     out: &mut [f64],
     stats: &TransformStats,
+    warnings: &RefCell<TransformWarnings>,
 ) -> Result<u64, TetError> {
     let shape = plan.logical_selection_shape.clone();
     scatter_fill_chunks(mmap, plan, out, |mmap, plan, c, out| {
         visit_planned_chunk_f64(mmap, plan, c, |li, v| {
-            out[li] = transform_f64(v, li, &shape, stats)?;
+            out[li] = transform_f64(v, li, &shape, stats, &mut warnings.borrow_mut())?;
             Ok(())
         })
     })
@@ -103,16 +118,18 @@ fn transform_scatter_fill_f64(
 ///
 /// # Errors
 ///
-/// Same validation failures as raw materialize, plus transform geometry errors.
+/// Propagates materialize and geometry failures.
 pub(crate) fn transform_read_plan_f32_le_ram(
     mmap: &[u8],
     plan: &ReadPlan,
     stats: &TransformStats,
+    warnings: &mut TransformWarnings,
 ) -> Result<(Vec<f32>, u64), TetError> {
+    let cell = RefCell::new(std::mem::take(warnings));
     let n = plan.logical_f32_element_count;
     let mut out = vec![f32::NAN; n];
-    let bytes = transform_scatter_fill_f32(mmap, plan, &mut out, stats)?;
-    check_materialized_complete_f32(&out)?;
+    let bytes = transform_scatter_fill_f32(mmap, plan, &mut out, stats, &cell)?;
+    *warnings = cell.into_inner();
     Ok((out, bytes))
 }
 
@@ -120,16 +137,18 @@ pub(crate) fn transform_read_plan_f32_le_ram(
 ///
 /// # Errors
 ///
-/// Same validation failures as raw materialize, plus transform geometry errors.
+/// Propagates materialize and geometry failures.
 pub(crate) fn transform_read_plan_f64_le_ram(
     mmap: &[u8],
     plan: &ReadPlan,
     stats: &TransformStats,
+    warnings: &mut TransformWarnings,
 ) -> Result<(Vec<f64>, u64), TetError> {
+    let cell = RefCell::new(std::mem::take(warnings));
     let n = plan.logical_f32_element_count;
     let mut out = vec![f64::NAN; n];
-    let bytes = transform_scatter_fill_f64(mmap, plan, &mut out, stats)?;
-    check_materialized_complete_f64(&out)?;
+    let bytes = transform_scatter_fill_f64(mmap, plan, &mut out, stats, &cell)?;
+    *warnings = cell.into_inner();
     Ok((out, bytes))
 }
 
@@ -143,19 +162,23 @@ pub(crate) fn transform_spill_f32_le(
     plan: &ReadPlan,
     path: &Path,
     stats: &TransformStats,
+    warnings: &mut TransformWarnings,
 ) -> Result<u64, TetError> {
+    let cell = RefCell::new(std::mem::take(warnings));
     let byte_len = spill_byte_len_from_elem_count(
         plan.logical_f32_element_count,
         f32_le::bytes_from_elem_count,
     )?;
-    spill_read_plan_pod_le_impl(
+    let bytes = spill_read_plan_pod_le_impl(
         mmap,
         plan,
         path,
         byte_len,
-        |mmap, plan, out| transform_scatter_fill_f32(mmap, plan, out, stats),
-        check_materialized_complete_f32,
-    )
+        |mmap, plan, out| transform_scatter_fill_f32(mmap, plan, out, stats, &cell),
+        None,
+    )?;
+    *warnings = cell.into_inner();
+    Ok(bytes)
 }
 
 /// Spill the transformed logical selection as row-major `f64` LE to `path`.
@@ -168,17 +191,21 @@ pub(crate) fn transform_spill_f64_le(
     plan: &ReadPlan,
     path: &Path,
     stats: &TransformStats,
+    warnings: &mut TransformWarnings,
 ) -> Result<u64, TetError> {
+    let cell = RefCell::new(std::mem::take(warnings));
     let byte_len = spill_byte_len_from_elem_count(
         plan.logical_f32_element_count,
         f64_le::bytes_from_elem_count,
     )?;
-    spill_read_plan_pod_le_impl(
+    let bytes = spill_read_plan_pod_le_impl(
         mmap,
         plan,
         path,
         byte_len,
-        |mmap, plan, out| transform_scatter_fill_f64(mmap, plan, out, stats),
-        check_materialized_complete_f64,
-    )
+        |mmap, plan, out| transform_scatter_fill_f64(mmap, plan, out, stats, &cell),
+        None,
+    )?;
+    *warnings = cell.into_inner();
+    Ok(bytes)
 }

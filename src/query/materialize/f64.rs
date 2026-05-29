@@ -82,7 +82,7 @@ pub fn spill_read_plan_f64_le(mmap: &[u8], plan: &ReadPlan, path: &Path) -> Resu
         path,
         byte_len,
         materialize_scatter_fill_f64,
-        check_materialized_complete_f64,
+        Some(check_materialized_complete_f64),
     )
 }
 

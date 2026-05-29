@@ -14,6 +14,8 @@ pub(crate) enum ReductionKind {
     Product,
     NormL1,
     NormL2,
+    NanMean,
+    NanStd,
     AllFinite,
     AnyNan,
     AnyInf,
@@ -35,6 +37,8 @@ impl From<&Operation> for ReductionKind {
             Operation::Count { .. } => Self::Count,
             Operation::Var { .. } => Self::Var,
             Operation::Std { .. } => Self::Std,
+            Operation::NanMean { .. } => Self::NanMean,
+            Operation::NanStd { .. } => Self::NanStd,
             Operation::Product { .. } => Self::Product,
             Operation::NormL1 { .. } => Self::NormL1,
             Operation::NormL2 { .. } => Self::NormL2,
@@ -54,8 +58,7 @@ impl From<&Operation> for ReductionKind {
             | Operation::Histogram { .. }
             | Operation::Covariance { .. }
             | Operation::Correlation { .. }
-            | Operation::Zscore { .. }
-            | Operation::MinMaxNormalize { .. } => {
+            | Operation::Transform { .. } => {
                 unreachable!("tier-C stats and transforms use dedicated execution paths")
             }
         }

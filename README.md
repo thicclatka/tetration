@@ -15,7 +15,7 @@
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
-- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export, **`zscore`** / **`min_max_normalize`** transforms; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`, `any_inf`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
+- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export, **`transform`** (zscore, minmax, l1/l2, center, scale, log1p, sqrt, softmax) and **`nan_mean`** / **`nan_std`**; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`, `any_inf`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import / export** — `tet convert` from HDF5, NetCDF, Zarr v3; **`tet export`** back to Zarr v3 (stored chunk bytes, nested groups).
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.

@@ -6,6 +6,7 @@ use crate::query::decode::indexing::{coords_from_linear_row_major, linear_rm_ind
 use crate::query::plan::read_plan::shape_product_usize;
 use crate::query::types::{ReadPlan, TetError};
 
+#[derive(Debug, Clone)]
 pub(crate) struct PartialAxisLayout {
     pub axis_indices: Vec<usize>,
     pub axis_set: BTreeSet<usize>,

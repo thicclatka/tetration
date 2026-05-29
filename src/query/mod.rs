@@ -58,5 +58,6 @@ pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_jso
 pub use types::{
     AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionDeviceHint,
     ExecutionHints, Operation, OutputHint, OutputHints, PlannedChunkIo, QueryDocument,
-    QueryExecutionPreview, QueryResponse, ReadPlan, TetError, WriteHints, WriteTarget,
+    QueryExecutionPreview, QueryResponse, ReadPlan, TetError, TransformMethod, WriteHints,
+    WriteTarget,
 };

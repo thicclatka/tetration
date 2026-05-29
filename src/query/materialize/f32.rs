@@ -223,7 +223,7 @@ pub fn spill_read_plan_f32_le(mmap: &[u8], plan: &ReadPlan, path: &Path) -> Resu
         path,
         byte_len,
         materialize_scatter_fill,
-        check_materialized_complete,
+        Some(check_materialized_complete),
     )
 }
 

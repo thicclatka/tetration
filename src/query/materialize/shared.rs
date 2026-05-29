@@ -117,13 +117,15 @@ pub(crate) fn spill_byte_len_from_elem_count(
         .ok_or_else(|| TetError::Validation("spill byte length overflow".into()))
 }
 
+type MaterializedCheckFn<T> = fn(&[T]) -> Result<(), TetError>;
+
 pub(crate) fn spill_read_plan_pod_le_impl<T, F>(
     mmap: &[u8],
     plan: &ReadPlan,
     path: &Path,
     byte_len: u64,
     scatter_fill: F,
-    check_complete: fn(&[T]) -> Result<(), TetError>,
+    check_complete: Option<MaterializedCheckFn<T>>,
 ) -> Result<u64, TetError>
 where
     T: bytemuck::Pod + Copy,
@@ -150,7 +152,9 @@ where
     let out = bytemuck::cast_slice_mut(out_mmap.as_mut());
     validate_full_read_plan_buffer(plan, out.len())?;
     let total = scatter_fill(mmap, plan, out)?;
-    check_complete(out)?;
+    if let Some(check) = check_complete {
+        check(out)?;
+    }
     out_mmap
         .flush()
         .map_err(|e| TetError::Validation(format!("spill mmap flush failed: {e}")))?;

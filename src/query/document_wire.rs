@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use super::document::QueryLimits;
 use super::types::{
     AxisSlice, ExecutionDeviceHint, ExecutionHints, Operation, OutputHint, OutputHints,
-    QueryDocument, TetError, WriteHints, WriteTarget,
+    QueryDocument, TetError, TransformMethod, WriteHints, WriteTarget,
 };
 
 const OP_KEYS: &[&str] = &[
@@ -38,8 +38,9 @@ const OP_KEYS: &[&str] = &[
     "null_count",
     "covariance",
     "correlation",
-    "zscore",
-    "min_max_normalize",
+    "nan_mean",
+    "nan_std",
+    "transform",
 ];
 
 const RESERVED_KEYS: &[&str] = &[
@@ -416,6 +417,15 @@ fn parse_operation(name: &str, v: &Value) -> Result<Operation, TetError> {
             let axes = parse_axis_spec(v)?;
             Ok(Operation::Correlation { axes })
         }
+        "transform" => {
+            let (axes, obj) = parse_parametric_op_object("transform", v)?;
+            let method = obj
+                .get("method")
+                .and_then(Value::as_str)
+                .ok_or_else(|| TetError::Validation("`transform.method` is required".into()))?;
+            let method = TransformMethod::parse(method)?;
+            Ok(Operation::Transform { method, axes })
+        }
         other => {
             let axes = parse_axis_spec(v)?;
             Ok(operation_from_axes(other, axes))
@@ -460,8 +470,8 @@ fn operation_from_axes(name: &str, axes: Vec<String>) -> Operation {
         "arg_min" => Operation::ArgMin { axes },
         "arg_max" => Operation::ArgMax { axes },
         "median" => Operation::Median { axes },
-        "zscore" => Operation::Zscore { axes },
-        "min_max_normalize" => Operation::MinMaxNormalize { axes },
+        "nan_mean" => Operation::NanMean { axes },
+        "nan_std" => Operation::NanStd { axes },
         _ => unreachable!("operation_from_axes: {name}"),
     }
 }
@@ -603,47 +613,18 @@ where
     Ok(())
 }
 
+fn serialize_axes_op<S>(map: &mut S, key: &str, axes: &[String]) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    map.serialize_entry(key, &AxisSpecWire::from_axes(axes))
+}
+
 fn serialize_operation<S>(map: &mut S, op: &Operation) -> Result<(), S::Error>
 where
     S: SerializeMap,
 {
     match op {
-        Operation::Sum { axes } => map.serialize_entry("sum", &AxisSpecWire::from_axes(axes))?,
-        Operation::Mean { axes } => map.serialize_entry("mean", &AxisSpecWire::from_axes(axes))?,
-        Operation::Min { axes } => map.serialize_entry("min", &AxisSpecWire::from_axes(axes))?,
-        Operation::Max { axes } => map.serialize_entry("max", &AxisSpecWire::from_axes(axes))?,
-        Operation::Count { axes } => {
-            map.serialize_entry("count", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::Var { axes } => map.serialize_entry("var", &AxisSpecWire::from_axes(axes))?,
-        Operation::Std { axes } => map.serialize_entry("std", &AxisSpecWire::from_axes(axes))?,
-        Operation::Product { axes } => {
-            map.serialize_entry("product", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::NormL1 { axes } => {
-            map.serialize_entry("norm_l1", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::NormL2 { axes } => {
-            map.serialize_entry("norm_l2", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::AllFinite { axes } => {
-            map.serialize_entry("all_finite", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::AnyNan { axes } => {
-            map.serialize_entry("any_nan", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::AnyInf { axes } => {
-            map.serialize_entry("any_inf", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::ArgMin { axes } => {
-            map.serialize_entry("arg_min", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::ArgMax { axes } => {
-            map.serialize_entry("arg_max", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::Median { axes } => {
-            map.serialize_entry("median", &AxisSpecWire::from_axes(axes))?;
-        }
         Operation::Quantile { axes, q } => {
             let wire = ParametricOpWire {
                 axes: AxisSpecWire::from_axes(axes),
@@ -670,12 +651,6 @@ where
             };
             map.serialize_entry("histogram", &wire)?;
         }
-        Operation::NanCount { axes } => {
-            map.serialize_entry("nan_count", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::InfCount { axes } => {
-            map.serialize_entry("inf_count", &AxisSpecWire::from_axes(axes))?;
-        }
         Operation::NullCount { axes, fill } => {
             let mut extra = Vec::new();
             if let Some(v) = fill {
@@ -687,18 +662,14 @@ where
             };
             map.serialize_entry("null_count", &wire)?;
         }
-        Operation::Covariance { axes } => {
-            map.serialize_entry("covariance", &AxisSpecWire::from_axes(axes))?;
+        Operation::Transform { method, axes } => {
+            let wire = ParametricOpWire {
+                axes: AxisSpecWire::from_axes(axes),
+                extra: vec![("method", serde_json::json!(method.as_str()))],
+            };
+            map.serialize_entry("transform", &wire)?;
         }
-        Operation::Correlation { axes } => {
-            map.serialize_entry("correlation", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::Zscore { axes } => {
-            map.serialize_entry("zscore", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::MinMaxNormalize { axes } => {
-            map.serialize_entry("min_max_normalize", &AxisSpecWire::from_axes(axes))?;
-        }
+        _ => serialize_axes_op(map, op.wire_key(), op.axes())?,
     }
     Ok(())
 }

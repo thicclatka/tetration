@@ -114,15 +114,22 @@ pub enum Operation {
     Correlation {
         axes: Vec<String>,
     },
-    /// Per-element z-score using population mean and std (`ddof = 0`) from pass-1 fold stats.
-    Zscore {
+    /// Mean over finite elements (NaN-skipping), same axis semantics as [`Self::Mean`].
+    NanMean {
         axes: Vec<String>,
     },
-    /// Per-element min–max normalization to `[0, 1]` from pass-1 fold stats.
-    MinMaxNormalize {
+    /// Population std over finite elements (NaN-skipping), `ddof = 0`.
+    NanStd {
+        axes: Vec<String>,
+    },
+    /// Two-pass shape-preserving transform (`transform` wire key); see [`TransformMethod`].
+    Transform {
+        method: TransformMethod,
         axes: Vec<String>,
     },
 }
+
+use super::transform_method::TransformMethod;
 
 macro_rules! operation_axes_match {
     ($op:expr) => {
@@ -150,8 +157,9 @@ macro_rules! operation_axes_match {
             | Operation::NullCount { axes, .. }
             | Operation::Covariance { axes }
             | Operation::Correlation { axes }
-            | Operation::Zscore { axes }
-            | Operation::MinMaxNormalize { axes } => axes,
+            | Operation::NanMean { axes }
+            | Operation::NanStd { axes }
+            | Operation::Transform { axes, .. } => axes,
         }
     };
 }
@@ -195,8 +203,9 @@ impl Operation {
             Self::Histogram { .. } => "histogram",
             Self::Covariance { .. } => "covariance",
             Self::Correlation { .. } => "correlation",
-            Self::Zscore { .. } => "zscore",
-            Self::MinMaxNormalize { .. } => "min_max_normalize",
+            Self::NanMean { .. } => "nan_mean",
+            Self::NanStd { .. } => "nan_std",
+            Self::Transform { .. } => "transform",
         }
     }
 
@@ -216,7 +225,16 @@ impl Operation {
     /// Two-pass element-wise transforms (pass-1 fold stats, pass-2 rewrite).
     #[must_use]
     pub fn requires_transform(&self) -> bool {
-        matches!(self, Self::Zscore { .. } | Self::MinMaxNormalize { .. })
+        matches!(self, Self::Transform { .. })
+    }
+
+    /// Transform method when [`Self::requires_transform`] is true.
+    #[must_use]
+    pub fn transform_method(&self) -> Option<TransformMethod> {
+        match self {
+            Self::Transform { method, .. } => Some(*method),
+            _ => None,
+        }
     }
 }
 
