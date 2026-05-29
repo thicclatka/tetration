@@ -13,13 +13,13 @@ Glue between planning, materialization, folding, transforms, and spill export. P
 
 ## Memory strategies
 
-| Strategy                                           | When                             |
-| -------------------------------------------------- | -------------------------------- |
-| `streaming_fold`                                   | Tier-A/B `operation`             |
-| `in_memory_materialize` / `temp_spill_materialize` | Tier-C ops                       |
-| `mmap_spill`                                       | Top-level `spill` export         |
-| `transform_ram` / `transform_spill`                | `transform` with `write` routing |
-| `capped_in_memory`                                 | Preview-only execute             |
+| Strategy                                                  | When                             |
+| --------------------------------------------------------- | -------------------------------- |
+| `streaming_fold`                                          | Tier-A/B `operation`             |
+| `in_memory_materialize` / `temp_spill_materialize`        | Tier-C ops                       |
+| `mmap_spill`                                              | Top-level `spill` export         |
+| `transform_ram` / `transform_spill` / `transform_sidecar` | `transform` with `write` routing |
+| `capped_in_memory`                                        | Preview-only execute             |
 
 See [`docs/query_engine.md`](../../../docs/query_engine.md#memory-budget-and-execution-strategies).
 

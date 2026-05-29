@@ -272,6 +272,8 @@ pub struct WriteHints {
     pub target: WriteTarget,
     /// Override spill/sidecar path (relative to `.tet` parent when relative).
     pub path: Option<String>,
+    /// For [`WriteTarget::Sidecar`] auto filenames: append UTC timestamp (default **true**).
+    pub timestamp: Option<bool>,
 }
 
 /// Caller preference for where large query results should land.

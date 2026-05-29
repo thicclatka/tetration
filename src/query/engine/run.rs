@@ -247,6 +247,7 @@ fn matched_dataset_execution(
             operation: ctx.doc.operation.as_ref(),
             output: ctx.doc.output.as_ref(),
             write: ctx.doc.write.as_ref(),
+            source_dataset: &ctx.doc.dataset,
             max_f32: limit,
             budget: ExecutionBudget::resolve(
                 &ctx.summary.file_execution,

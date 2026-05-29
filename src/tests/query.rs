@@ -1620,6 +1620,69 @@ fn plan_query_zscore_switch_spills_when_over_budget() {
     assert_eq!(ex.spill_f32_bytes, Some(24));
 }
 
+#[test]
+fn plan_query_zscore_sidecar_publishes_tet_beside_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(
+        r#"{"dataset":"a","transform":{"method":"zscore"},"write":{"target":"sidecar","timestamp":false}}"#,
+    )
+    .unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let policy =
+        SpillPathAllowlist::from_roots(dir.path().to_path_buf(), [dir.path().to_path_buf()]);
+    let plan = plan_query_with_tet_mmap_ex(
+        &doc,
+        Some(path.to_str().unwrap()),
+        &mmap,
+        Some(6),
+        Some(&policy),
+    )
+    .unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    assert_eq!(ex.memory_strategy, Some("transform_sidecar"));
+    let published = ex.spill_f32_path.as_ref().unwrap();
+    assert!(
+        published.ends_with("data.zscore.tet"),
+        "unexpected sidecar path: {published}"
+    );
+    let published_path = Path::new(published);
+    assert!(published_path.is_file());
+    let sidecar_mmap = mmap_file_read(published_path).unwrap();
+    let summary = read_tet_summary_v1(&sidecar_mmap).unwrap();
+    assert_eq!(summary.datasets.len(), 1);
+    assert_eq!(summary.datasets[0].name, "a-zscore");
+    assert_eq!(summary.history.len(), 1);
+    assert_eq!(summary.history[0].op, "transform");
+    assert_eq!(
+        summary.history[0].params.get("method").map(String::as_str),
+        Some("zscore")
+    );
+    assert_eq!(
+        summary.history[0].params.get("dataset").map(String::as_str),
+        Some("a")
+    );
+    assert_eq!(
+        summary.history[0]
+            .params
+            .get("output_dataset")
+            .map(String::as_str),
+        Some("a-zscore")
+    );
+}
+
+#[test]
+fn rejects_write_timestamp_for_non_sidecar() {
+    let doc = parse_query_json(
+        r#"{"dataset":"a","transform":{"method":"zscore"},"write":{"target":"spill","timestamp":false}}"#,
+    )
+    .unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("timestamp"), "{err}");
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 128,

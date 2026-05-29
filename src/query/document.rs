@@ -229,8 +229,20 @@ fn validate_write_hints(w: &WriteHints) -> Result<(), TetError> {
                     "`write.path` is only valid with `spill` or `sidecar` targets".into(),
                 ));
             }
+            if w.timestamp.is_some() {
+                return Err(TetError::Validation(
+                    "`write.timestamp` is only valid with `sidecar` target".into(),
+                ));
+            }
         }
-        WriteTarget::Spill | WriteTarget::Sidecar => {}
+        WriteTarget::Spill => {
+            if w.timestamp.is_some() {
+                return Err(TetError::Validation(
+                    "`write.timestamp` is only valid with `sidecar` target".into(),
+                ));
+            }
+        }
+        WriteTarget::Sidecar => {}
     }
     Ok(())
 }

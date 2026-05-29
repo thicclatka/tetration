@@ -169,10 +169,11 @@ fn parse_write(v: &Value) -> Result<WriteHints, TetError> {
         Value::String(s) => Ok(WriteHints {
             target: parse_write_target_token(s)?,
             path: None,
+            timestamp: None,
         }),
         Value::Object(obj) => {
             for key in obj.keys() {
-                if !matches!(key.as_str(), "target" | "path") {
+                if !matches!(key.as_str(), "target" | "path" | "timestamp") {
                     return Err(TetError::Validation(format!(
                         "unknown field `write.{key}`"
                     )));
@@ -186,7 +187,15 @@ fn parse_write(v: &Value) -> Result<WriteHints, TetError> {
                 None => None,
                 Some(v) => Some(parse_write_path(v)?),
             };
-            Ok(WriteHints { target, path })
+            let timestamp = match obj.get("timestamp") {
+                None => None,
+                Some(v) => Some(parse_write_timestamp(v)?),
+            };
+            Ok(WriteHints {
+                target,
+                path,
+                timestamp,
+            })
         }
         _ => Err(TetError::Validation(
             "`write` must be a target string (`switch`, `spill`, `sidecar`, `ram`) or an object with `target` / `path`".into(),
@@ -230,6 +239,11 @@ fn parse_write_path(v: &Value) -> Result<String, TetError> {
         )));
     }
     Ok(handle.to_owned())
+}
+
+fn parse_write_timestamp(v: &Value) -> Result<bool, TetError> {
+    v.as_bool()
+        .ok_or_else(|| TetError::Validation("`write.timestamp` must be a boolean".into()))
 }
 
 fn parse_selection(v: &Value) -> Result<Vec<AxisSlice>, TetError> {
@@ -598,18 +612,25 @@ fn serialize_write<S>(map: &mut S, write: &WriteHints) -> Result<(), S::Error>
 where
     S: SerializeMap,
 {
-    if write.path.is_none() && write.target == WriteTarget::Switch {
+    if write.path.is_none() && write.timestamp.is_none() && write.target == WriteTarget::Switch {
         return Ok(());
     }
-    if write.path.is_none() {
+    if write.path.is_none() && write.timestamp.is_none() {
         map.serialize_entry("write", write.target.as_wire_str())?;
         return Ok(());
     }
-    let obj = serde_json::json!({
-        "target": write.target.as_wire_str(),
-        "path": write.path,
-    });
-    map.serialize_entry("write", &obj)?;
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "target".to_owned(),
+        serde_json::Value::String(write.target.as_wire_str().to_owned()),
+    );
+    if let Some(path) = &write.path {
+        obj.insert("path".to_owned(), serde_json::Value::String(path.clone()));
+    }
+    if let Some(timestamp) = write.timestamp {
+        obj.insert("timestamp".to_owned(), serde_json::Value::Bool(timestamp));
+    }
+    map.serialize_entry("write", &serde_json::Value::Object(obj))?;
     Ok(())
 }
 

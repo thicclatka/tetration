@@ -25,6 +25,8 @@ pub enum MemoryStrategy {
     TransformRam,
     /// Transform pass-2: dense output written to a spill file (caller path or cache temp).
     TransformSpill,
+    /// Transform pass-2: `.tet` sidecar draft in cache, published beside the source file.
+    TransformSidecar,
 }
 
 impl MemoryStrategy {
@@ -39,6 +41,7 @@ impl MemoryStrategy {
             Self::TempSpillMaterialize => "temp_spill_materialize",
             Self::TransformRam => "transform_ram",
             Self::TransformSpill => "transform_spill",
+            Self::TransformSidecar => "transform_sidecar",
         }
     }
 }
