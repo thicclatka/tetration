@@ -391,6 +391,7 @@ pub(super) fn scalar_operation_display(
         Operation::Count { .. }
         | Operation::AllFinite { .. }
         | Operation::AnyNan { .. }
+        | Operation::AnyInf { .. }
         | Operation::ArgMin { .. }
         | Operation::ArgMax { .. }
         | Operation::Quantile { .. }
@@ -457,6 +458,11 @@ fn scalar_operation_display_special(
         ),
         Operation::AnyNan { .. } => {
             quiet_scalar_field("any_nan", "operation_any_nan", ex.operation_any_nan, |v| {
+                v.to_string()
+            })
+        }
+        Operation::AnyInf { .. } => {
+            quiet_scalar_field("any_inf", "operation_any_inf", ex.operation_any_inf, |v| {
                 v.to_string()
             })
         }
@@ -569,6 +575,10 @@ pub(super) fn partial_operation_values(
         Operation::AnyNan { .. } => quiet_reduced_bool(
             "operation_reduced_any_nan",
             ex.operation_reduced_any_nan.as_ref(),
+        ),
+        Operation::AnyInf { .. } => quiet_reduced_bool(
+            "operation_reduced_any_inf",
+            ex.operation_reduced_any_inf.as_ref(),
         ),
         Operation::NanCount { .. } => quiet_reduced_f64(
             "operation_reduced_nan_count",

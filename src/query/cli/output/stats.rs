@@ -153,6 +153,7 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
     opt_usize(map, "operation_element_count", ex.operation_element_count);
     opt_bool(map, "operation_all_finite", ex.operation_all_finite);
     opt_bool(map, "operation_any_nan", ex.operation_any_nan);
+    opt_bool(map, "operation_any_inf", ex.operation_any_inf);
     opt_f64(map, "operation_nan_count", ex.operation_nan_count);
     opt_f64(map, "operation_inf_count", ex.operation_inf_count);
     opt_f64(map, "operation_null_count", ex.operation_null_count);
@@ -284,6 +285,11 @@ fn push_execution_reduced_qc_stats(map: &mut Map<String, Value>, ex: &QueryExecu
         map,
         "operation_reduced_any_nan",
         ex.operation_reduced_any_nan.as_ref(),
+    );
+    opt_vec_bool(
+        map,
+        "operation_reduced_any_inf",
+        ex.operation_reduced_any_inf.as_ref(),
     );
     opt_vec_f64(
         map,

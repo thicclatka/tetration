@@ -192,7 +192,7 @@ fn partial_f64_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<Vec<
         Operation::Median { .. } => ex.operation_reduced_median.as_ref(),
         Operation::Quantile { .. } => ex.operation_reduced_quantile.as_ref(),
         Operation::Histogram { .. } => ex.operation_reduced_histogram_counts.as_ref(),
-        Operation::AllFinite { .. } | Operation::AnyNan { .. } => {
+        Operation::AllFinite { .. } | Operation::AnyNan { .. } | Operation::AnyInf { .. } => {
             return Err(
                 "table format: boolean partial reductions use --format quiet or stats".into(),
             );

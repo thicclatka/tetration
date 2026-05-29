@@ -69,6 +69,10 @@ pub enum Operation {
     AnyNan {
         axes: Vec<String>,
     },
+    /// True when any element is ±infinity (float/`f16`; integers contribute false).
+    AnyInf {
+        axes: Vec<String>,
+    },
     ArgMin {
         axes: Vec<String>,
     },
@@ -127,6 +131,7 @@ macro_rules! operation_axes_match {
             | Operation::NormL2 { axes }
             | Operation::AllFinite { axes }
             | Operation::AnyNan { axes }
+            | Operation::AnyInf { axes }
             | Operation::ArgMin { axes }
             | Operation::ArgMax { axes }
             | Operation::Median { axes }
@@ -169,6 +174,7 @@ impl Operation {
             Self::NormL2 { .. } => "norm_l2",
             Self::AllFinite { .. } => "all_finite",
             Self::AnyNan { .. } => "any_nan",
+            Self::AnyInf { .. } => "any_inf",
             Self::NanCount { .. } => "nan_count",
             Self::InfCount { .. } => "inf_count",
             Self::NullCount { .. } => "null_count",

@@ -27,6 +27,7 @@ const OP_KEYS: &[&str] = &[
     "norm_l2",
     "all_finite",
     "any_nan",
+    "any_inf",
     "arg_min",
     "arg_max",
     "median",
@@ -378,6 +379,7 @@ fn operation_from_axes(name: &str, axes: Vec<String>) -> Operation {
         "norm_l2" => Operation::NormL2 { axes },
         "all_finite" => Operation::AllFinite { axes },
         "any_nan" => Operation::AnyNan { axes },
+        "any_inf" => Operation::AnyInf { axes },
         "arg_min" => Operation::ArgMin { axes },
         "arg_max" => Operation::ArgMax { axes },
         "median" => Operation::Median { axes },
@@ -528,6 +530,9 @@ where
         }
         Operation::AnyNan { axes } => {
             map.serialize_entry("any_nan", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::AnyInf { axes } => {
+            map.serialize_entry("any_inf", &AxisSpecWire::from_axes(axes))?;
         }
         Operation::ArgMin { axes } => {
             map.serialize_entry("arg_min", &AxisSpecWire::from_axes(axes))?;

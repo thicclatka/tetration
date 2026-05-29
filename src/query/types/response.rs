@@ -68,6 +68,7 @@ pub(crate) struct OperationPreviewFields {
     pub norm_l2: Option<f64>,
     pub all_finite: Option<bool>,
     pub any_nan: Option<bool>,
+    pub any_inf: Option<bool>,
     pub nan_count: Option<f64>,
     pub inf_count: Option<f64>,
     pub null_count: Option<f64>,
@@ -89,6 +90,7 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_norm_l2: Option<Vec<f64>>,
     pub reduced_all_finite: Option<Vec<bool>>,
     pub reduced_any_nan: Option<Vec<bool>>,
+    pub reduced_any_inf: Option<Vec<bool>>,
     pub reduced_nan_count: Option<Vec<f64>>,
     pub reduced_inf_count: Option<Vec<f64>>,
     pub reduced_null_count: Option<Vec<f64>>,
@@ -187,6 +189,8 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_any_nan: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_any_inf: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_nan_count: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_inf_count: Option<f64>,
@@ -277,6 +281,8 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_any_nan: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_any_inf: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_nan_count: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_inf_count: Option<Vec<f64>>,
@@ -315,6 +321,7 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_norm_l2: operation.norm_l2,
             operation_all_finite: operation.all_finite,
             operation_any_nan: operation.any_nan,
+            operation_any_inf: operation.any_inf,
             operation_nan_count: operation.nan_count,
             operation_inf_count: operation.inf_count,
             operation_null_count: operation.null_count,
@@ -336,6 +343,7 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_norm_l2: operation.reduced_norm_l2,
             operation_reduced_all_finite: operation.reduced_all_finite,
             operation_reduced_any_nan: operation.reduced_any_nan,
+            operation_reduced_any_inf: operation.reduced_any_inf,
             operation_reduced_nan_count: operation.reduced_nan_count,
             operation_reduced_inf_count: operation.reduced_inf_count,
             operation_reduced_null_count: operation.reduced_null_count,
