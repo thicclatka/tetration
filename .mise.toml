@@ -119,7 +119,7 @@ description = "Benchmark large + extra_large Zarr only (device auto)"
 depends = ["fixtures:sync"]
 run = "cargo build --release && uv run --directory fixtures bench-large zarr --tet-device auto"
 
-[tasks.clip]
+[tasks.clip-all]
 description = "cargo clippy -D warnings (CI feature set for this OS)"
 run = '''
 FEAT="tetration-netcdf,tetration-hdf5,tetration-gpu"

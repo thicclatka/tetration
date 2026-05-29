@@ -6,32 +6,40 @@ use crate::query::engine::{budget::ExecutionBudget, spill_policy::SpillPathAllow
 use crate::query::types::{ReadPlan, TetError, WriteHints, WriteTarget};
 use crate::utils::dtype::ElementDtype;
 
+use super::sidecar::{self, SidecarContext, SidecarPaths};
+
 /// Where pass 2 should materialize the transformed logical selection.
 pub(crate) enum ResolvedTransformOutput {
     Ram,
     Spill(PathBuf),
+    Sidecar(SidecarPaths),
 }
 
 /// Map [`WriteHints`] and the memory budget to RAM or a validated spill path.
 ///
 /// # Errors
 ///
-/// Returns [`TetError::Validation`] for unimplemented sidecar output, budget
-/// overflow with `write: ram`, or spill path allowlist failures.
+/// Returns [`TetError::Validation`] for missing sidecar context, budget overflow with
+/// `write: ram`, or spill path allowlist failures.
 pub(crate) fn resolve_transform_output(
     write: Option<&WriteHints>,
     budget: &ExecutionBudget,
     plan: &ReadPlan,
     dtype: ElementDtype,
     allowlist: &SpillPathAllowlist,
+    sidecar: Option<SidecarContext<'_>>,
 ) -> Result<(ResolvedTransformOutput, WriteTarget), TetError> {
     let target = write.map_or(WriteTarget::Switch, |w| w.target);
     let path_hint = write.and_then(|w| w.path.as_deref());
 
     if target == WriteTarget::Sidecar {
-        return Err(TetError::Validation(
-            "sidecar transform output is not implemented yet; use `write`: `spill` or `switch`"
-                .into(),
+        let ctx = sidecar.ok_or_else(|| {
+            TetError::Validation("sidecar write requires a source `.tet` path (`--tet`)".into())
+        })?;
+        let paths = sidecar::resolve_sidecar_paths(write, allowlist, ctx)?;
+        return Ok((
+            ResolvedTransformOutput::Sidecar(paths),
+            WriteTarget::Sidecar,
         ));
     }
 

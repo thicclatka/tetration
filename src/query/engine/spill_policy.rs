@@ -89,6 +89,35 @@ impl SpillPathAllowlist {
         ))
     }
 
+    /// Allocate a unique draft `.tet` under platform cache for sidecar publish.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TetError::Validation`] when no writable root is available.
+    pub fn allocate_temp_sidecar_draft(&self) -> Result<PathBuf, TetError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let pid = std::process::id();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let file_name = format!("sidecar-draft-{pid}-{nanos}.tet");
+
+        for root in platform_cache_roots() {
+            if let Ok(path) = try_allocate_temp_in_root(&root, &file_name) {
+                return Ok(path);
+            }
+        }
+        for root in &self.roots {
+            if let Ok(path) = try_allocate_temp_in_root(root, &file_name) {
+                return Ok(path);
+            }
+        }
+        Err(TetError::Validation(
+            "no writable cache directory for sidecar draft".into(),
+        ))
+    }
+
     /// Resolve `path` (relative to [`.tet` parent](Self::default_for_tet)) and ensure it lies under a root.
     ///
     /// # Errors
@@ -314,7 +343,6 @@ fn user_home_dir() -> Option<PathBuf> {
 /// # Errors
 ///
 /// [`TetError::Validation`] on I/O failure.
-#[allow(dead_code)] // sidecar transform output; exercised in `src/tests/fs_device.rs`
 pub(crate) fn publish_output_file(temp: &Path, dest: &Path) -> Result<(), TetError> {
     crate::utils::fs_device::publish_file(temp, dest).map_err(|e| {
         TetError::Validation(format!(

@@ -151,6 +151,39 @@ fn chunk_index_rows_for_dataset(summary: &TetFileSummaryV1, dataset_idx: usize) 
         .count()
 }
 
+/// Planned logical read for a matched dataset (no execution / preview).
+#[derive(Debug, Clone)]
+pub struct PlannedRead {
+    pub read_plan: ReadPlan,
+    pub dtype: u32,
+}
+
+/// Resolve axes, selection, and chunk touch list for `doc` against `mmap`.
+///
+/// # Errors
+///
+/// Catalog read failures, unknown dataset, or invalid selection geometry.
+pub fn plan_read_for_document(doc: &QueryDocument, mmap: &[u8]) -> Result<PlannedRead, TetError> {
+    let summary = read_tet_summary_v1(mmap)?;
+    let dataset_idx = summary
+        .datasets
+        .iter()
+        .position(|d| d.name == doc.dataset)
+        .ok_or_else(|| {
+            TetError::Validation(format!("dataset {:?} not found in catalog", doc.dataset))
+        })?;
+    let rec = &summary.datasets[dataset_idx];
+    let mut doc = doc.clone();
+    let dataset_meta = summary.metadata.datasets.get(&doc.dataset);
+    resolve_query_document_axes(&mut doc, dataset_meta, rec.shape.len())?;
+    resolve_query_document_selection(&mut doc, dataset_meta, &rec.shape)?;
+    let read_plan = build_matched_read_plan(&summary, dataset_idx, &doc)?;
+    Ok(PlannedRead {
+        read_plan,
+        dtype: rec.dtype,
+    })
+}
+
 fn build_matched_read_plan(
     summary: &TetFileSummaryV1,
     dataset_idx: usize,
@@ -247,6 +280,7 @@ fn matched_dataset_execution(
             operation: ctx.doc.operation.as_ref(),
             output: ctx.doc.output.as_ref(),
             write: ctx.doc.write.as_ref(),
+            source_dataset: &ctx.doc.dataset,
             max_f32: limit,
             budget: ExecutionBudget::resolve(
                 &ctx.summary.file_execution,

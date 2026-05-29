@@ -6,11 +6,10 @@
 //! [`warnings::TransformWarnings`] for the execution preview.
 
 mod apply;
+mod sidecar;
 mod stats;
 mod target;
 mod warnings;
-
-pub use crate::query::types::TransformMethod;
 
 use std::path::Path;
 
@@ -21,7 +20,9 @@ use crate::query::engine::{
 };
 use crate::query::fold::fold_policy::FoldIoPolicy;
 use crate::query::materialize::DecodePreviewBundle;
-use crate::query::types::{Operation, OperationPreviewFields, ReadPlan, TetError, WriteHints};
+use crate::query::types::{
+    Operation, OperationPreviewFields, ReadPlan, TetError, TransformMethod, WriteHints, WriteTarget,
+};
 use crate::utils::dtype::ElementDtype;
 
 /// Result of [`run_transform`]: decode preview, pass-1 stats, spill metadata, and warnings.
@@ -34,12 +35,15 @@ pub(crate) struct TransformOutcome {
     pub operation: OperationPreviewFields,
 }
 
+use sidecar::SidecarContext;
+
 /// Inputs shared by pass 1 and pass 2 of a transform operation.
 pub(crate) struct TransformRunInput<'a> {
     pub mmap: &'a [u8],
     pub plan: &'a ReadPlan,
     pub op: &'a Operation,
     pub write: Option<&'a WriteHints>,
+    pub source_dataset: &'a str,
     pub max_preview: usize,
     pub budget: ExecutionBudget,
     pub dtype: ElementDtype,
@@ -123,6 +127,12 @@ fn run_pass2(
         (ElementDtype::F32 | ElementDtype::F64, target::ResolvedTransformOutput::Spill(path)) => {
             spill_pass2(input, stats, &path)
         }
+        (ElementDtype::F32, target::ResolvedTransformOutput::Sidecar(paths)) => {
+            sidecar_pass2(input, stats, &paths, ElementDtype::F32)
+        }
+        (ElementDtype::F64, target::ResolvedTransformOutput::Sidecar(paths)) => {
+            sidecar_pass2(input, stats, &paths, ElementDtype::F64)
+        }
         _ => Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
     }
 }
@@ -163,18 +173,187 @@ fn spill_pass2(
     })
 }
 
-/// Run pass-1 stats collection and pass-2 transform apply.
+fn sidecar_pass2(
+    input: &TransformRunInput<'_>,
+    stats: &stats::TransformStats,
+    paths: &sidecar::SidecarPaths,
+    dtype: ElementDtype,
+) -> Result<Pass2Outcome, TetError> {
+    let method = transform_method(input.op)?;
+    let ctx = SidecarContext {
+        tet_path: input.tet_path.ok_or_else(|| {
+            TetError::Validation("sidecar write requires a source `.tet` path (`--tet`)".into())
+        })?,
+        source_dataset: input.source_dataset,
+        method,
+    };
+    let mut warnings = warnings::TransformWarnings::default();
+    let logical_len = input.plan.logical_f32_element_count;
+    let (payload, pass2_bytes, bundle) = match dtype {
+        ElementDtype::F32 => {
+            let (values, bytes) = apply::transform_read_plan_f32_le_ram(
+                input.mmap,
+                input.plan,
+                stats,
+                &mut warnings,
+            )?;
+            let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
+            (
+                f32_vec_to_bytes(&values),
+                bytes,
+                DecodePreviewBundle::f32_preview(preview, truncated),
+            )
+        }
+        ElementDtype::F64 => {
+            let (values, bytes) = apply::transform_read_plan_f64_le_ram(
+                input.mmap,
+                input.plan,
+                stats,
+                &mut warnings,
+            )?;
+            let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
+            (
+                f64_vec_to_bytes(&values),
+                bytes,
+                DecodePreviewBundle::f64_preview(preview, truncated),
+            )
+        }
+        _ => return Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
+    };
+    sidecar::write_and_publish_sidecar(input.mmap, paths, ctx, input.plan, dtype, &payload)?;
+    let spill_bytes = input
+        .budget
+        .logical_element_bytes(dtype, input.plan.logical_f32_element_count)?;
+    Ok(Pass2Outcome {
+        strategy: MemoryStrategy::TransformSidecar,
+        spill_path: Some(paths.dest.display().to_string()),
+        spill_bytes: Some(spill_bytes),
+        bundle,
+        pass2_bytes,
+        warnings,
+    })
+}
+
+fn f32_vec_to_bytes(values: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * 4);
+    for &v in values {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+fn f64_vec_to_bytes(values: &[f64]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * 8);
+    for &v in values {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+fn transform_method(op: &Operation) -> Result<TransformMethod, TetError> {
+    match op {
+        Operation::Transform { method, .. } => Ok(*method),
+        _ => Err(TetError::Validation(
+            "transform_method requires a transform operation".into(),
+        )),
+    }
+}
+
+fn sidecar_context<'a>(
+    input: &'a TransformRunInput<'a>,
+) -> Result<Option<SidecarContext<'a>>, TetError> {
+    let Some(write) = input.write else {
+        return Ok(None);
+    };
+    if write.target != WriteTarget::Sidecar {
+        return Ok(None);
+    }
+    let tet_path = input.tet_path.ok_or_else(|| {
+        TetError::Validation("sidecar write requires a source `.tet` path (`--tet`)".into())
+    })?;
+    Ok(Some(SidecarContext {
+        tet_path,
+        source_dataset: input.source_dataset,
+        method: transform_method(input.op)?,
+    }))
+}
+
+/// Full dense RAM buffer from transform pass-2 (no preview cap).
+#[derive(Debug, Clone)]
+pub enum TransformDenseBuffer {
+    F32(Vec<f32>),
+    F64(Vec<f64>),
+}
+
+/// Decode and transform the full logical selection into an in-memory buffer (`write: ram` only).
 ///
 /// # Errors
 ///
-/// Propagates fold, budget, spill-path, and materialize failures.
-pub(crate) fn run_transform(input: &TransformRunInput<'_>) -> Result<TransformOutcome, TetError> {
+/// Same as [`run_transform`], plus validation when `write` is not RAM or the selection exceeds
+/// [`ExecutionBudget`].
+pub(crate) fn materialize_transform_dense_ram(
+    input: &TransformRunInput<'_>,
+) -> Result<TransformDenseBuffer, TetError> {
+    let sidecar = sidecar_context(input)?;
     let (output, _) = target::resolve_transform_output(
         input.write,
         &input.budget,
         input.plan,
         input.dtype,
         input.spill_allowlist,
+        sidecar,
+    )?;
+    if !matches!(output, target::ResolvedTransformOutput::Ram) {
+        return Err(TetError::Validation(
+            "materialize_transform_dense_ram requires `write`: `ram`".into(),
+        ));
+    }
+    let (stats, _, _) = stats::collect_transform_stats(
+        input.mmap,
+        input.plan,
+        input.op,
+        input.dtype,
+        &input.fold_policy,
+        input.tet_path,
+    )?;
+    let mut warnings = warnings::TransformWarnings::default();
+    match input.dtype {
+        ElementDtype::F32 => {
+            let (values, _) = apply::transform_read_plan_f32_le_ram(
+                input.mmap,
+                input.plan,
+                &stats,
+                &mut warnings,
+            )?;
+            Ok(TransformDenseBuffer::F32(values))
+        }
+        ElementDtype::F64 => {
+            let (values, _) = apply::transform_read_plan_f64_le_ram(
+                input.mmap,
+                input.plan,
+                &stats,
+                &mut warnings,
+            )?;
+            Ok(TransformDenseBuffer::F64(values))
+        }
+        _ => Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
+    }
+}
+
+/// Run pass-1 stats collection and pass-2 transform apply.
+///
+/// # Errors
+///
+/// Propagates fold, budget, spill-path, and materialize failures.
+pub(crate) fn run_transform(input: &TransformRunInput<'_>) -> Result<TransformOutcome, TetError> {
+    let sidecar = sidecar_context(input)?;
+    let (output, _) = target::resolve_transform_output(
+        input.write,
+        &input.budget,
+        input.plan,
+        input.dtype,
+        input.spill_allowlist,
+        sidecar,
     )?;
     let (stats, mut operation, pass1_bytes) = stats::collect_transform_stats(
         input.mmap,
