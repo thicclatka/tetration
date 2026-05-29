@@ -74,27 +74,88 @@ fn path_for_device_probe(path: &Path) -> std::path::PathBuf {
 }
 
 fn device_id_metadata(path: &Path) -> io::Result<u64> {
-    Ok(device_id_from_metadata(&std::fs::metadata(path)?))
-}
-
-#[cfg(unix)]
-fn device_id_from_metadata(meta: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    meta.dev()
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(std::fs::metadata(path)?.dev())
+    }
+    #[cfg(windows)]
+    {
+        volume_serial_number(path)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "device_id is only supported on Unix and Windows",
+        ))
+    }
 }
 
 #[cfg(windows)]
-fn device_id_from_metadata(meta: &std::fs::Metadata) -> io::Result<u64> {
-    use std::os::windows::fs::MetadataExt;
-    Ok(u64::from(meta.volume_serial_number()))
+fn volume_serial_number(path: &Path) -> io::Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain([0]).collect()
+    }
+
+    const MAX_PATH: usize = 260;
+
+    let input = wide(path);
+    let mut volume_path = vec![0u16; MAX_PATH];
+    let volume_len = unsafe {
+        GetVolumePathNameW(
+            input.as_ptr(),
+            volume_path.as_mut_ptr(),
+            u32::try_from(MAX_PATH).expect("MAX_PATH fits in u32"),
+        )
+    };
+    if volume_len == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    volume_path.truncate(volume_len as usize);
+
+    let mut serial = 0u32;
+    let ok = unsafe {
+        GetVolumeInformationW(
+            volume_path.as_ptr(),
+            ptr::null_mut(),
+            0,
+            &mut serial,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(u64::from(serial))
 }
 
-#[cfg(not(any(unix, windows)))]
-fn device_id_from_metadata(_meta: &std::fs::Metadata) -> io::Result<u64> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "device_id is only supported on Unix and Windows",
-    ))
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetVolumePathNameW(
+        lpsz_file_name: *const u16,
+        lpsz_volume_path_name: *mut u16,
+        cch_buffer_length: u32,
+    ) -> u32;
+
+    fn GetVolumeInformationW(
+        lp_root_path_name: *const u16,
+        lp_volume_name_buffer: *mut u16,
+        n_volume_name_size: u32,
+        lp_volume_serial_number: *mut u32,
+        lp_maximum_component_length: *mut u32,
+        lp_file_system_flags: *mut u32,
+        lp_file_system_name_buffer: *mut u16,
+        n_file_system_name_size: u32,
+    ) -> i32;
 }
 
 #[cfg(test)]

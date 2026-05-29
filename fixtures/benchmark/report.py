@@ -9,6 +9,8 @@ from pathlib import Path
 from benchmark.constants import (
     DEFAULT_OPS,
     DEFAULT_TET_DEVICE,
+    OP_GROUPS,
+    OP_REGISTRY,
     OpName,
     RESULTS_DIR,
     RESULTS_FILE,
@@ -100,10 +102,15 @@ def _build_markdown_lines(
         f"- **Git:** {git_rev}",
         f"- **Bench spec:** `{spec['spec_sha256'][:12]}…` (schema v{spec['schema_version']})",
         *report_metadata_lines(convert_jobs_requested=jobs),
-        f"- **Ops:** {', '.join(ops)} (tier-A/B streaming; population var/std ddof=0)",
+        f"- **Ops:** {', '.join(ops)}",
+        "- **Default ops:** "
+        f"{', '.join(DEFAULT_OPS)} (scalar + QC); add `transforms` or `all` via `--ops`",
+        "- **Scalar / QC:** tier-A/B streaming fold; population var/std ddof=0",
+        "- **Transforms:** two-pass `transform` + `write: switch` (RAM or spill); "
+        "values compare pass-1 stats unless noted",
         f"- **Source:** Python {slab_mib} MiB slabs, warm 2nd pass (skipped when not comparable)",
         f"- **`.tet`:** `tet query --execute --device {tet_device or DEFAULT_TET_DEVICE}` "
-        "(stats JSON), streaming fold, warm 2nd pass",
+        "(stats JSON), warm 2nd pass",
         f"- **Ops skipped:** {skip_ops}",
         "",
         "## Notes",
@@ -325,8 +332,24 @@ def parse_ops(raw: list[str] | None) -> tuple[OpName, ...]:
     for item in raw:
         for part in item.split(","):
             part = part.strip()
-            if part in DEFAULT_OPS:
-                out.append(part)  # type: ignore[arg-type]
+            if not part:
+                continue
+            if part in OP_GROUPS:
+                out.extend(OP_GROUPS[part])
+                continue
+            if part in OP_REGISTRY:
+                out.append(part)
             else:
-                raise ValueError(f"unknown op {part!r}; choose from {DEFAULT_OPS}")
-    return tuple(out)
+                groups = ", ".join(sorted(OP_GROUPS))
+                known = ", ".join(OP_REGISTRY)
+                raise ValueError(
+                    f"unknown op {part!r}; choose from {known} or groups {groups}"
+                )
+    # preserve order, dedupe
+    seen: set[str] = set()
+    deduped: list[OpName] = []
+    for op in out:
+        if op not in seen:
+            seen.add(op)
+            deduped.append(op)
+    return tuple(deduped)

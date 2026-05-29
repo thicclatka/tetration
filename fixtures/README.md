@@ -88,7 +88,7 @@ Sequential per **tier**, then wipe the whole **format** tree before the next for
 6. **Delete `.tet`**
 7. After both tiers (large + extra): **delete `large/{format}/` and `extra_large/{format}/`**
 
-**Primary comparison:** full-tensor ops on the native file vs **`.tet`** query (mean, std, var, min, max, sum, count — see `fixtures/benchmark/spec.json`).  
+**Primary comparison:** full-tensor ops on the native file vs **`.tet`** query — see `fixtures/benchmark/constants.py` (`OP_REGISTRY`). **Default** `--ops`: scalar tier-A/B (`mean`, `sum`, `min`, `max`, `count`, `std`, `var`) plus QC (`nan_mean`, `nan_std`, `any_inf`, `inf_count`, `nan_count`). **Transforms** (two-pass `transform` + `write: switch`) are opt-in: `--ops transforms` or `--ops all`.  
 **Secondary:** **convert** time (one-time import).
 
 `.tet` query timing uses **`execution.device: auto`** by default (`tet query --device auto`); override with `--tet-device cpu` or `TET_BENCH_DEVICE`. Reports include a **device** column (`device_used` and fallback reason when CPU wins).
@@ -111,6 +111,8 @@ mise run bench:gpu          # Linux+NVIDIA: --features tetration-gpu, device cud
 mise run bench:h5           # one format only (auto device)
 uv run --directory fixtures bench-large --run-id my-run   # archived under bench_results/runs/
 uv run --directory fixtures bench-large --skip-mean   # convert timing only
+uv run --directory fixtures bench-large --ops transforms   # + transform_zscore, …, transform_softmax
+uv run --directory fixtures bench-large --ops all h5     # every registered op, HDF5 only
 # or: uv run --directory fixtures tet-fixtures bench --skip-ops
 # same device flags via uv: bench-large --tet-device cpu
 ```

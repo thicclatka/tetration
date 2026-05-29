@@ -10,12 +10,7 @@ import time
 from pathlib import Path
 
 from benchmark.case import BenchCase
-from benchmark.constants import (
-    DEFAULT_TET_DEVICE,
-    OpName,
-    REPO_ROOT,
-    TET_EXECUTION_KEY,
-)
+from benchmark.constants import DEFAULT_TET_DEVICE, OpName, REPO_ROOT, op_meta
 from benchmark.log import format_elapsed, log
 
 
@@ -39,11 +34,17 @@ def git_short_rev() -> str:
 
 
 def query_json(op: OpName, *, device: str | None) -> str:
+    meta = op_meta(op)
     doc: dict = {
         "dataset": "data",
         "layout_version": 1,
-        op: [],
     }
+    if meta.is_transform:
+        doc["transform"] = {"method": meta.transform_method}
+        # switch: RAM when budget allows, else spill (needed for multi-GiB tensors).
+        doc["write"] = "switch"
+    else:
+        doc[op] = []
     if device:
         doc["execution"] = {"device": device}
     return json.dumps(doc)
@@ -58,6 +59,16 @@ def _device_label(execution: dict) -> str:
     if req and req != used:
         return f"{used} (req {req})"
     return str(used)
+
+
+def extract_tet_value(op: OpName, execution: dict) -> float | None:
+    meta = op_meta(op)
+    raw = execution.get(meta.result_key)
+    if raw is None:
+        return None
+    if meta.is_bool:
+        return 1.0 if raw else 0.0
+    return float(raw)
 
 
 def run_tet_op(
@@ -86,6 +97,7 @@ def run_tet_op(
     if tet_device:
         cmd.extend(["--device", tet_device])
     body = query_json(op, device=tet_device)
+    label = op_meta(op).transform_method or op
 
     def once() -> dict:
         proc = subprocess.run(
@@ -100,27 +112,26 @@ def run_tet_op(
             raise RuntimeError(proc.stderr or proc.stdout or "tet query failed")
         return json.loads(proc.stdout)
 
-    log(f".tet {op}: warm pass over ~{case.logical_gib} GiB …")
+    log(f".tet {label}: warm pass over ~{case.logical_gib} GiB …")
     try:
         once()
     except RuntimeError:
         pass
 
-    log(f".tet {op}: timed pass …")
+    log(f".tet {label}: timed pass …")
     t0 = time.perf_counter()
     payload = once()
     elapsed = time.perf_counter() - t0
 
     execution = payload.get("execution") or {}
     read_plan = payload.get("read_plan") or {}
-    key = TET_EXECUTION_KEY[op]
-    raw = execution.get(key)
-    value = float(raw) if raw is not None else None
+    value = extract_tet_value(op, execution)
     chunks = read_plan.get("chunk_count")
     device_label = _device_label(execution)
+    strategy = execution.get("memory_strategy")
     log(
-        f".tet {op}: done in {format_elapsed(elapsed)}  value={value}  "
-        f"strategy={execution.get('memory_strategy')}  device={device_label}"
+        f".tet {label}: done in {format_elapsed(elapsed)}  value={value}  "
+        f"strategy={strategy}  device={device_label}"
     )
     return elapsed, value, chunks, device_label
 

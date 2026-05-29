@@ -14,10 +14,9 @@ RESULTS_FILE = RESULTS_DIR / "latest.md"
 
 FormatName = Literal["h5", "netcdf", "zarr"]
 TierName = Literal["large", "extra"]
-OpName = Literal["mean", "sum", "min", "max", "count", "std", "var"]
+OpName = str
 
 DEFAULT_FORMATS: tuple[FormatName, ...] = ("h5", "netcdf", "zarr")
-DEFAULT_OPS: tuple[OpName, ...] = ("mean", "sum", "min", "max", "count", "std", "var")
 
 # Passed as query `execution.device` (and `tet query --device` when set). Use `auto` for
 # Phase 10 routing; `cpu` to match pre-GPU benches.
@@ -25,24 +24,157 @@ DEFAULT_TET_DEVICE = "auto"
 
 POP_DDOF = 0
 
-TOLERANCE: dict[OpName, float] = {
-    "mean": 1e-4,
-    "sum": 1e-2,
-    "min": 1e-5,
-    "max": 1e-5,
-    "count": 0.5,
-    "std": 1e-4,
-    "var": 1e-4,
+TRANSFORM_METHODS: tuple[str, ...] = (
+    "zscore",
+    "minmax",
+    "l1",
+    "l2",
+    "center",
+    "scale",
+    "log1p",
+    "sqrt",
+    "softmax",
+)
+
+
+@dataclass(frozen=True)
+class OpMeta:
+    """Per-op bench metadata."""
+
+    result_key: str
+    tolerance: float
+    bench_source: bool = True
+    is_bool: bool = False
+    is_transform: bool = False
+    transform_method: str | None = None
+    note: str | None = None
+
+
+def _scalar(key: str, result_key: str, tol: float, **kw) -> OpMeta:
+    return OpMeta(result_key=result_key, tolerance=tol, **kw)
+
+
+def _transform(method: str, result_key: str, tol: float, **kw) -> OpMeta:
+    return OpMeta(
+        result_key=result_key,
+        tolerance=tol,
+        is_transform=True,
+        transform_method=method,
+        **kw,
+    )
+
+
+# Registry of ops accepted by `bench --ops` (and groups below).
+OP_REGISTRY: dict[OpName, OpMeta] = {
+    "mean": _scalar("mean", "operation_mean", 1e-4),
+    "sum": _scalar("sum", "operation_sum", 1e-2),
+    "min": _scalar("min", "operation_min", 1e-5),
+    "max": _scalar("max", "operation_max", 1e-5),
+    "count": _scalar("count", "operation_element_count", 0.5),
+    "std": _scalar("std", "operation_std", 1e-4),
+    "var": _scalar("var", "operation_var", 1e-4),
+    "nan_mean": _scalar("nan_mean", "operation_nan_mean", 1e-4),
+    "nan_std": _scalar("nan_std", "operation_nan_std", 1e-4),
+    "any_inf": _scalar(
+        "any_inf",
+        "operation_any_inf",
+        0.0,
+        is_bool=True,
+        note="clean uniform f32 workload; expect false",
+    ),
+    "inf_count": _scalar(
+        "inf_count",
+        "operation_inf_count",
+        0.5,
+        note="clean uniform f32 workload; expect 0",
+    ),
+    "nan_count": _scalar(
+        "nan_count",
+        "operation_nan_count",
+        0.5,
+        note="clean uniform f32 workload; expect 0",
+    ),
+    "transform_zscore": _transform(
+        "zscore",
+        "operation_mean",
+        1e-4,
+        note="two-pass; value = pass-1 mean (≈0.5 on uniform [0,1])",
+    ),
+    "transform_minmax": _transform(
+        "minmax",
+        "operation_min",
+        1e-5,
+        note="two-pass; value = pass-1 min (≈0 on uniform [0,1])",
+    ),
+    "transform_center": _transform(
+        "center",
+        "operation_mean",
+        1e-4,
+        note="two-pass; value = pass-1 mean",
+    ),
+    "transform_scale": _transform(
+        "scale",
+        "operation_std",
+        1e-4,
+        note="two-pass; value = pass-1 std",
+    ),
+    "transform_l1": _transform(
+        "l1",
+        "operation_norm_l1",
+        1e-2,
+        note="two-pass; value = pass-1 L1 norm",
+    ),
+    "transform_l2": _transform(
+        "l2",
+        "operation_norm_l2",
+        1e-4,
+        note="two-pass; value = pass-1 L2 norm",
+    ),
+    "transform_log1p": _transform(
+        "log1p",
+        "operation_min",
+        1e-5,
+        note="two-pass; value = pass-1 min (shift for log1p)",
+    ),
+    "transform_sqrt": _transform(
+        "sqrt",
+        "operation_min",
+        1e-5,
+        note="two-pass; value = pass-1 min (shift for sqrt)",
+    ),
+    "transform_softmax": _transform(
+        "softmax",
+        "operation_max",
+        1e-5,
+        note="two-pass; value = pass-1 max (stabilization)",
+    ),
 }
 
-TET_EXECUTION_KEY: dict[OpName, str] = {
-    "mean": "operation_mean",
-    "sum": "operation_sum",
-    "min": "operation_min",
-    "max": "operation_max",
-    "count": "operation_element_count",
-    "std": "operation_std",
-    "var": "operation_var",
+SCALAR_OPS: tuple[OpName, ...] = (
+    "mean",
+    "sum",
+    "min",
+    "max",
+    "count",
+    "std",
+    "var",
+)
+
+QC_OPS: tuple[OpName, ...] = ("nan_mean", "nan_std", "any_inf", "inf_count", "nan_count")
+
+TRANSFORM_OPS: tuple[OpName, ...] = tuple(
+    f"transform_{m}" for m in TRANSFORM_METHODS
+)
+
+DEFAULT_OPS: tuple[OpName, ...] = SCALAR_OPS + QC_OPS
+
+ALL_OPS: tuple[OpName, ...] = DEFAULT_OPS + TRANSFORM_OPS
+
+OP_GROUPS: dict[str, tuple[OpName, ...]] = {
+    "scalar": SCALAR_OPS,
+    "qc": QC_OPS,
+    "transforms": TRANSFORM_OPS,
+    "all": ALL_OPS,
 }
 
 
@@ -52,14 +184,28 @@ class OpCompat:
     note: str | None = None
 
 
+def op_meta(op: OpName) -> OpMeta:
+    try:
+        return OP_REGISTRY[op]
+    except KeyError as exc:
+        known = ", ".join(OP_REGISTRY)
+        raise ValueError(f"unknown op {op!r}; choose from {known}") from exc
+
+
 def op_compat(format: FormatName, op: OpName) -> OpCompat:
+    meta = op_meta(op)
+    notes: list[str] = []
+    if meta.note:
+        notes.append(meta.note)
     if format == "zarr":
-        return OpCompat(
-            bench_source=True,
-            note="zarr: Python dir-store raw f32 chunks (still slower than h5/netcdf C libs)",
+        notes.append(
+            "zarr: Python dir-store raw f32 chunks (still slower than h5/netcdf C libs)"
         )
-    if format == "netcdf" and op in ("std", "var"):
-        return OpCompat(
-            bench_source=True, note="netcdf: population var/std ddof=0 via numpy slabs"
-        )
-    return OpCompat(bench_source=True)
+    if format == "netcdf" and op in ("std", "var", "nan_std"):
+        notes.append("netcdf: population var/std ddof=0 via numpy slabs")
+    if meta.is_transform:
+        notes.append("transform: source uses two-pass NumPy streaming")
+    return OpCompat(
+        bench_source=meta.bench_source,
+        note="; ".join(notes) if notes else None,
+    )

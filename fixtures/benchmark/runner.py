@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from benchmark.case import BenchCase
-from benchmark.constants import FormatName, OpName, TOLERANCE, op_compat
+from benchmark.constants import FormatName, OpName, op_meta, op_compat
 from benchmark.log import format_elapsed, log
 from benchmark.source import reduce_source_op
 from benchmark.spec import verify_case
@@ -53,11 +53,14 @@ def cleanup_format_tree(format: FormatName) -> None:
 
 
 def values_match(op: OpName, source: float, tet: float) -> bool:
-    tol = TOLERANCE[op]
-    if op == "count":
+    meta = op_meta(op)
+    tol = meta.tolerance
+    if meta.is_bool:
+        return (source != 0.0) == (tet != 0.0)
+    if op == "count" or op.endswith("_count"):
         return abs(source - tet) <= tol
     scale = max(abs(source), abs(tet), 1e-9)
-    return abs(source - tet) <= tol * scale if op in ("sum", "var") else abs(source - tet) <= tol
+    return abs(source - tet) <= tol * scale if op in ("sum", "var", "transform_l1") else abs(source - tet) <= tol
 
 
 @dataclass
