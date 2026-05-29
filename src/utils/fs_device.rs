@@ -139,7 +139,7 @@ fn volume_serial_number(path: &Path) -> io::Result<u64> {
 
 #[cfg(windows)]
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn GetVolumePathNameW(
         lpsz_file_name: *const u16,
         lpsz_volume_path_name: *mut u16,

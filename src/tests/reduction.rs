@@ -134,3 +134,27 @@ fn bulk_u8_var_matches_elementwise_welford() {
     let elem = w.population_variance();
     assert!((bulk_v - elem).abs() < 1e-6, "bulk={bulk_v} elem={elem}");
 }
+
+#[test]
+fn nan_mean_nan_std_accum_visit_count_for_nonempty_fold() {
+    let vals = [1.0_f32, f32::NAN, 3.0, 4.0];
+    let raw = bytemuck::cast_slice(&vals);
+
+    let mut mean_acc = ValueAccum::default();
+    mean_acc.push_f32_le_bytes(raw, ReductionKind::NanMean);
+    assert!(!mean_acc.is_empty());
+    assert!((mean_acc.finish_f64(ReductionKind::NanMean) - 8.0 / 3.0).abs() < 1e-9);
+
+    let mut std_acc = ValueAccum::default();
+    std_acc.push_f32_le_bytes(raw, ReductionKind::NanStd);
+    assert!(!std_acc.is_empty());
+    assert!(std_acc.finish_f64(ReductionKind::NanStd).is_finite());
+
+    let mut all_nan = ValueAccum::default();
+    all_nan.push_f32_le_bytes(
+        bytemuck::cast_slice(&[f32::NAN, f32::NAN]),
+        ReductionKind::NanMean,
+    );
+    assert!(!all_nan.is_empty());
+    assert!(all_nan.finish_f64(ReductionKind::NanMean).is_nan());
+}

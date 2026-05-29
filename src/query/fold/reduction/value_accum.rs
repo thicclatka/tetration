@@ -170,6 +170,7 @@ impl ValueAccum {
 
     fn push_nan_mean_values(&mut self, values: impl IntoIterator<Item = f64>) {
         for v in values {
+            self.count += 1;
             if !v.is_nan() {
                 self.finite_count += 1;
                 self.sum += v;
@@ -179,6 +180,7 @@ impl ValueAccum {
 
     fn push_nan_std_values(&mut self, values: impl IntoIterator<Item = f64>) {
         for v in values {
+            self.count += 1;
             if !v.is_nan() {
                 self.finite_count += 1;
                 self.welford.push(v);
