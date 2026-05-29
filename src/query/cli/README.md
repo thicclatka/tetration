@@ -1,6 +1,6 @@
 # `query/cli` — CLI presentation layer
 
-Formatting and sidecar features for the **`tet`** binary. Not required for library embedders, but several formatters are re-exported at `query::*` for convenience.
+Formatting helpers for the **`tet`** binary (`query`, `info`, `qhist` output). Not required for library embedders, but several formatters are re-exported at `query::*` for convenience.
 
 ## Submodules
 
