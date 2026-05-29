@@ -256,6 +256,7 @@ fn scalar_operation_quiet_line(
     if let Some(strategy) = ex.memory_strategy {
         parts.push(format!("memory_strategy={strategy}"));
     }
+    parts.extend(transform_warning_tags(ex));
     Ok(parts.join(" "))
 }
 
@@ -282,6 +283,7 @@ fn partial_operation_quiet_line(
     if let Some(strategy) = ex.memory_strategy {
         parts.push(format!("memory_strategy={strategy}"));
     }
+    parts.extend(transform_warning_tags(ex));
     Ok(parts.join(" "))
 }
 
@@ -391,12 +393,162 @@ pub(super) fn scalar_operation_display(
         Operation::Count { .. }
         | Operation::AllFinite { .. }
         | Operation::AnyNan { .. }
+        | Operation::AnyInf { .. }
         | Operation::ArgMin { .. }
         | Operation::ArgMax { .. }
         | Operation::Quantile { .. }
         | Operation::Histogram { .. }
         | Operation::Covariance { .. }
         | Operation::Correlation { .. } => scalar_operation_display_special(op, ex),
+        Operation::NanMean { .. } => {
+            quiet_scalar_f64("nan_mean", "operation_nan_mean", ex.operation_nan_mean)
+        }
+        Operation::NanStd { .. } => {
+            quiet_scalar_f64("nan_std", "operation_nan_std", ex.operation_nan_std)
+        }
+        Operation::Transform { .. } => transform_operation_display(op, ex),
+    }
+}
+
+/// Format one pass-1 stat from scalar or partial-axis preview fields.
+fn transform_stat_value(
+    partial: bool,
+    scalar_field: &'static str,
+    reduced_field: &'static str,
+    scalar: Option<f64>,
+    reduced: Option<&Vec<f64>>,
+) -> Result<String, String> {
+    if partial {
+        quiet_reduced_f64(reduced_field, reduced)
+    } else {
+        scalar
+            .map(fmt_f64)
+            .ok_or_else(|| missing_field(scalar_field))
+    }
+}
+
+/// Quiet-footer pass-1 stats for transform ops (`partial` selects `operation_reduced_*` fields).
+fn transform_stats_line(ex: &QueryExecutionPreview, partial: bool) -> Result<String, String> {
+    match ex.transform_method.as_deref() {
+        Some("zscore") => {
+            let mean = transform_stat_value(
+                partial,
+                "operation_mean",
+                "operation_reduced_mean",
+                ex.operation_mean,
+                ex.operation_reduced_mean.as_ref(),
+            )?;
+            let std = transform_stat_value(
+                partial,
+                "operation_std",
+                "operation_reduced_std",
+                ex.operation_std,
+                ex.operation_reduced_std.as_ref(),
+            )?;
+            Ok(format!("mean={mean} std={std}"))
+        }
+        Some("minmax") => {
+            let min = transform_stat_value(
+                partial,
+                "operation_min",
+                "operation_reduced_min",
+                ex.operation_min,
+                ex.operation_reduced_min.as_ref(),
+            )?;
+            let max = transform_stat_value(
+                partial,
+                "operation_max",
+                "operation_reduced_max",
+                ex.operation_max,
+                ex.operation_reduced_max.as_ref(),
+            )?;
+            Ok(format!("min={min} max={max}"))
+        }
+        Some("center") => transform_stat_value(
+            partial,
+            "operation_mean",
+            "operation_reduced_mean",
+            ex.operation_mean,
+            ex.operation_reduced_mean.as_ref(),
+        )
+        .map(|mean| format!("mean={mean}")),
+        Some("scale") => transform_stat_value(
+            partial,
+            "operation_std",
+            "operation_reduced_std",
+            ex.operation_std,
+            ex.operation_reduced_std.as_ref(),
+        )
+        .map(|std| format!("std={std}")),
+        Some("l1") => transform_stat_value(
+            partial,
+            "operation_norm_l1",
+            "operation_reduced_norm_l1",
+            ex.operation_norm_l1,
+            ex.operation_reduced_norm_l1.as_ref(),
+        )
+        .map(|n1| format!("norm_l1={n1}")),
+        Some("l2") => transform_stat_value(
+            partial,
+            "operation_norm_l2",
+            "operation_reduced_norm_l2",
+            ex.operation_norm_l2,
+            ex.operation_reduced_norm_l2.as_ref(),
+        )
+        .map(|n2| format!("norm_l2={n2}")),
+        Some("log1p" | "sqrt") => transform_stat_value(
+            partial,
+            "operation_min",
+            "operation_reduced_min",
+            ex.operation_min,
+            ex.operation_reduced_min.as_ref(),
+        )
+        .map(|min| format!("min={min}")),
+        Some("softmax") => transform_stat_value(
+            partial,
+            "operation_max",
+            "operation_reduced_max",
+            ex.operation_max,
+            ex.operation_reduced_max.as_ref(),
+        )
+        .map(|max| format!("max={max}")),
+        Some(method) => Ok(format!("method={method}")),
+        None => Ok("method=transform".to_string()),
+    }
+}
+
+fn transform_scalar_stats_line(ex: &QueryExecutionPreview) -> Result<String, String> {
+    transform_stats_line(ex, false)
+}
+
+/// Append `transform_div_by_zero_*` tags when pass 2 recorded NaN-producing divides.
+fn transform_warning_tags(ex: &QueryExecutionPreview) -> Vec<String> {
+    let mut tags = Vec::new();
+    if let Some(count) = ex.transform_div_by_zero_count {
+        tags.push(format!("transform_div_by_zero_count={count}"));
+        if let Some(indices) = ex.transform_div_by_zero_indices.as_ref() {
+            let listed = indices
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            tags.push(format!("transform_div_by_zero_indices=[{listed}]"));
+        }
+    }
+    tags
+}
+
+fn transform_operation_display(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<(&'static str, String), String> {
+    let Operation::Transform { axes, .. } = op else {
+        unreachable!("transform_operation_display");
+    };
+    if axes.is_empty() {
+        Ok((op.wire_key(), transform_scalar_stats_line(ex)?))
+    } else {
+        Ok((op.wire_key(), partial_operation_values(op, ex)?))
     }
 }
 
@@ -411,6 +563,12 @@ fn scalar_operation_display_f64(
         Operation::Max { .. } => quiet_scalar_f64("max", "operation_max", ex.operation_max),
         Operation::Var { .. } => quiet_scalar_f64("var", "operation_var", ex.operation_var),
         Operation::Std { .. } => quiet_scalar_f64("std", "operation_std", ex.operation_std),
+        Operation::NanMean { .. } => {
+            quiet_scalar_f64("nan_mean", "operation_nan_mean", ex.operation_nan_mean)
+        }
+        Operation::NanStd { .. } => {
+            quiet_scalar_f64("nan_std", "operation_nan_std", ex.operation_nan_std)
+        }
         Operation::Product { .. } => {
             quiet_scalar_f64("product", "operation_product", ex.operation_product)
         }
@@ -457,6 +615,11 @@ fn scalar_operation_display_special(
         ),
         Operation::AnyNan { .. } => {
             quiet_scalar_field("any_nan", "operation_any_nan", ex.operation_any_nan, |v| {
+                v.to_string()
+            })
+        }
+        Operation::AnyInf { .. } => {
+            quiet_scalar_field("any_inf", "operation_any_inf", ex.operation_any_inf, |v| {
                 v.to_string()
             })
         }
@@ -570,6 +733,10 @@ pub(super) fn partial_operation_values(
             "operation_reduced_any_nan",
             ex.operation_reduced_any_nan.as_ref(),
         ),
+        Operation::AnyInf { .. } => quiet_reduced_bool(
+            "operation_reduced_any_inf",
+            ex.operation_reduced_any_inf.as_ref(),
+        ),
         Operation::NanCount { .. } => quiet_reduced_f64(
             "operation_reduced_nan_count",
             ex.operation_reduced_nan_count.as_ref(),
@@ -606,5 +773,18 @@ pub(super) fn partial_operation_values(
             "covariance/correlation are not partial-axis reductions (use rank-2 selection)"
                 .to_string(),
         ),
+        Operation::NanMean { .. } => quiet_reduced_f64(
+            "operation_reduced_nan_mean",
+            ex.operation_reduced_nan_mean.as_ref(),
+        ),
+        Operation::NanStd { .. } => quiet_reduced_f64(
+            "operation_reduced_nan_std",
+            ex.operation_reduced_nan_std.as_ref(),
+        ),
+        Operation::Transform { .. } => transform_partial_stats_line(ex),
     }
+}
+
+fn transform_partial_stats_line(ex: &QueryExecutionPreview) -> Result<String, String> {
+    transform_stats_line(ex, true)
 }

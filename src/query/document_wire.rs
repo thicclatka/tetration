@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use super::document::QueryLimits;
 use super::types::{
     AxisSlice, ExecutionDeviceHint, ExecutionHints, Operation, OutputHint, OutputHints,
-    QueryDocument, TetError,
+    QueryDocument, TetError, TransformMethod, WriteHints, WriteTarget,
 };
 
 const OP_KEYS: &[&str] = &[
@@ -27,6 +27,7 @@ const OP_KEYS: &[&str] = &[
     "norm_l2",
     "all_finite",
     "any_nan",
+    "any_inf",
     "arg_min",
     "arg_max",
     "median",
@@ -37,6 +38,9 @@ const OP_KEYS: &[&str] = &[
     "null_count",
     "covariance",
     "correlation",
+    "nan_mean",
+    "nan_std",
+    "transform",
 ];
 
 const RESERVED_KEYS: &[&str] = &[
@@ -44,6 +48,7 @@ const RESERVED_KEYS: &[&str] = &[
     "dataset",
     "selection",
     "spill",
+    "write",
     "execution",
 ];
 
@@ -97,6 +102,11 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         Some(v) => Some(parse_spill(v)?),
     };
 
+    let write = match obj.get("write") {
+        None => None,
+        Some(v) => Some(parse_write(v)?),
+    };
+
     let execution = match obj.get("execution") {
         None => None,
         Some(v) => Some(parse_execution(v)?),
@@ -120,6 +130,7 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         selection,
         operation,
         output,
+        write,
         execution,
     })
 }
@@ -151,6 +162,74 @@ fn parse_spill(v: &Value) -> Result<OutputHints, TetError> {
             handle: handle.to_owned(),
         }),
     })
+}
+
+fn parse_write(v: &Value) -> Result<WriteHints, TetError> {
+    match v {
+        Value::String(s) => Ok(WriteHints {
+            target: parse_write_target_token(s)?,
+            path: None,
+        }),
+        Value::Object(obj) => {
+            for key in obj.keys() {
+                if !matches!(key.as_str(), "target" | "path") {
+                    return Err(TetError::Validation(format!(
+                        "unknown field `write.{key}`"
+                    )));
+                }
+            }
+            let target = match obj.get("target") {
+                None => WriteTarget::Switch,
+                Some(v) => parse_write_target_value(v)?,
+            };
+            let path = match obj.get("path") {
+                None => None,
+                Some(v) => Some(parse_write_path(v)?),
+            };
+            Ok(WriteHints { target, path })
+        }
+        _ => Err(TetError::Validation(
+            "`write` must be a target string (`switch`, `spill`, `sidecar`, `ram`) or an object with `target` / `path`".into(),
+        )),
+    }
+}
+
+fn parse_write_target_value(v: &Value) -> Result<WriteTarget, TetError> {
+    let s = v
+        .as_str()
+        .ok_or_else(|| TetError::Validation("`write.target` must be a string".into()))?;
+    parse_write_target_token(s)
+}
+
+fn parse_write_target_token(s: &str) -> Result<WriteTarget, TetError> {
+    match s {
+        "switch" => Ok(WriteTarget::Switch),
+        "spill" => Ok(WriteTarget::Spill),
+        "sidecar" => Ok(WriteTarget::Sidecar),
+        "ram" => Ok(WriteTarget::Ram),
+        _ => Err(TetError::Validation(format!(
+            "unknown write target `{s}` (expected switch, spill, sidecar, or ram)"
+        ))),
+    }
+}
+
+fn parse_write_path(v: &Value) -> Result<String, TetError> {
+    let handle = v
+        .as_str()
+        .ok_or_else(|| TetError::Validation("`write.path` must be a string".into()))?;
+    if handle.is_empty() {
+        return Err(TetError::Validation(
+            "`write.path` must not be empty".into(),
+        ));
+    }
+    if handle.len() > QueryLimits::DEFAULT.max_dataset_name_len {
+        return Err(TetError::Validation(format!(
+            "`write.path` exceeds maximum length ({} > {})",
+            handle.len(),
+            QueryLimits::DEFAULT.max_dataset_name_len
+        )));
+    }
+    Ok(handle.to_owned())
 }
 
 fn parse_selection(v: &Value) -> Result<Vec<AxisSlice>, TetError> {
@@ -338,6 +417,15 @@ fn parse_operation(name: &str, v: &Value) -> Result<Operation, TetError> {
             let axes = parse_axis_spec(v)?;
             Ok(Operation::Correlation { axes })
         }
+        "transform" => {
+            let (axes, obj) = parse_parametric_op_object("transform", v)?;
+            let method = obj
+                .get("method")
+                .and_then(Value::as_str)
+                .ok_or_else(|| TetError::Validation("`transform.method` is required".into()))?;
+            let method = TransformMethod::parse(method)?;
+            Ok(Operation::Transform { method, axes })
+        }
         other => {
             let axes = parse_axis_spec(v)?;
             Ok(operation_from_axes(other, axes))
@@ -378,9 +466,12 @@ fn operation_from_axes(name: &str, axes: Vec<String>) -> Operation {
         "norm_l2" => Operation::NormL2 { axes },
         "all_finite" => Operation::AllFinite { axes },
         "any_nan" => Operation::AnyNan { axes },
+        "any_inf" => Operation::AnyInf { axes },
         "arg_min" => Operation::ArgMin { axes },
         "arg_max" => Operation::ArgMax { axes },
         "median" => Operation::Median { axes },
+        "nan_mean" => Operation::NanMean { axes },
+        "nan_std" => Operation::NanStd { axes },
         _ => unreachable!("operation_from_axes: {name}"),
     }
 }
@@ -480,6 +571,9 @@ impl Serialize for QueryDocumentWire<'_> {
         if let Some(out) = &doc.output {
             serialize_output(&mut map, out)?;
         }
+        if let Some(w) = &doc.write {
+            serialize_write(&mut map, w)?;
+        }
         if let Some(ex) = &doc.execution {
             serialize_execution(&mut map, ex)?;
         }
@@ -500,44 +594,37 @@ where
     Ok(())
 }
 
+fn serialize_write<S>(map: &mut S, write: &WriteHints) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    if write.path.is_none() && write.target == WriteTarget::Switch {
+        return Ok(());
+    }
+    if write.path.is_none() {
+        map.serialize_entry("write", write.target.as_wire_str())?;
+        return Ok(());
+    }
+    let obj = serde_json::json!({
+        "target": write.target.as_wire_str(),
+        "path": write.path,
+    });
+    map.serialize_entry("write", &obj)?;
+    Ok(())
+}
+
+fn serialize_axes_op<S>(map: &mut S, key: &str, axes: &[String]) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    map.serialize_entry(key, &AxisSpecWire::from_axes(axes))
+}
+
 fn serialize_operation<S>(map: &mut S, op: &Operation) -> Result<(), S::Error>
 where
     S: SerializeMap,
 {
     match op {
-        Operation::Sum { axes } => map.serialize_entry("sum", &AxisSpecWire::from_axes(axes))?,
-        Operation::Mean { axes } => map.serialize_entry("mean", &AxisSpecWire::from_axes(axes))?,
-        Operation::Min { axes } => map.serialize_entry("min", &AxisSpecWire::from_axes(axes))?,
-        Operation::Max { axes } => map.serialize_entry("max", &AxisSpecWire::from_axes(axes))?,
-        Operation::Count { axes } => {
-            map.serialize_entry("count", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::Var { axes } => map.serialize_entry("var", &AxisSpecWire::from_axes(axes))?,
-        Operation::Std { axes } => map.serialize_entry("std", &AxisSpecWire::from_axes(axes))?,
-        Operation::Product { axes } => {
-            map.serialize_entry("product", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::NormL1 { axes } => {
-            map.serialize_entry("norm_l1", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::NormL2 { axes } => {
-            map.serialize_entry("norm_l2", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::AllFinite { axes } => {
-            map.serialize_entry("all_finite", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::AnyNan { axes } => {
-            map.serialize_entry("any_nan", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::ArgMin { axes } => {
-            map.serialize_entry("arg_min", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::ArgMax { axes } => {
-            map.serialize_entry("arg_max", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::Median { axes } => {
-            map.serialize_entry("median", &AxisSpecWire::from_axes(axes))?;
-        }
         Operation::Quantile { axes, q } => {
             let wire = ParametricOpWire {
                 axes: AxisSpecWire::from_axes(axes),
@@ -564,12 +651,6 @@ where
             };
             map.serialize_entry("histogram", &wire)?;
         }
-        Operation::NanCount { axes } => {
-            map.serialize_entry("nan_count", &AxisSpecWire::from_axes(axes))?;
-        }
-        Operation::InfCount { axes } => {
-            map.serialize_entry("inf_count", &AxisSpecWire::from_axes(axes))?;
-        }
         Operation::NullCount { axes, fill } => {
             let mut extra = Vec::new();
             if let Some(v) = fill {
@@ -581,12 +662,14 @@ where
             };
             map.serialize_entry("null_count", &wire)?;
         }
-        Operation::Covariance { axes } => {
-            map.serialize_entry("covariance", &AxisSpecWire::from_axes(axes))?;
+        Operation::Transform { method, axes } => {
+            let wire = ParametricOpWire {
+                axes: AxisSpecWire::from_axes(axes),
+                extra: vec![("method", serde_json::json!(method.as_str()))],
+            };
+            map.serialize_entry("transform", &wire)?;
         }
-        Operation::Correlation { axes } => {
-            map.serialize_entry("correlation", &AxisSpecWire::from_axes(axes))?;
-        }
+        _ => serialize_axes_op(map, op.wire_key(), op.axes())?,
     }
     Ok(())
 }

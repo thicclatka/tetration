@@ -1,0 +1,21 @@
+# `utils` — shared low-level helpers
+
+Internal utilities used across `layout`, `catalog`, `query`, and `convert`. Only **`dtype`**, **`fs_device`**, and **`host_memory`** are public.
+
+## Modules
+
+| Module           | Visibility    | Role                                                                |
+| ---------------- | ------------- | ------------------------------------------------------------------- |
+| `dtype.rs`       | **pub**       | `ElementDtype` — wire tag ↔ Rust type, elem sizes, tensor byte math |
+| `wire.rs`        | crate-private | Little-endian `u32`/`u64` read/write, align8                        |
+| `le_pod.rs`      | mixed         | `f32_le`, `f64_le`, … — decode POD slices from chunk bytes          |
+| `fs_device.rs`   | **pub**       | Filesystem / device path helpers (query spill, GPU discovery)       |
+| `host_memory.rs` | **pub**       | Host RAM capacity probes for materialize budget                     |
+
+## `ElementDtype`
+
+Central mapping for catalog wire tags 1–10 (`F32`, `F64`, `I32`, …). Query `dispatch.rs` branches on this enum for per-type materialize/fold paths.
+
+## Why separate from `catalog`?
+
+Keeps wire-format primitives free of catalog error types and allows `query` + `convert` to share dtype logic without circular dependencies.

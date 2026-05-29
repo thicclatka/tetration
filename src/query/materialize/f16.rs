@@ -66,7 +66,7 @@ pub fn spill_read_plan_f16_le(mmap: &[u8], plan: &ReadPlan, path: &Path) -> Resu
         path,
         byte_len,
         materialize_scatter_fill_f16,
-        check_materialized_complete_f16,
+        Some(check_materialized_complete_f16),
     )
 }
 

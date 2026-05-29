@@ -38,11 +38,13 @@ pub(crate) fn partial_fields(
     match kind {
         reduction::ReductionKind::Sum => fields.reduced_sum = Some(reduced.to_vec()),
         reduction::ReductionKind::Mean => fields.reduced_mean = Some(reduced.to_vec()),
+        reduction::ReductionKind::NanMean => fields.reduced_nan_mean = Some(reduced.to_vec()),
         reduction::ReductionKind::Min => fields.reduced_min = Some(reduced.to_vec()),
         reduction::ReductionKind::Max => fields.reduced_max = Some(reduced.to_vec()),
         reduction::ReductionKind::Count => fields.reduced_count = Some(reduced.to_vec()),
         reduction::ReductionKind::Var => fields.reduced_var = Some(reduced.to_vec()),
         reduction::ReductionKind::Std => fields.reduced_std = Some(reduced.to_vec()),
+        reduction::ReductionKind::NanStd => fields.reduced_nan_std = Some(reduced.to_vec()),
         reduction::ReductionKind::Product => fields.reduced_product = Some(reduced.to_vec()),
         reduction::ReductionKind::NormL1 => fields.reduced_norm_l1 = Some(reduced.to_vec()),
         reduction::ReductionKind::NormL2 => fields.reduced_norm_l2 = Some(reduced.to_vec()),
@@ -51,6 +53,9 @@ pub(crate) fn partial_fields(
         }
         reduction::ReductionKind::AnyNan => {
             fields.reduced_any_nan = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
+        }
+        reduction::ReductionKind::AnyInf => {
+            fields.reduced_any_inf = Some(cells.iter().map(|c| c.finish_bool(kind)).collect());
         }
         reduction::ReductionKind::NanCount => {
             fields.reduced_nan_count = Some(reduced.to_vec());

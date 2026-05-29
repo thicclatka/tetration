@@ -7,7 +7,7 @@ import argparse
 import os
 import sys
 
-from benchmark.constants import DEFAULT_FORMATS, DEFAULT_TET_DEVICE, FormatName
+from benchmark.constants import DEFAULT_FORMATS, DEFAULT_OPS, DEFAULT_TET_DEVICE, FormatName
 from benchmark.dispatch import run_benchmark
 from generate.dispatch import GENERATE_TARGETS, run_target
 
@@ -62,7 +62,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ops",
         nargs="*",
         metavar="OP",
-        help="comma-separated ops (default: mean,sum,min,max,count,std,var)",
+        help=(
+            "ops or groups: scalar, qc, transforms, all; or comma-separated names "
+            f"(default: {', '.join(DEFAULT_OPS)})"
+        ),
     )
     bench.add_argument(
         "--skip-ops",

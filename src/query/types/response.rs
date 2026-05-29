@@ -68,6 +68,7 @@ pub(crate) struct OperationPreviewFields {
     pub norm_l2: Option<f64>,
     pub all_finite: Option<bool>,
     pub any_nan: Option<bool>,
+    pub any_inf: Option<bool>,
     pub nan_count: Option<f64>,
     pub inf_count: Option<f64>,
     pub null_count: Option<f64>,
@@ -89,6 +90,7 @@ pub(crate) struct OperationPreviewFields {
     pub reduced_norm_l2: Option<Vec<f64>>,
     pub reduced_all_finite: Option<Vec<bool>>,
     pub reduced_any_nan: Option<Vec<bool>>,
+    pub reduced_any_inf: Option<Vec<bool>>,
     pub reduced_nan_count: Option<Vec<f64>>,
     pub reduced_inf_count: Option<Vec<f64>>,
     pub reduced_null_count: Option<Vec<f64>>,
@@ -100,6 +102,16 @@ pub(crate) struct OperationPreviewFields {
     /// Row-major `order × order` Pearson correlation.
     pub correlation: Option<Vec<f64>>,
     pub correlation_order: Option<u64>,
+    pub nan_mean: Option<f64>,
+    pub nan_std: Option<f64>,
+    pub reduced_nan_mean: Option<Vec<f64>>,
+    pub reduced_nan_std: Option<Vec<f64>>,
+    /// Pass-1 transform method token (e.g. `zscore`, `softmax`).
+    pub transform_method: Option<String>,
+    /// First [`crate::query::transform::warnings::MAX_LISTED_DIV_BY_ZERO_INDICES`] logical indices with div-by-zero (or similar) in pass 2.
+    pub transform_div_by_zero_indices: Option<Vec<u64>>,
+    /// Total pass-2 elements that became NaN due to div-by-zero or invalid `sqrt` shift.
+    pub transform_div_by_zero_count: Option<u64>,
 }
 
 /// I/O and spill metadata when building a [`QueryExecutionPreview`].
@@ -177,6 +189,10 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_std: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_nan_mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_nan_std: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_product: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_norm_l1: Option<f64>,
@@ -186,6 +202,8 @@ pub struct QueryExecutionPreview {
     pub operation_all_finite: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_any_nan: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_any_inf: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_nan_count: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -267,6 +285,10 @@ pub struct QueryExecutionPreview {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_std: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_nan_mean: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_nan_std: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_product: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_norm_l1: Option<Vec<f64>>,
@@ -276,6 +298,8 @@ pub struct QueryExecutionPreview {
     pub operation_reduced_all_finite: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_any_nan: Option<Vec<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_reduced_any_inf: Option<Vec<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_reduced_nan_count: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,6 +318,15 @@ pub struct QueryExecutionPreview {
     pub operation_correlation: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_correlation_order: Option<u64>,
+    /// Pass-1 transform method when `operation` is `transform`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_method: Option<String>,
+    /// Listed logical indices for transform div-by-zero warnings (capped at 256).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_div_by_zero_indices: Option<Vec<u64>>,
+    /// Total transform elements written as NaN due to div-by-zero or invalid `sqrt` shift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_div_by_zero_count: Option<u64>,
 }
 
 impl From<OperationPreviewFields> for QueryExecutionPreview {
@@ -310,11 +343,14 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_max: operation.max,
             operation_var: operation.var,
             operation_std: operation.std,
+            operation_nan_mean: operation.nan_mean,
+            operation_nan_std: operation.nan_std,
             operation_product: operation.product,
             operation_norm_l1: operation.norm_l1,
             operation_norm_l2: operation.norm_l2,
             operation_all_finite: operation.all_finite,
             operation_any_nan: operation.any_nan,
+            operation_any_inf: operation.any_inf,
             operation_nan_count: operation.nan_count,
             operation_inf_count: operation.inf_count,
             operation_null_count: operation.null_count,
@@ -331,11 +367,14 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_reduced_count: operation.reduced_count,
             operation_reduced_var: operation.reduced_var,
             operation_reduced_std: operation.reduced_std,
+            operation_reduced_nan_mean: operation.reduced_nan_mean,
+            operation_reduced_nan_std: operation.reduced_nan_std,
             operation_reduced_product: operation.reduced_product,
             operation_reduced_norm_l1: operation.reduced_norm_l1,
             operation_reduced_norm_l2: operation.reduced_norm_l2,
             operation_reduced_all_finite: operation.reduced_all_finite,
             operation_reduced_any_nan: operation.reduced_any_nan,
+            operation_reduced_any_inf: operation.reduced_any_inf,
             operation_reduced_nan_count: operation.reduced_nan_count,
             operation_reduced_inf_count: operation.reduced_inf_count,
             operation_reduced_null_count: operation.reduced_null_count,
@@ -345,6 +384,9 @@ impl From<OperationPreviewFields> for QueryExecutionPreview {
             operation_covariance_order: operation.covariance_order,
             operation_correlation: operation.correlation,
             operation_correlation_order: operation.correlation_order,
+            transform_method: operation.transform_method,
+            transform_div_by_zero_indices: operation.transform_div_by_zero_indices,
+            transform_div_by_zero_count: operation.transform_div_by_zero_count,
             ..Self::default()
         }
     }

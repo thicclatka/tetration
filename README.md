@@ -15,7 +15,7 @@
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
-- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
+- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export, **`transform`** (zscore, minmax, l1/l2, center, scale, log1p, sqrt, softmax) and **`nan_mean`** / **`nan_std`**; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`, `any_inf`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import / export** — `tet convert` from HDF5, NetCDF, Zarr v3; **`tet export`** back to Zarr v3 (stored chunk bytes, nested groups).
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
@@ -91,105 +91,15 @@ Query documents are **flat** JSON or TOML (e.g. `"mean": []` / `mean = []`, `"sp
 
 ## `tet` commands
 
-Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the installed binary).
-
-| Command                                            | Alias  | Role                                                        |
-| -------------------------------------------------- | ------ | ----------------------------------------------------------- |
-| [`tet info`](#tet-info) `<path.tet>`               | —      | Summarize a file (default: dataset table)                   |
-| [`tet verify`](#tet-verify) `<path.tet>`           | —      | Layout health check (exit 1 on failure); `--json` / `-q`    |
-| [`tet repair`](#tet-repair) `<path.tet>`           | —      | Plan or apply safe in-place fixes (e.g. bad footer)         |
-| [`tet query`](#tet-query) `[QUERY]`                | `q`    | Validate JSON/TOML; optional catalog + execute against `-t` |
-| [`tet qhist`](#tet-qhist) `[list\|run]`            | `hist` | Recent queries (platform cache; **not** the `.tet` footer)  |
-| [`tet convert`](#tet-convert) `<in> <out.tet>`     | —      | HDF5 / NetCDF / Zarr v3 → `.tet`                            |
-| [`tet export`](#tet-export) `<in.tet> <out.zarr/>` | —      | `.tet` → Zarr v3 directory store                            |
-
-### `tet info`
-
-| Flag                                                                 | Effect                                                            |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| _(default)_                                                          | Dataset catalog table                                             |
-| `--json`                                                             | Full pretty JSON (superblock, catalog, chunks, history)           |
-| `-q`, `--quiet`                                                      | One-line summary                                                  |
-| `--all`                                                              | All text sections                                                 |
-| `--layout` / `--execution` / `--datasets` / `--chunks` / `--history` | One section each (`--history` = convert footer; not `qhist`)      |
-| `-n`, `--limit N`                                                    | Max chunk rows with `--chunks` or `--all` (default 32; `0` = all) |
-| `--dataset`, `--grep`                                                | Case-insensitive filters on dataset name (and dtype for `--grep`) |
-
-### `tet verify`
-
-| Flag        | Effect                                                                               |
-| ----------- | ------------------------------------------------------------------------------------ |
-| _(default)_ | Human-readable check list + summary (decodes up to **128** chunks on large files)    |
-| `--deep`    | Decode **every** chunk payload (not just the quick sample)                           |
-| `--repair`  | After verify, apply safe in-place repairs for repairable findings (see `tet repair`) |
-| `--json`    | Pretty JSON [`TetVerifyReport`](src/verify/report.rs)                                |
-| `-q`        | One line (`status=ok` / `failed`)                                                    |
-
-Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`fixtures/small/tet/README.md`](fixtures/small/tet/README.md).
-
-### `tet repair`
-
-| Flag           | Effect                                                                   |
-| -------------- | ------------------------------------------------------------------------ |
-| _(default)_    | Plan from verify recommendations (no writes)                             |
-| `--apply CODE` | Apply fix (repeatable); today: `footer_invalid` strips a bad `THST` tail |
-| `--dry-run`    | With `--apply`, show changes without writing                             |
-| `--json`       | Pretty JSON plan or repair report                                        |
-
-### `tet query`
-
-`QUERY`: path to `.json` / `.toml`, inline JSON/TOML, `-` for stdin, or omit to read stdin. Leading `{` → JSON; `.toml` extension → TOML.
-
-| Flag                | Effect                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `-t`, `--tet PATH`  | Attach catalog / read plan (required for `-x`)                                                                      |
-| `-x`, `--execute`   | Decode tiles, run `operation`, attach `execution`                                                                   |
-| `--format`          | `full` (default), `json`, `stats`, `plan`, `quiet`, `table`                                                         |
-| `-q`, `--quiet`     | Shorthand for `--format quiet` (one-line stdout)                                                                    |
-| `--preview N`       | Cap preview sample values when executing (`--preview-f32` alias; default 64 for full/json, 0 for quiet/stats/table) |
-| `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                                 |
-
-### `tet qhist`
-
-Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [`docs/query_engine.md` — end-to-end flow](docs/query_engine.md#end-to-end-flow) (`tet qhist`); roadmap row under [operations](docs/query_engine.md#operations-roadmap-planned).
-
-| Subcommand / flag                                                | Effect                                                                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `list` _(default)_                                               | Compact table of recent queries                                                                                     |
-| `run N`                                                          | Re-run saved row (`1` = newest in filtered view); honors today's `--format` / `-q`; `-t` / `-x` / `--plan` override |
-| `--clear`                                                        | Remove the history file                                                                                             |
-| `list --all`, `--dataset`, `--tet`, `--mode`, `--grep`, `--json` | Filters / full JSON export on `list`                                                                                |
-
-### `tet convert`
-
-| Input   | Sniff / extensions                                        |
-| ------- | --------------------------------------------------------- |
-| HDF5    | `.h5`, `.hdf5`, `.hdf`, `.he2`, `.he5`, or file signature |
-| NetCDF  | `.nc`, `.netcdf`, `.nc4`, `.nc3`, `.cdf`, or signature    |
-| Zarr v3 | Directory with root `zarr.json`                           |
-
-| Flag       | Effect                                                                         |
-| ---------- | ------------------------------------------------------------------------------ |
-| `--jobs N` | Parallel chunk read workers (`0` = host `available_parallelism`, capped at 64) |
-
-### `tet export`
-
-| Flag / arg | Effect                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------- |
-| `<in.tet>` | Source file (mmap read + catalog summary)                                              |
-| `<out>`    | Zarr v3 **directory**; must be missing or **empty** (creates `zarr.json` + chunk tree) |
-| _(stderr)_ | Progress line: dataset count, chunks written, elapsed seconds                          |
-
-Preserves per-dataset **raw** or **zstd** chunk bytes; slash-separated dataset names become nested groups (`primary/f32`). Library: [`export_tet_to_zarr`](https://docs.rs/tetration/latest/tetration/export/fn.export_tet_to_zarr.html).
-
-More examples: [`fixtures/queries/`](fixtures/queries/), [`docs/query_engine.md`](docs/query_engine.md).
+[`docs/cli.md`](docs/cli.md) — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export` (flags and subcommands). Live help: **`tet -h`** and **`tet <command> -h`**.
 
 ## Documentation map
 
 | Doc                                                | Contents                                                                                                                                             |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`docs/cli.md`](docs/cli.md)                       | **`tet`** commands: flags and subcommands (`info`, `verify`, `repair`, `query`, `qhist`, `convert`, `export`)                                        |
 | [`docs/layout_v1.md`](docs/layout_v1.md)           | On-disk **layout v1**: superblock, dataset catalog, chunk index, codecs, footer metadata/history, concurrency                                        |
-| [`docs/query_engine.md`](docs/query_engine.md)     | **Query** JSON/TOML wire, planning, fold/spill execution, optional GPU, `tet` CLI mapping, JSON security                                             |
+| [`docs/query_engine.md`](docs/query_engine.md)     | **Query** JSON/TOML wire, planning, fold/spill execution, optional GPU, JSON security                                                                 |
 | [`docs/ffi.md`](docs/ffi.md)                       | **C ABI** (`tetration-ffi`): [`include/tetration.h`](include/tetration.h), linking, [`examples/ffi_query.c`](examples/ffi_query.c), release archives |
 | [docs.rs / `tetration`](https://docs.rs/tetration) | Rust crate API (`prelude`, `TetFile`, `execute_query_json`, convert, verify, …)                                                                      |
 

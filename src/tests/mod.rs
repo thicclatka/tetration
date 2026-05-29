@@ -15,6 +15,7 @@ mod export;
 mod ffi;
 mod fixture;
 mod fold;
+mod fs_device;
 mod layout_roundtrip;
 mod metadata;
 mod query;

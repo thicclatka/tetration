@@ -6,6 +6,7 @@ use crate::query::decode::indexing::{coords_from_linear_row_major, linear_rm_ind
 use crate::query::plan::read_plan::shape_product_usize;
 use crate::query::types::{ReadPlan, TetError};
 
+#[derive(Debug, Clone)]
 pub(crate) struct PartialAxisLayout {
     pub axis_indices: Vec<usize>,
     pub axis_set: BTreeSet<usize>,
@@ -108,4 +109,18 @@ pub(crate) fn reduced_cell_index(
     let oi = reduced_index(&coords, &layout.axis_set, &layout.out_shape)?;
     let fi = fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
     Ok((oi, fi))
+}
+
+/// Reduced output cell index for partial-axis transforms, or `0` when `layout` is `None` (global stats).
+pub(crate) fn reduced_cell_index_or_global(
+    li: usize,
+    shape: &[u64],
+    layout: Option<&PartialAxisLayout>,
+) -> Result<usize, TetError> {
+    if let Some(layout) = layout {
+        let (oi, _) = reduced_cell_index(li, shape, layout)?;
+        Ok(oi)
+    } else {
+        Ok(0)
+    }
 }

@@ -43,6 +43,7 @@ fn resolve_row_labels_to_indices() {
         ]),
         operation: None,
         output: None,
+        write: None,
         execution: None,
     };
     resolve_query_document_selection(&mut doc, Some(&meta), &[2, 3]).unwrap();

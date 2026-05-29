@@ -21,6 +21,10 @@ pub enum MemoryStrategy {
     InMemoryMaterialize,
     /// Tier-C op: full logical selection written to an engine temp file, then removed.
     TempSpillMaterialize,
+    /// Transform pass-2: dense output held in RAM.
+    TransformRam,
+    /// Transform pass-2: dense output written to a spill file (caller path or cache temp).
+    TransformSpill,
 }
 
 impl MemoryStrategy {
@@ -33,6 +37,8 @@ impl MemoryStrategy {
             Self::MmapSpill => "mmap_spill",
             Self::InMemoryMaterialize => "in_memory_materialize",
             Self::TempSpillMaterialize => "temp_spill_materialize",
+            Self::TransformRam => "transform_ram",
+            Self::TransformSpill => "transform_spill",
         }
     }
 }

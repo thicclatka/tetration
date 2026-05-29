@@ -254,6 +254,7 @@ pub(super) struct ExecutionPreviewInput<'a> {
     pub dtype: u32,
     pub operation: Option<&'a types::Operation>,
     pub output: Option<&'a types::OutputHints>,
+    pub write: Option<&'a types::WriteHints>,
     pub max_f32: usize,
     pub budget: budget::ExecutionBudget,
     pub execution: Option<&'a types::ExecutionHints>,
@@ -270,6 +271,7 @@ pub(super) fn build_execution_preview(
         dtype,
         operation,
         output,
+        write,
         max_f32,
         budget,
         execution,
@@ -293,6 +295,7 @@ pub(super) fn build_execution_preview(
             mmap,
             plan,
             op,
+            write,
             max_preview: max_f32,
             budget,
             execution,
@@ -307,6 +310,7 @@ struct OperationPreviewInput<'a> {
     mmap: &'a [u8],
     plan: &'a types::ReadPlan,
     op: &'a types::Operation,
+    write: Option<&'a types::WriteHints>,
     max_preview: usize,
     budget: budget::ExecutionBudget,
     execution: Option<&'a types::ExecutionHints>,
@@ -386,7 +390,65 @@ fn build_decode_preview(
     Ok(preview)
 }
 
-fn build_operation_preview(
+fn require_spill_allowlist<'a>(
+    spill_allowlist: Option<&'a spill_policy::SpillPathAllowlist>,
+    context: &str,
+) -> Result<&'a spill_policy::SpillPathAllowlist, types::TetError> {
+    spill_allowlist.ok_or_else(|| {
+        types::TetError::Validation(format!(
+            "{context} needs a spill path allowlist (pass `--tet` so defaults apply)"
+        ))
+    })
+}
+
+/// Run a two-pass transform and assemble the execution preview.
+fn build_transform_operation_preview(
+    input: &OperationPreviewInput<'_>,
+) -> Result<types::QueryExecutionPreview, types::TetError> {
+    let OperationPreviewInput {
+        mmap,
+        plan,
+        op,
+        write,
+        max_preview,
+        budget,
+        execution,
+        spill_allowlist,
+        dtype,
+        tet_path,
+    } = *input;
+    let policy = require_spill_allowlist(spill_allowlist, "transform operation")?;
+    let fold_policy = fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
+    let transform_input = crate::query::transform::TransformRunInput {
+        mmap,
+        plan,
+        op,
+        write,
+        max_preview,
+        budget,
+        dtype,
+        spill_allowlist: policy,
+        tet_path,
+        fold_policy,
+    };
+    let outcome = crate::query::transform::run_transform(&transform_input)?;
+    let mut preview = preview_from_bundle(
+        outcome.total_bytes_read_from_disk,
+        outcome.bundle,
+        outcome.operation,
+        Some(outcome.strategy.as_str()),
+        outcome.spill_path,
+        outcome.spill_bytes,
+    );
+    attach_budget_fields(&mut preview, budget, plan, dtype, Some(fold_policy));
+    stamp_device_route(
+        &mut preview,
+        device::resolve_device_route(execution, plan, dtype, Some(op)),
+    );
+    Ok(preview)
+}
+
+fn build_fold_operation_preview(
     input: &OperationPreviewInput<'_>,
 ) -> Result<types::QueryExecutionPreview, types::TetError> {
     let OperationPreviewInput {
@@ -396,28 +458,10 @@ fn build_operation_preview(
         max_preview,
         budget,
         execution,
-        spill_allowlist,
         dtype,
         tet_path,
+        ..
     } = *input;
-    if op.requires_materialize() {
-        let policy = spill_allowlist.ok_or_else(|| {
-            types::TetError::Validation(
-                "materialize-required operation needs a spill path allowlist (pass `--tet` so defaults apply)"
-                    .into(),
-            )
-        })?;
-        return run_materialize_required_operation(
-            mmap,
-            plan,
-            op,
-            max_preview,
-            &budget,
-            policy,
-            dtype,
-            execution,
-        );
-    }
     let fold_policy = fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
     if let Some(kind) = scalar_reduction_kind(op) {
         let (folded, device_route) = try_gpu_scalar_fold_or_cpu(&GpuScalarFoldInput {
@@ -461,4 +505,38 @@ fn build_operation_preview(
         fold_policy,
         device_route,
     ))
+}
+
+fn build_operation_preview(
+    input: &OperationPreviewInput<'_>,
+) -> Result<types::QueryExecutionPreview, types::TetError> {
+    let OperationPreviewInput { op, .. } = *input;
+    if op.requires_transform() {
+        return build_transform_operation_preview(input);
+    }
+    if op.requires_materialize() {
+        let OperationPreviewInput {
+            mmap,
+            plan,
+            op,
+            max_preview,
+            budget,
+            spill_allowlist,
+            dtype,
+            execution,
+            ..
+        } = *input;
+        let policy = require_spill_allowlist(spill_allowlist, "materialize-required operation")?;
+        return run_materialize_required_operation(
+            mmap,
+            plan,
+            op,
+            max_preview,
+            &budget,
+            policy,
+            dtype,
+            execution,
+        );
+    }
+    build_fold_operation_preview(input)
 }

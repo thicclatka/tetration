@@ -305,3 +305,22 @@ fn user_home_dir() -> Option<PathBuf> {
         std::env::var_os("HOME").map(PathBuf::from)
     }
 }
+
+/// Move a finished temp output (cache spill or sidecar draft) to `dest`.
+///
+/// Uses `rename` when [`crate::utils::fs_device::same_filesystem`] agrees; otherwise copies and
+/// removes `temp` so cross-volume paths (e.g. cache on SSD, `.tet` on HDD) still work.
+///
+/// # Errors
+///
+/// [`TetError::Validation`] on I/O failure.
+#[allow(dead_code)] // sidecar transform output; exercised in `src/tests/fs_device.rs`
+pub(crate) fn publish_output_file(temp: &Path, dest: &Path) -> Result<(), TetError> {
+    crate::utils::fs_device::publish_file(temp, dest).map_err(|e| {
+        TetError::Validation(format!(
+            "publish output {} → {}: {e}",
+            temp.display(),
+            dest.display()
+        ))
+    })
+}

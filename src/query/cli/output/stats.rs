@@ -147,12 +147,15 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
     opt_f64(map, "operation_max", ex.operation_max);
     opt_f64(map, "operation_var", ex.operation_var);
     opt_f64(map, "operation_std", ex.operation_std);
+    opt_f64(map, "operation_nan_mean", ex.operation_nan_mean);
+    opt_f64(map, "operation_nan_std", ex.operation_nan_std);
     opt_f64(map, "operation_product", ex.operation_product);
     opt_f64(map, "operation_norm_l1", ex.operation_norm_l1);
     opt_f64(map, "operation_norm_l2", ex.operation_norm_l2);
     opt_usize(map, "operation_element_count", ex.operation_element_count);
     opt_bool(map, "operation_all_finite", ex.operation_all_finite);
     opt_bool(map, "operation_any_nan", ex.operation_any_nan);
+    opt_bool(map, "operation_any_inf", ex.operation_any_inf);
     opt_f64(map, "operation_nan_count", ex.operation_nan_count);
     opt_f64(map, "operation_inf_count", ex.operation_inf_count);
     opt_f64(map, "operation_null_count", ex.operation_null_count);
@@ -187,6 +190,17 @@ fn push_execution_scalar_operation_stats(map: &mut Map<String, Value>, ex: &Quer
         map,
         "operation_correlation_order",
         ex.operation_correlation_order,
+    );
+    opt_str(map, "transform_method", ex.transform_method.as_deref());
+    opt_u64(
+        map,
+        "transform_div_by_zero_count",
+        ex.transform_div_by_zero_count,
+    );
+    opt_vec_u64(
+        map,
+        "transform_div_by_zero_indices",
+        ex.transform_div_by_zero_indices.as_ref(),
     );
 }
 
@@ -259,6 +273,16 @@ fn push_execution_reduced_aggregate_stats(
     );
     opt_vec_f64(
         map,
+        "operation_reduced_nan_mean",
+        ex.operation_reduced_nan_mean.as_ref(),
+    );
+    opt_vec_f64(
+        map,
+        "operation_reduced_nan_std",
+        ex.operation_reduced_nan_std.as_ref(),
+    );
+    opt_vec_f64(
+        map,
         "operation_reduced_product",
         ex.operation_reduced_product.as_ref(),
     );
@@ -284,6 +308,11 @@ fn push_execution_reduced_qc_stats(map: &mut Map<String, Value>, ex: &QueryExecu
         map,
         "operation_reduced_any_nan",
         ex.operation_reduced_any_nan.as_ref(),
+    );
+    opt_vec_bool(
+        map,
+        "operation_reduced_any_inf",
+        ex.operation_reduced_any_inf.as_ref(),
     );
     opt_vec_f64(
         map,

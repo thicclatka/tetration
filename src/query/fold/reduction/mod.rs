@@ -14,8 +14,11 @@ pub(crate) enum ReductionKind {
     Product,
     NormL1,
     NormL2,
+    NanMean,
+    NanStd,
     AllFinite,
     AnyNan,
+    AnyInf,
     NanCount,
     InfCount,
     NullCount { fill: f64 },
@@ -34,11 +37,14 @@ impl From<&Operation> for ReductionKind {
             Operation::Count { .. } => Self::Count,
             Operation::Var { .. } => Self::Var,
             Operation::Std { .. } => Self::Std,
+            Operation::NanMean { .. } => Self::NanMean,
+            Operation::NanStd { .. } => Self::NanStd,
             Operation::Product { .. } => Self::Product,
             Operation::NormL1 { .. } => Self::NormL1,
             Operation::NormL2 { .. } => Self::NormL2,
             Operation::AllFinite { .. } => Self::AllFinite,
             Operation::AnyNan { .. } => Self::AnyNan,
+            Operation::AnyInf { .. } => Self::AnyInf,
             Operation::NanCount { .. } => Self::NanCount,
             Operation::InfCount { .. } => Self::InfCount,
             Operation::NullCount { fill: Some(f), .. } => Self::NullCount { fill: *f },
@@ -51,8 +57,9 @@ impl From<&Operation> for ReductionKind {
             | Operation::Quantile { .. }
             | Operation::Histogram { .. }
             | Operation::Covariance { .. }
-            | Operation::Correlation { .. } => {
-                unreachable!("tier-C stats use materialize-required execution path")
+            | Operation::Correlation { .. }
+            | Operation::Transform { .. } => {
+                unreachable!("tier-C stats and transforms use dedicated execution paths")
             }
         }
     }

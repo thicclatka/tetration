@@ -6,7 +6,7 @@
 use crate::catalog::MAX_NDIM;
 
 use super::document_wire::parse_query_value;
-use super::types::{AxisSlice, Operation, QueryDocument, TetError};
+use super::types::{AxisSlice, Operation, QueryDocument, TetError, WriteHints, WriteTarget};
 
 /// How [`parse_query_text`] chooses a parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -194,6 +194,43 @@ pub fn validate_query(doc: &QueryDocument) -> Result<(), TetError> {
     if let Some(op) = &doc.operation {
         validate_operation_axes_v1(op)?;
         validate_operation_params(op)?;
+        if op.requires_transform() {
+            if doc.output.is_some() {
+                return Err(TetError::Validation(
+                    "transform operations use top-level `write`, not `spill`".into(),
+                ));
+            }
+            if let Some(w) = &doc.write {
+                validate_write_hints(w)?;
+            }
+        } else if doc.write.is_some() {
+            return Err(TetError::Validation(
+                "`write` is only valid with `transform`".into(),
+            ));
+        }
+    } else if doc.write.is_some() {
+        return Err(TetError::Validation(
+            "`write` requires a transform operation".into(),
+        ));
+    }
+    if doc.output.is_some() && doc.write.is_some() {
+        return Err(TetError::Validation(
+            "query document must not set both `spill` and `write`".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_write_hints(w: &WriteHints) -> Result<(), TetError> {
+    match w.target {
+        WriteTarget::Switch | WriteTarget::Ram => {
+            if w.path.is_some() {
+                return Err(TetError::Validation(
+                    "`write.path` is only valid with `spill` or `sidecar` targets".into(),
+                ));
+            }
+        }
+        WriteTarget::Spill | WriteTarget::Sidecar => {}
     }
     Ok(())
 }

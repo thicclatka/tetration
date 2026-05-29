@@ -239,6 +239,8 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 | **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                  | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                                                                               |
 | **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                  | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                                                                                |
 | **`mmap_spill`**             | Top-level **`"spill": "path"`** and no reduction key               | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                                |
+| **`transform_ram`**          | **`transform`** with **`write`**: `ram` or `switch` when selection ≤ budget | Pass-1 fold stats, pass-2 element-wise transform; dense output in RAM; preview from transformed buffer. |
+| **`transform_spill`**        | Same transforms with **`write`**: `spill` or `switch` when selection > budget | Pass-1 stats in RAM, pass-2 writes transformed tensor to caller path or cache temp; preview mmap’d from spill file. |
 | **`capped_in_memory`**       | Preview-only (no `operation`, no spill) when logical size ≤ budget | Capped materialize into **`execution.f32_preview`** or **`execution.f64_preview`** only.                                                                                                 |
 
 When logical selection exceeds the budget and neither **`operation`** nor spill is requested, execution fails with a validation error suggesting a higher budget, an **`operation`**, or spill output.
@@ -458,9 +460,13 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 | `"histogram": { "bins": 10, "min": 0, "max": 1 }`               | Histogram with fixed edge range (both `min` and `max` required)                   |
 | `"nan_count": []` / `"nan_count": 0`                            | Count of NaN elements (scalar / partial)                                          |
 | `"inf_count": []` / `"inf_count": 0`                            | Count of ±infinity elements (scalar / partial; integers contribute 0)             |
+| `"any_inf": []` / `"any_inf": 0`                                | True when any element is ±infinity (scalar / partial; integers contribute false)  |
 | `"null_count": []` or `{ "fill": 99, "axis": 0 }`               | Count of fill-missing values (fill from query or dataset attrs)                   |
 | `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]` | Half-open slice by coordinate label (requires footer `coords`)                    |
 | `"covariance": { "axis": 0 }` / `"correlation": 0`              | Rank-2 only; `axis` = observation dimension; `operation_*_order` = variable count |
+| `"transform": { "method": "zscore", "axis": 0 }`                | Shape-preserving transform; methods: `zscore`, `minmax`, `l1`, `l2`, `center`, `scale`, `log1p`, `sqrt`, `softmax`; pass-1 stats in `operation_*` / `operation_reduced_*`; div-by-zero → **NaN** with `transform_div_by_zero_*` warnings |
+| `"nan_mean": []` / `"nan_std": []`                                | Mean/std over finite elements (NaN-skipping); results in `operation_nan_mean` / `operation_nan_std` (or `operation_reduced_nan_*`) |
+| `"write": "switch"` / `{ "target": "spill", "path": "out.bin" }`  | Transform output routing (`ram`, `spill`, `switch`; `sidecar` reserved). Mutually exclusive with top-level **`spill`**. |
 | `"execution": { "memory_budget_percent": 40 }`                  | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)               |
 | `"execution": { "fold_parallel": false }`                       | Force sequential chunk visits (not linear scan); default is policy-driven         |
 | `"spill": "slice.bin"`                                          | Full logical tensor export beside the `.tet` parent (allowlist applies)           |
@@ -517,6 +523,7 @@ Reduction keys map to response fields below. **Scalar** = empty axis list (`[]` 
 | `norm_l2`            | `operation_norm_l2`                                       | `operation_reduced_norm_l2` + `operation_reduced_shape`                                                            |
 | `all_finite`         | `operation_all_finite`                                    | `operation_reduced_all_finite` + `operation_reduced_shape`                                                         |
 | `any_nan`            | `operation_any_nan`                                       | `operation_reduced_any_nan` + `operation_reduced_shape`                                                            |
+| `any_inf`            | `operation_any_inf`                                       | `operation_reduced_any_inf` + `operation_reduced_shape`                                                            |
 | `arg_min`            | `operation_argmin_index`                                  | `operation_reduced_argmin` + `operation_reduced_shape`                                                             |
 | `arg_max`            | `operation_argmax_index`                                  | `operation_reduced_argmax` + `operation_reduced_shape`                                                             |
 | `median`             | `operation_median`                                        | `operation_reduced_median` + `operation_reduced_shape`                                                             |
@@ -591,7 +598,9 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 ### Tier 1 — shipped (v1)
 
-**Done:** tier-A/B streaming ops (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `arg_min`, `arg_max`) — scalar + partial axes.
+**Done:** tier-A/B streaming ops (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `any_inf`, `arg_min`, `arg_max`) — scalar + partial axes.
+
+**Done (v1):** element-wise **`transform`** — methods above; pass-1 fold stats, pass-2 rewrite; **`write`**: `switch` (default), `ram`, `spill`; `f32`/`f64` only; zero denominator → **NaN** plus capped `transform_div_by_zero_indices` in the execution response.
 
 ### Tier 2 — tensor stats (shipped)
 
@@ -610,7 +619,8 @@ See [README — Library use](../README.md#library-use) and Phase 9 notes in this
 | Op (wire key)                | Tier (typical) | Notes                                                                                                                         |
 | ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **`nan_count`**              | A/B            | Count of NaN elements; complements **`any_nan`** (boolean).                                                                   |
-| **`inf_count`**              | A/B            | Count of ±infinity; complements **`all_finite`** (boolean).                                                                   |
+| **`inf_count`**              | A/B            | Count of ±infinity; complements **`any_inf`** (boolean).                                                                      |
+| **`any_inf`**                | A/B            | True when any element is ±infinity (float/`f16`; integers contribute false).                                                  |
 | **`null_count`**             | A/B            | Fill from query `fill` or footer attrs (`_FillValue`, `missing_value`, `fill_value`).                                         |
 | **Related QC counts**        | A/B            | Deferred — e.g. `finite_count`.                                                                                               |
 | **Histogram `min` / `max`**  | C              | **Done** — caller-supplied bin edges on scalar histogram (both required when either set).                                     |

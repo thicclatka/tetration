@@ -69,6 +69,10 @@ pub enum Operation {
     AnyNan {
         axes: Vec<String>,
     },
+    /// True when any element is ±infinity (float/`f16`; integers contribute false).
+    AnyInf {
+        axes: Vec<String>,
+    },
     ArgMin {
         axes: Vec<String>,
     },
@@ -110,7 +114,23 @@ pub enum Operation {
     Correlation {
         axes: Vec<String>,
     },
+    /// Mean over finite elements (NaN-skipping), same axis semantics as [`Self::Mean`].
+    NanMean {
+        axes: Vec<String>,
+    },
+    /// Population std over finite elements (NaN-skipping), `ddof = 0`.
+    NanStd {
+        axes: Vec<String>,
+    },
+    /// Two-pass shape-preserving transform (`transform` wire key); see [`TransformMethod`].
+    /// Empty `axes` applies one global stat set; non-empty `axes` fold per reduced cell.
+    Transform {
+        method: TransformMethod,
+        axes: Vec<String>,
+    },
 }
+
+use super::transform_method::TransformMethod;
 
 macro_rules! operation_axes_match {
     ($op:expr) => {
@@ -127,6 +147,7 @@ macro_rules! operation_axes_match {
             | Operation::NormL2 { axes }
             | Operation::AllFinite { axes }
             | Operation::AnyNan { axes }
+            | Operation::AnyInf { axes }
             | Operation::ArgMin { axes }
             | Operation::ArgMax { axes }
             | Operation::Median { axes }
@@ -136,7 +157,10 @@ macro_rules! operation_axes_match {
             | Operation::InfCount { axes }
             | Operation::NullCount { axes, .. }
             | Operation::Covariance { axes }
-            | Operation::Correlation { axes } => axes,
+            | Operation::Correlation { axes }
+            | Operation::NanMean { axes }
+            | Operation::NanStd { axes }
+            | Operation::Transform { axes, .. } => axes,
         }
     };
 }
@@ -169,6 +193,7 @@ impl Operation {
             Self::NormL2 { .. } => "norm_l2",
             Self::AllFinite { .. } => "all_finite",
             Self::AnyNan { .. } => "any_nan",
+            Self::AnyInf { .. } => "any_inf",
             Self::NanCount { .. } => "nan_count",
             Self::InfCount { .. } => "inf_count",
             Self::NullCount { .. } => "null_count",
@@ -179,6 +204,9 @@ impl Operation {
             Self::Histogram { .. } => "histogram",
             Self::Covariance { .. } => "covariance",
             Self::Correlation { .. } => "correlation",
+            Self::NanMean { .. } => "nan_mean",
+            Self::NanStd { .. } => "nan_std",
+            Self::Transform { .. } => "transform",
         }
     }
 
@@ -194,6 +222,56 @@ impl Operation {
                 | Self::Correlation { .. }
         )
     }
+
+    /// Two-pass element-wise transforms (pass-1 fold stats, pass-2 rewrite).
+    #[must_use]
+    pub fn requires_transform(&self) -> bool {
+        matches!(self, Self::Transform { .. })
+    }
+
+    /// Transform method when [`Self::requires_transform`] is true.
+    #[must_use]
+    pub fn transform_method(&self) -> Option<TransformMethod> {
+        match self {
+            Self::Transform { method, .. } => Some(*method),
+            _ => None,
+        }
+    }
+}
+
+/// Where a transform operation should write its dense output tensor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteTarget {
+    /// RAM when the selection fits the memory budget; otherwise a cache spill file.
+    #[default]
+    Switch,
+    /// Always spill to `path` or an engine temp file under platform cache.
+    Spill,
+    /// Publish a `.tet` sidecar beside the source file (explicit only).
+    Sidecar,
+    /// Dense in-process buffer (errors when the selection exceeds the memory budget).
+    Ram,
+}
+
+impl WriteTarget {
+    /// Stable wire token for JSON `write` fields.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Switch => "switch",
+            Self::Spill => "spill",
+            Self::Sidecar => "sidecar",
+            Self::Ram => "ram",
+        }
+    }
+}
+
+/// Output routing for [`Operation::Transform`] (`write` wire key).
+#[derive(Debug, Clone, Default)]
+pub struct WriteHints {
+    pub target: WriteTarget,
+    /// Override spill/sidecar path (relative to `.tet` parent when relative).
+    pub path: Option<String>,
 }
 
 /// Caller preference for where large query results should land.
@@ -225,8 +303,10 @@ pub struct QueryDocument {
     pub selection: Option<Vec<AxisSlice>>,
     /// Optional reduction over the logical selection.
     pub operation: Option<Operation>,
-    /// Optional output routing hints.
+    /// Optional export spill (`spill` wire key); not used with transform ops.
     pub output: Option<OutputHints>,
+    /// Transform output routing (`write` wire key); see [`WriteHints`] and [`TransformMethod`].
+    pub write: Option<WriteHints>,
     /// Host-side memory budget overrides for execution.
     pub execution: Option<ExecutionHints>,
 }
