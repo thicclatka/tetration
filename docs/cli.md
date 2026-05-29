@@ -21,6 +21,7 @@ Full flag lists: **`tet -h`** and **`tet <command> -h`** (always match the insta
 | `-q`, `--quiet`                                                      | One-line summary                                                  |
 | `--all`                                                              | All text sections                                                 |
 | `--layout` / `--execution` / `--datasets` / `--chunks` / `--history` | One section each (`--history` = convert footer; not `qhist`)      |
+| `--metadata`                                                         | Footer `dim_names` / `coords` previews under dataset rows         |
 | `-n`, `--limit N`                                                    | Max chunk rows with `--chunks` or `--all` (default 32; `0` = all) |
 | `--dataset`, `--grep`                                                | Case-insensitive filters on dataset name (and dtype for `--grep`) |
 
@@ -49,14 +50,15 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 
 `QUERY`: path to `.json` / `.toml`, inline JSON/TOML, `-` for stdin, or omit to read stdin. Leading `{` → JSON; `.toml` extension → TOML.
 
-| Flag                | Effect                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `-t`, `--tet PATH`  | Attach catalog / read plan (required for `-x`)                                                                      |
-| `-x`, `--execute`   | Decode tiles, run `operation`, attach `execution`                                                                   |
-| `--format`          | `full` (default), `json`, `stats`, `plan`, `quiet`, `table`                                                         |
-| `-q`, `--quiet`     | Shorthand for `--format quiet` (one-line stdout)                                                                    |
-| `--preview N`       | Cap preview sample values when executing (`--preview-f32` alias; default 64 for full/json, 0 for quiet/stats/table) |
-| `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                                 |
+| Flag                | Effect                                                                                                                                                           |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-t`, `--tet PATH`  | Attach catalog / read plan (required for `-x`)                                                                                                                   |
+| `-x`, `--execute`   | Decode tiles, run `operation`, attach `execution`                                                                                                                |
+| `--format`          | `full` (default), `json`, `stats`, `plan`, `quiet`, `table`                                                                                                      |
+| `-q`, `--quiet`     | Shorthand for `--format quiet` (one-line stdout)                                                                                                                 |
+| `--preview N`       | Cap preview sample values when executing (all dtypes; `--preview-f32` alias; default **64** for `full`/`json`, **0** for `stats`/`plan`/`quiet`/`table`)         |
+| `--device DEVICE`   | Tier-A/B device routing (`cpu`, `auto`, `metal`, `cuda`, `cuda:N`, `rocm`, `rocm:N`, `cuda:multi`, `rocm:multi`); overrides query `execution.device`; needs `-x` |
+| `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                                                                              |
 
 ## `tet qhist`
 

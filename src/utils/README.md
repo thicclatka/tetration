@@ -4,13 +4,13 @@ Internal utilities used across `layout`, `catalog`, `query`, and `convert`. Only
 
 ## Modules
 
-| Module           | Visibility    | Role                                                                |
-| ---------------- | ------------- | ------------------------------------------------------------------- |
-| `dtype.rs`       | **pub**       | `ElementDtype` — wire tag ↔ Rust type, elem sizes, tensor byte math |
-| `wire.rs`        | crate-private | Little-endian `u32`/`u64` read/write, align8                        |
-| `le_pod.rs`      | mixed         | `f32_le`, `f64_le`, … — decode POD slices from chunk bytes          |
-| `fs_device.rs`   | **pub**       | Filesystem / device path helpers (query spill, GPU discovery)       |
-| `host_memory.rs` | **pub**       | Host RAM capacity probes for materialize budget                     |
+| Module           | Visibility    | Role                                                                             |
+| ---------------- | ------------- | -------------------------------------------------------------------------------- |
+| `dtype.rs`       | **pub**       | `ElementDtype` — wire tag ↔ Rust type, elem sizes, tensor byte math              |
+| `wire.rs`        | crate-private | Little-endian `u32`/`u64` read/write, align8                                     |
+| `le_pod.rs`      | mixed         | `f32_le`, `f64_le`, … — decode POD slices from chunk bytes                       |
+| `fs_device.rs`   | **pub**       | Volume identity + `publish_file` (rename vs cross-volume copy for spill/sidecar) |
+| `host_memory.rs` | **pub**       | Host RAM capacity probes for materialize budget                                  |
 
 ## `ElementDtype`
 

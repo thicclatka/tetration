@@ -4,14 +4,14 @@ Python generators and checked-in tensors for **convert**, **query**, and **memor
 
 ## By phase
 
-| Phase   | Role of fixtures                                                                                                                                                          |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1–3** | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                                                                        |
-| **4**   | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                                                                |
-| **5**   | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).                                              |
-| **6**   | Bench harness (`benchmark/`, `spec.json`); [`queries/`](queries/) JSON/TOML golden profiles; [`bench_results/latest.md`](bench_results/latest.md) for local perf reports. |
-| **7**   | History footer today (`convert` events); future fixture attrs preserved into `.tet` dataset metadata on import.                                                           |
-| **10**  | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                                                           |
+| Phase   | Role of fixtures                                                                                                                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **1–3** | Tests build temp `.tet` in `src/tests/fixture.rs`; no tracked import fixtures yet.                                                                                                                                             |
+| **4**   | Query tests use programmatic `.tet` files; optional manual runs against converted outputs.                                                                                                                                     |
+| **5**   | **This directory** — HDF5 / NetCDF / Zarr small roundtrips; large ~20 GiB **suite** split across three formats (local only).                                                                                                   |
+| **6**   | Bench harness (`benchmark/`, `spec.json`); [`queries/`](queries/) JSON/TOML golden profiles; [`bench_results/latest.md`](bench_results/latest.md) for local perf reports.                                                      |
+| **7**   | History footer + dataset metadata (`dim_names`, `coords`, `attrs`) on import via `convert` / session writer; see [`cf_3d`](../fixtures/cf_3d/) and [`docs/layout_v1.md`](../docs/layout_v1.md#axis-metadata-phase-7-baseline). |
+| **10**  | Python binding tests may reuse `small/` sources; convert path uses Python libs, not Rust HDF5/NetCDF in wheels.                                                                                                                |
 
 ## Layout
 

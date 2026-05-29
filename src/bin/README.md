@@ -23,7 +23,7 @@ Full flag reference: [`docs/cli.md`](../../docs/cli.md).
 - `-t` / `--tet` — attach catalog
 - `-x` / `--execute` — run operation
 - `--format` — `full`, `json`, `stats`, `plan`, `quiet`, `table`
-- `--preview N`, `--spill-allow DIR`
+- `--preview N`, `--device DEVICE`, `--spill-allow DIR`
 
 ## Adding a subcommand
 

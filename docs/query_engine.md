@@ -55,7 +55,7 @@ flowchart TD
     end
 ```
 
-**CLI mapping:** `tet query [QUERY]` reads **`.json` / `.toml`**, inline JSON/TOML, or stdin (`-` or omit). Format: file extension **`.json` / `.toml`**, else leading **`{`** → JSON, otherwise TOML ([`detect_query_input_format`](../src/query/document.rs)). Then `validate_query` and `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet|table`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export. **`tet qhist`** still stores query JSON in the platform cache, not TOML.
+**CLI mapping:** `tet query [QUERY]` reads **`.json` / `.toml`**, inline JSON/TOML, or stdin (`-` or omit). Format: file extension **`.json` / `.toml`**, else leading **`{`** → JSON, otherwise TOML ([`detect_query_input_format`](../src/query/document.rs)). Then `validate_query` and `plan_query_empty` or `plan_query_with_tet_mmap_ex`. **`-t PATH`** supplies the mmap; **`-x` / `--execute`** runs `build_execution_preview` and sets `raw_f32_preview_max` from **`--preview`** (alias **`--preview-f32`**): default **64** for **`--format full|json`**, **0** for **`stats|quiet|table|plan`** when omitted; explicit **`0`** with an **`operation`** skips preview arrays but still aggregates; explicit **`0`** with top-level **`"spill"`** (no reduction key) still runs **`mmap_spill`** export. **`--device`** overrides `execution.device` (needs **`-x`**). **`tet qhist`** still stores query JSON in the platform cache, not TOML.
 
 Success stdout is formatted by [`format_query_response`](../src/query/cli/output/mod.rs) (presentation only — the in-memory [`QueryResponse`](../src/query/types/response.rs) is unchanged for embedders).
 
@@ -96,6 +96,7 @@ Preview JSON / **`stats`**: `device_requested`, `device_used`, `device_fallback_
 | `auto`            | Metal on macOS when `tetration-metal` enabled, else CUDA device 0 when `tetration-gpu` enabled, else CPU. Skips GPU below **64 MiB** logical selection. |
 | `metal`           | Apple GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                      |
 | `cuda` / `cuda:N` | NVIDIA GPU when feature enabled; else CPU + `gpu_feature_disabled`.                                                                                     |
+| `rocm` / `rocm:N` | ROCm build (`tetration-rocm`); same CUDA/NVRTC kernel path today.                                                                                       |
 
 CLI **`--device`** overrides query JSON `execution.device` (needs **`-x`**).
 
@@ -186,17 +187,23 @@ Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_quer
 
 ## Module map
 
-| Submodule          | Files                                                                                                                                          | Responsibility                                                                                                                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`plan/`**        | `selection.rs`, `read_plan.rs`                                                                                                                 | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                                  |
-| **`decode/`**      | `chunk_decode.rs`, `indexing.rs`                                                                                                               | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                            |
-| **`materialize/`** | `mod.rs`, `parallel.rs`, `int.rs`, `stats.rs`                                                                                                  | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                                  |
-| **`fold/`**        | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/`, `parallel/` (Rayon), `partial/` (`fields`, `float`, `int`), … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (all supported float/integer tags); parallel + partial-axis streaming folds. |
-| **`dispatch.rs`**  | —                                                                                                                                              | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                             |
-| **`engine/`**      | `run.rs`, `operations.rs`, `budget.rs`, …                                                                                                      | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                                    |
-| **`cli/`**         | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                                            | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                                     |
+| Submodule                                         | Files                                                                                                                            | Responsibility                                                                                                                                                                                             |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`plan/`**                                       | `selection.rs`, `read_plan.rs`                                                                                                   | JSON `selection` → global box + step; `ReadPlan` chunk I/O rows and logical geometry.                                                                                                                      |
+| **`decode/`**                                     | `chunk_decode.rs`, `indexing.rs`                                                                                                 | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                |
+| **`materialize/`**                                | `mod.rs`, `parallel.rs`, `f32.rs`, `f64.rs`, `f16.rs`, `int/`, `stats.rs`, `covariance.rs`, …                                    | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                      |
+| **`fold/`**                                       | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/` (`float`, `integer`), `parallel/`, `partial/`, … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (float + integer tags); parallel + partial-axis streaming folds. |
+| **`transform/`**                                  | `pass1.rs`, `pass2.rs`, `target.rs`, `warnings.rs`, …                                                                            | Shape-preserving transforms (`zscore`, `softmax`, …); pass-1 fold stats + pass-2 rewrite; `transform_ram` / `transform_spill` routing.                                                                     |
+| **`gpu/`**                                        | `streaming_fold.rs`, `scalar_fold.rs`, `multi.rs`, …                                                                             | Optional CUDA/Metal/ROCm tier-A/B paths; per-chunk device partials + host merge; multi-GPU sharding.                                                                                                       |
+| **`device.rs`**                                   | —                                                                                                                                | `ExecutionDeviceHint`, host-RAM gate, `resolve_device_route`.                                                                                                                                              |
+| **`dispatch.rs`**                                 | —                                                                                                                                | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                 |
+| **`engine/`**                                     | `run.rs`, `operations.rs`, `budget.rs`, `spill_policy.rs`, …                                                                     | `plan_query_*`, `build_execution_preview`, budget and spill policy.                                                                                                                                        |
+| **`execute.rs`**                                  | —                                                                                                                                | `execute_query_json` / `execute_query_document` embedder entry (parse + plan + optional execute).                                                                                                          |
+| **`resolve_axes.rs`**, **`resolve_selection.rs`** | —                                                                                                                                | Footer `dim_names` → axis index; `coords` labels → selection bounds.                                                                                                                                       |
+| **`document_wire.rs`**, **`document_toml.rs`**    | —                                                                                                                                | Wire JSON parse; TOML → JSON conversion.                                                                                                                                                                   |
+| **`cli/`**                                        | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                              | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                         |
 
-Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
+Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `execute_query_json`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
 
 ## CLI query output
 
@@ -233,15 +240,15 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 
 **`build_execution_preview`** then picks a **`MemoryStrategy`** (exposed as **`execution.memory_strategy`**):
 
-| Strategy                     | When chosen                                                        | Behavior                                                                                                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`streaming_fold`**         | Tier-A/B **`operation`** (sum, mean, min, …)                       | Single-pass fold (scalar or partial axes); no full logical `Vec`. I/O path is chosen by [`FoldIoPolicy`](../src/query/fold/fold_policy.rs) — see [Adaptive fold I/O](#adaptive-fold-io). |
-| **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                  | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                                                                               |
-| **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                  | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                                                                                |
-| **`mmap_spill`**             | Top-level **`"spill": "path"`** and no reduction key               | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                                |
-| **`transform_ram`**          | **`transform`** with **`write`**: `ram` or `switch` when selection ≤ budget | Pass-1 fold stats, pass-2 element-wise transform; dense output in RAM; preview from transformed buffer. |
-| **`transform_spill`**        | Same transforms with **`write`**: `spill` or `switch` when selection > budget | Pass-1 stats in RAM, pass-2 writes transformed tensor to caller path or cache temp; preview mmap’d from spill file. |
-| **`capped_in_memory`**       | Preview-only (no `operation`, no spill) when logical size ≤ budget | Capped materialize into **`execution.f32_preview`** or **`execution.f64_preview`** only.                                                                                                 |
+| Strategy                     | When chosen                                                                   | Behavior                                                                                                                                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`streaming_fold`**         | Tier-A/B **`operation`** (sum, mean, min, …)                                  | Single-pass fold (scalar or partial axes); no full logical `Vec`. I/O path is chosen by [`FoldIoPolicy`](../src/query/fold/fold_policy.rs) — see [Adaptive fold I/O](#adaptive-fold-io). |
+| **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                             | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                                                                               |
+| **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                             | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                                                                                |
+| **`mmap_spill`**             | Top-level **`"spill": "path"`** and no reduction key                          | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                                |
+| **`transform_ram`**          | **`transform`** with **`write`**: `ram` or `switch` when selection ≤ budget   | Pass-1 fold stats, pass-2 element-wise transform; dense output in RAM; preview from transformed buffer.                                                                                  |
+| **`transform_spill`**        | Same transforms with **`write`**: `spill` or `switch` when selection > budget | Pass-1 stats in RAM, pass-2 writes transformed tensor to caller path or cache temp; preview mmap’d from spill file.                                                                      |
+| **`capped_in_memory`**       | Preview-only (no `operation`, no spill) when logical size ≤ budget            | Capped materialize into dtype-matched preview arrays (`f32_preview`, `u8_preview`, …).                                                                                                   |
 
 When logical selection exceeds the budget and neither **`operation`** nor spill is requested, execution fails with a validation error suggesting a higher budget, an **`operation`**, or spill output.
 
@@ -299,16 +306,16 @@ flowchart TD
 
 ### Streaming fold performance
 
-**Behavior:** [`streaming_fold`](../src/query/engine/budget.rs) tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs). When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction/value_accum.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
+**Behavior:** tier-A/B ops route through [`scalar_fold`](../src/query/dispatch.rs) when `memory_strategy` is **`streaming_fold`**. When [`use_parallel_fold`](../src/query/fold/parallel/mod.rs) is true, fold uses Rayon over disjoint chunks (partial [`ValueAccum`](../src/query/fold/reduction/value_accum.rs) + `merge_from`). When **`fold_linear_scan`** is true, fold uses [`fold_read_plan_scalar_linear`](../src/query/fold/linear_scan.rs) instead — single-threaded byte stream, no per-chunk mmap fan-out.
 
 So a full-file scalar op still **reads every payload byte once** and **touches every element** for the accumulator. Wall time is dominated by **page-cache / disk bandwidth** and CPU over the selection when out-of-core, or **memory bandwidth + cores** when in-core.
 
-**SIMD bulk fold (tier-A/B, `f32` slabs):** [`variance_simd`](../src/query/fold/variance_simd/mod.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback:
+**SIMD bulk fold (tier-A/B slabs):** [`variance_simd`](../src/query/fold/variance_simd/mod.rs) — NEON on aarch64, SSE2 on x86_64, scalar fallback (`float` + `integer` modules):
 
 - **mean / sum / var / std** — single-pass sum + sum-of-squares per slab → Welford merge
 - **min / max** — single-pass vector min/max per slab → accumulator merge
 
-Used in both parallel chunk fold (dense 1D tile bulk path) and linear scan windows.
+Used in both parallel chunk fold (dense 1D tile bulk path) and linear scan windows. Integer wire tags promote to **`f64`** in accumulators.
 
 **Reference (local, gitignored fixture):** `fixtures/extra_large/h5/tensor_20gb.tet` — 20 GiB logical **`f32`**, 320 chunks × 64 MiB raw (`dataset`: **`data`**). After convert from `tensor_20gb.h5`:
 
@@ -372,35 +379,38 @@ flowchart TD
     Preview --> Done
 ```
 
-- **`materialize_read_plan_f32_le`** / **`materialize_read_plan_f64_le`** — full logical tensor (caller must size for `logical_f32_element_count` and element width).
-- **`materialize_read_plan_f32_le_into`** / **`materialize_read_plan_f64_le_into`** — same decode path into a caller-owned buffer (no `Vec` allocation for the output).
-- **`materialize_read_plan_f32_le_parallel`** / **`materialize_read_plan_f64_le_parallel`** and **`_into_parallel`** twins — Rayon over planned chunks (raw and zstd). **`build_execution_preview`** uses parallel decode when the read plan touches more than one chunk and materialization is required.
+- **`materialize_read_plan_f32_le`** / **`materialize_read_plan_f64_le`** — full logical tensor (caller must size for logical element count × element width).
+- **`materialize_read_plan_f32_le_into`** / **`materialize_read_plan_f32_le_into_parallel`** — same decode path into caller-owned buffers (`f32` only for `_into` twins today).
+- **`materialize_read_plan_f32_le_parallel`** / **`materialize_read_plan_f64_le_parallel`** — Rayon over planned chunks (raw and zstd). **`build_execution_preview`** uses parallel decode when the read plan touches more than one chunk and materialization is required.
+- **`materialize_read_plan_{u8,u16,i16,i32,i64}_le`** and matching **`spill_read_plan_*_le`** — integer narrow-type materialize/spill (re-exported from `tetration::query`).
 - **`planned_chunk_mmap_slices`** — zero-copy raw codec slices only (no zstd).
-- **`spill_read_plan_f32_le`** / **`spill_read_plan_f64_le`** — full logical decode to a caller-owned file path (used by **`mmap_spill`** strategy).
+- **`spill_read_plan_f32_le`** (+ integer spill twins) — full logical decode to a caller-owned file path (used by **`mmap_spill`** / **`transform_spill`** strategies).
 
 ## `QueryResponse` fields (engine-produced)
 
-| Field                                          | When set                                                                                               |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `catalog`                                      | Always with `--tet` / `plan_query_with_tet_mmap`.                                                      |
-| `catalog.file_execution`                       | Matched dataset; mirrors TIDX header execution settings.                                               |
-| `catalog.dataset_f32_bytes`                    | Matched **`f32`** dataset; `4 × product(shape)`.                                                       |
-| `catalog.dataset_f64_bytes`                    | Matched **`f64`** dataset; `8 × product(shape)`.                                                       |
-| `read_plan`                                    | Dataset matched; lists touched chunks and selection geometry.                                          |
-| `execution`                                    | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when an **`operation`** or **`spill`** is set).  |
-| `execution.f32_preview`                        | First `n` logical row-major floats (`n = 0` → empty vec); **`f32`** datasets only.                     |
-| `execution.f64_preview`                        | First `n` logical row-major doubles (`n = 0` → empty vec); **`f64`** datasets only.                    |
-| `execution.operation_*`                        | Scalar aggregates over full logical selection; preview cap does not truncate them.                     |
-| `execution.operation_reduced_*`                | Partial-axis reductions + `operation_reduced_shape`.                                                   |
-| `execution.memory_strategy`                    | `streaming_fold`, `capped_in_memory`, `mmap_spill`, `in_memory_materialize`, `temp_spill_materialize`. |
-| `execution.io_regime`                          | `in_core`, `out_of_core`, or `unknown` (streaming fold only).                                          |
-| `execution.fold_parallel`                      | Whether parallel chunk fold was selected (`streaming_fold`).                                           |
-| `execution.fold_linear_scan`                   | Whether out-of-core linear byte-stream fold ran (`streaming_fold`).                                    |
-| `execution.memory_budget_bytes`                | Resolved RAM budget used for this run.                                                                 |
-| `execution.host_available_ram_bytes`           | Host probe at budget resolution, when available.                                                       |
-| `execution.logical_selection_f32_bytes`        | `4 × logical_f32_element_count` (f32 datasets).                                                        |
-| `execution.logical_selection_bytes`            | `elem_size × logical_f32_element_count` for the dataset dtype.                                         |
-| `execution.spill_f32_path` / `spill_f32_bytes` | After **`mmap_spill`** decode.                                                                         |
+| Field                                                                        | When set                                                                                                                                                     |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `catalog`                                                                    | Always with `--tet` / `plan_query_with_tet_mmap`.                                                                                                            |
+| `catalog.file_execution`                                                     | Matched dataset; mirrors TIDX header execution settings.                                                                                                     |
+| `catalog.dataset_*_bytes`                                                    | Matched dataset; `elem_size × product(shape)` per wire dtype (`f32`, `f64`, `i32`, `i64`, `u8`, `u16`, `i16`, …).                                            |
+| `read_plan`                                                                  | Dataset matched; lists touched chunks and selection geometry.                                                                                                |
+| `execution`                                                                  | `raw_f32_preview_max` is `Some(n)` (including `n = 0` when an **`operation`**, **`transform`**, or **`spill`** is set).                                      |
+| `execution.*_preview`                                                        | First `n` logical row-major values (`n = 0` → empty vec); dtype-matched field (`f32_preview`, `f64_preview`, `i32_preview`, `u8_preview`, `f16_preview`, …). |
+| `execution.operation_*`                                                      | Scalar aggregates over full logical selection; preview cap does not truncate them.                                                                           |
+| `execution.operation_reduced_*`                                              | Partial-axis reductions + `operation_reduced_shape`.                                                                                                         |
+| `execution.operation_covariance*` / `operation_correlation*`                 | Rank-2 **`covariance`** / **`correlation`** (`*_order` = variable count).                                                                                    |
+| `execution.operation_nan_*` / `operation_inf_count` / `operation_null_count` | Phase 9 QC aggregates.                                                                                                                                       |
+| `execution.transform_method` / `transform_div_by_zero_*`                     | **`transform`** pass-1 method + capped div-by-zero warnings.                                                                                                 |
+| `execution.memory_strategy`                                                  | `streaming_fold`, `capped_in_memory`, `mmap_spill`, `in_memory_materialize`, `temp_spill_materialize`, `transform_ram`, `transform_spill`.                   |
+| `execution.io_regime`                                                        | `in_core`, `out_of_core`, or `unknown` (streaming fold only).                                                                                                |
+| `execution.fold_parallel` / `fold_workers`                                   | Parallel chunk fold selection and Rayon cap (`streaming_fold`).                                                                                              |
+| `execution.fold_linear_scan`                                                 | Whether out-of-core linear byte-stream fold ran (`streaming_fold`).                                                                                          |
+| `execution.device_*`                                                         | `device_requested`, `device_used`, `device_fallback_reason`, `device_gpu_reduce`, `device_gpu_pipeline`, `device_gpu_multi` (Phase 10).                      |
+| `execution.memory_budget_bytes`                                              | Resolved RAM budget used for this run.                                                                                                                       |
+| `execution.host_available_ram_bytes`                                         | Host probe at budget resolution, when available.                                                                                                             |
+| `execution.logical_selection_f32_bytes`                                      | `4 × logical_f32_element_count` (f32 datasets).                                                                                                              |
+| `execution.logical_selection_bytes`                                          | `elem_size × logical element count` for the dataset dtype.                                                                                                   |
+| `execution.spill_f32_path` / `spill_f32_bytes`                               | After **`mmap_spill`** or **`transform_spill`** decode (dtype-native spill paths for non-f32 use matching `spill_*` fields when set).                        |
 
 ## Chunk-touch policy strings
 
@@ -450,26 +460,26 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 
 ### JSON examples
 
-| Write                                                           | Meaning (internal `operation.axes`)                                               |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `"mean": []`                                                    | Scalar mean over all selected elements                                            |
-| `"mean": 0`                                                     | Mean over axis **0** (`["0"]`)                                                    |
-| `"sum": [0, 1]`                                                 | Partial reduction over axes 0 and 1                                               |
-| `"quantile": { "q": 0.95, "axis": 0 }`                          | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)                           |
-| `"histogram": { "bins": 10, "axis": 0 }`                        | Histogram on axis 0                                                               |
-| `"histogram": { "bins": 10, "min": 0, "max": 1 }`               | Histogram with fixed edge range (both `min` and `max` required)                   |
-| `"nan_count": []` / `"nan_count": 0`                            | Count of NaN elements (scalar / partial)                                          |
-| `"inf_count": []` / `"inf_count": 0`                            | Count of ±infinity elements (scalar / partial; integers contribute 0)             |
-| `"any_inf": []` / `"any_inf": 0`                                | True when any element is ±infinity (scalar / partial; integers contribute false)  |
-| `"null_count": []` or `{ "fill": 99, "axis": 0 }`               | Count of fill-missing values (fill from query or dataset attrs)                   |
-| `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]` | Half-open slice by coordinate label (requires footer `coords`)                    |
-| `"covariance": { "axis": 0 }` / `"correlation": 0`              | Rank-2 only; `axis` = observation dimension; `operation_*_order` = variable count |
-| `"transform": { "method": "zscore", "axis": 0 }`                | Shape-preserving transform; methods: `zscore`, `minmax`, `l1`, `l2`, `center`, `scale`, `log1p`, `sqrt`, `softmax`; pass-1 stats in `operation_*` / `operation_reduced_*`; div-by-zero → **NaN** with `transform_div_by_zero_*` warnings |
-| `"nan_mean": []` / `"nan_std": []`                                | Mean/std over finite elements (NaN-skipping); results in `operation_nan_mean` / `operation_nan_std` (or `operation_reduced_nan_*`) |
-| `"write": "switch"` / `{ "target": "spill", "path": "out.bin" }`  | Transform output routing (`ram`, `spill`, `switch`; `sidecar` reserved). Mutually exclusive with top-level **`spill`**. |
-| `"execution": { "memory_budget_percent": 40 }`                  | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)               |
-| `"execution": { "fold_parallel": false }`                       | Force sequential chunk visits (not linear scan); default is policy-driven         |
-| `"spill": "slice.bin"`                                          | Full logical tensor export beside the `.tet` parent (allowlist applies)           |
+| Write                                                            | Meaning (internal `operation.axes`)                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"mean": []`                                                     | Scalar mean over all selected elements                                                                                                                                                                                                   |
+| `"mean": 0`                                                      | Mean over axis **0** (`["0"]`)                                                                                                                                                                                                           |
+| `"sum": [0, 1]`                                                  | Partial reduction over axes 0 and 1                                                                                                                                                                                                      |
+| `"quantile": { "q": 0.95, "axis": 0 }`                           | Quantile on axis 0 (or `"axes": [0, 1]` for multi-axis)                                                                                                                                                                                  |
+| `"histogram": { "bins": 10, "axis": 0 }`                         | Histogram on axis 0                                                                                                                                                                                                                      |
+| `"histogram": { "bins": 10, "min": 0, "max": 1 }`                | Histogram with fixed edge range (both `min` and `max` required)                                                                                                                                                                          |
+| `"nan_count": []` / `"nan_count": 0`                             | Count of NaN elements (scalar / partial)                                                                                                                                                                                                 |
+| `"inf_count": []` / `"inf_count": 0`                             | Count of ±infinity elements (scalar / partial; integers contribute 0)                                                                                                                                                                    |
+| `"any_inf": []` / `"any_inf": 0`                                 | True when any element is ±infinity (scalar / partial; integers contribute false)                                                                                                                                                         |
+| `"null_count": []` or `{ "fill": 99, "axis": 0 }`                | Count of fill-missing values (fill from query or dataset attrs)                                                                                                                                                                          |
+| `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]`  | Half-open slice by coordinate label (requires footer `coords`)                                                                                                                                                                           |
+| `"covariance": { "axis": 0 }` / `"correlation": 0`               | Rank-2 only; `axis` = observation dimension; `operation_*_order` = variable count                                                                                                                                                        |
+| `"transform": { "method": "zscore", "axis": 0 }`                 | Shape-preserving transform; methods: `zscore`, `minmax`, `l1`, `l2`, `center`, `scale`, `log1p`, `sqrt`, `softmax`; pass-1 stats in `operation_*` / `operation_reduced_*`; div-by-zero → **NaN** with `transform_div_by_zero_*` warnings |
+| `"nan_mean": []` / `"nan_std": []`                               | Mean/std over finite elements (NaN-skipping); results in `operation_nan_mean` / `operation_nan_std` (or `operation_reduced_nan_*`)                                                                                                       |
+| `"write": "switch"` / `{ "target": "spill", "path": "out.bin" }` | Transform output routing (`ram`, `spill`, `switch`; `sidecar` reserved). Mutually exclusive with top-level **`spill`**.                                                                                                                  |
+| `"execution": { "memory_budget_percent": 40 }`                   | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)                                                                                                                                                                      |
+| `"execution": { "fold_parallel": false }`                        | Force sequential chunk visits (not linear scan); default is policy-driven                                                                                                                                                                |
+| `"spill": "slice.bin"`                                           | Full logical tensor export beside the `.tet` parent (allowlist applies)                                                                                                                                                                  |
 
 `memory_budget_percent_bps` is still accepted in JSON for embedders; serialization prefers **`memory_budget_percent`**. Nested `"output": { … }` is rejected (use **`spill`**). Axis specs accept **non-negative decimals** (`0`) or **dimension names** (`"time"`) when `dim_names` is in footer metadata — see [Dimension names vs coordinate labels](#dimension-names-vs-coordinate-labels).
 
@@ -509,39 +519,53 @@ tet query q.toml -t data.tet -x -q
 
 Reduction keys map to response fields below. **Scalar** = empty axis list (`[]` on the wire); **partial** = one or more axis indices.
 
-| Operation / JSON key | Scalar (`[]`)                                             | Non-empty axes (partial reduction)                                                                                 |
-| -------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `sum`                | `operation_sum`                                           | `operation_reduced_sum` + `operation_reduced_shape`                                                                |
-| `mean`               | `operation_mean`                                          | `operation_reduced_mean` + `operation_reduced_shape`                                                               |
-| `min`                | `operation_min`                                           | `operation_reduced_min` + `operation_reduced_shape`                                                                |
-| `max`                | `operation_max`                                           | `operation_reduced_max` + `operation_reduced_shape`                                                                |
-| `count`              | `operation_element_count`                                 | `operation_reduced_count` + `operation_reduced_shape`                                                              |
-| `var`                | `operation_var`                                           | `operation_reduced_var` + `operation_reduced_shape`                                                                |
-| `std`                | `operation_std`                                           | `operation_reduced_std` + `operation_reduced_shape`                                                                |
-| `product`            | `operation_product`                                       | `operation_reduced_product` + `operation_reduced_shape`                                                            |
-| `norm_l1`            | `operation_norm_l1`                                       | `operation_reduced_norm_l1` + `operation_reduced_shape`                                                            |
-| `norm_l2`            | `operation_norm_l2`                                       | `operation_reduced_norm_l2` + `operation_reduced_shape`                                                            |
-| `all_finite`         | `operation_all_finite`                                    | `operation_reduced_all_finite` + `operation_reduced_shape`                                                         |
-| `any_nan`            | `operation_any_nan`                                       | `operation_reduced_any_nan` + `operation_reduced_shape`                                                            |
-| `any_inf`            | `operation_any_inf`                                       | `operation_reduced_any_inf` + `operation_reduced_shape`                                                            |
-| `arg_min`            | `operation_argmin_index`                                  | `operation_reduced_argmin` + `operation_reduced_shape`                                                             |
-| `arg_max`            | `operation_argmax_index`                                  | `operation_reduced_argmax` + `operation_reduced_shape`                                                             |
-| `median`             | `operation_median`                                        | `operation_reduced_median` + `operation_reduced_shape`                                                             |
-| `quantile`           | `operation_quantile` (`q` field)                          | `operation_reduced_quantile` + `operation_reduced_shape`                                                           |
-| `histogram`          | `operation_histogram_counts`, `operation_histogram_edges` | `operation_reduced_histogram_counts` (flat `out_len × bins`, row-major; edges omitted) + `operation_reduced_shape` |
+| Operation / JSON key | Scalar (`[]`)                                                                                   | Non-empty axes (partial reduction)                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `sum`                | `operation_sum`                                                                                 | `operation_reduced_sum` + `operation_reduced_shape`                                                                |
+| `mean`               | `operation_mean`                                                                                | `operation_reduced_mean` + `operation_reduced_shape`                                                               |
+| `min`                | `operation_min`                                                                                 | `operation_reduced_min` + `operation_reduced_shape`                                                                |
+| `max`                | `operation_max`                                                                                 | `operation_reduced_max` + `operation_reduced_shape`                                                                |
+| `count`              | `operation_element_count`                                                                       | `operation_reduced_count` + `operation_reduced_shape`                                                              |
+| `var`                | `operation_var`                                                                                 | `operation_reduced_var` + `operation_reduced_shape`                                                                |
+| `std`                | `operation_std`                                                                                 | `operation_reduced_std` + `operation_reduced_shape`                                                                |
+| `product`            | `operation_product`                                                                             | `operation_reduced_product` + `operation_reduced_shape`                                                            |
+| `norm_l1`            | `operation_norm_l1`                                                                             | `operation_reduced_norm_l1` + `operation_reduced_shape`                                                            |
+| `norm_l2`            | `operation_norm_l2`                                                                             | `operation_reduced_norm_l2` + `operation_reduced_shape`                                                            |
+| `all_finite`         | `operation_all_finite`                                                                          | `operation_reduced_all_finite` + `operation_reduced_shape`                                                         |
+| `any_nan`            | `operation_any_nan`                                                                             | `operation_reduced_any_nan` + `operation_reduced_shape`                                                            |
+| `any_inf`            | `operation_any_inf`                                                                             | `operation_reduced_any_inf` + `operation_reduced_shape`                                                            |
+| `arg_min`            | `operation_argmin_index`                                                                        | `operation_reduced_argmin` + `operation_reduced_shape`                                                             |
+| `arg_max`            | `operation_argmax_index`                                                                        | `operation_reduced_argmax` + `operation_reduced_shape`                                                             |
+| `median`             | `operation_median`                                                                              | `operation_reduced_median` + `operation_reduced_shape`                                                             |
+| `quantile`           | `operation_quantile` (`q` field)                                                                | `operation_reduced_quantile` + `operation_reduced_shape`                                                           |
+| `histogram`          | `operation_histogram_counts`, `operation_histogram_edges`                                       | `operation_reduced_histogram_counts` (flat `out_len × bins`, row-major; edges omitted) + `operation_reduced_shape` |
+| `nan_count`          | `operation_nan_count`                                                                           | `operation_reduced_nan_count` + `operation_reduced_shape`                                                          |
+| `inf_count`          | `operation_inf_count`                                                                           | `operation_reduced_inf_count` + `operation_reduced_shape`                                                          |
+| `null_count`         | `operation_null_count`                                                                          | `operation_reduced_null_count` + `operation_reduced_shape`                                                         |
+| `nan_mean`           | `operation_nan_mean`                                                                            | `operation_reduced_nan_mean` + `operation_reduced_shape`                                                           |
+| `nan_std`            | `operation_nan_std`                                                                             | `operation_reduced_nan_std` + `operation_reduced_shape`                                                            |
+| `covariance`         | `operation_covariance`, `operation_covariance_order`                                            | — (rank-2 only; observation axis via `axis` / `axes`)                                                              |
+| `correlation`        | `operation_correlation`, `operation_correlation_order`                                          | — (rank-2 only)                                                                                                    |
+| `transform`          | `transform_method`, pass-1 `operation_*` / `operation_reduced_*`; pass-2 output in RAM or spill | Shape-preserving; not a single scalar aggregate field.                                                             |
 
 Population **`var` / `std`**, `ddof = 0`. **`norm_l2`** is √(sum of squares).
 
 ### Dtypes
 
-| Wire tag | Name  | Writer | Query execution                                 |
-| -------- | ----- | ------ | ----------------------------------------------- |
-| `1`      | `f32` | yes    | yes (preview in `f32_preview`)                  |
-| `2`      | `f64` | yes    | yes (preview in `f64_preview`)                  |
-| `3`      | `i32` | yes    | yes (aggregates promote to `f64` in fold paths) |
-| `4`      | `i64` | yes    | yes (aggregates promote to `f64` in fold paths) |
+| Wire tag | Name  | Writer | Query execution                                                                                 |
+| -------- | ----- | ------ | ----------------------------------------------------------------------------------------------- |
+| `1`      | `f32` | yes    | yes (`f32_preview`; tier-A/B GPU when routed)                                                   |
+| `2`      | `f64` | yes    | yes (`f64_preview`)                                                                             |
+| `3`      | `i32` | yes    | yes (`i32_preview`; aggregates promote to `f64` in fold paths)                                  |
+| `4`      | `i64` | yes    | yes (`i64_preview`; aggregates promote to `f64` in fold paths)                                  |
+| `5`      | `u8`  | yes    | yes (`u8_preview`; tier-A/B fold; booleans import as `u8`)                                      |
+| `6`      | `u16` | yes    | yes (`u16_preview`)                                                                             |
+| `7`      | `i16` | yes    | yes (`i16_preview`)                                                                             |
+| `8`      | `u32` | yes    | yes (`u32_preview`)                                                                             |
+| `9`      | `f16` | yes    | yes (`f16_preview`; scalar tier-A/B fold; promoted to `f32` on GPU; partial-axis fold rejected) |
+| `10`     | `u64` | yes    | yes (`u64_preview`)                                                                             |
 
-Element size and budget math: [`ElementDtype`](../src/utils/dtype.rs).
+Element size and budget math: [`ElementDtype`](../src/utils/dtype.rs). **`transform`** supports **`f32`** / **`f64`** only.
 
 Quantile example (exact selection on sorted values, linear blend between adjacent ranks):
 
@@ -580,8 +604,9 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 - **Streaming ops** (`sum`, `mean`, …) — **`streaming_fold`**: scalar (empty axis list) via **`fold_read_plan_scalar_operation`**; partial axes via **`fold_read_plan_partial_operation`**. Preview is the first `n` logical values in dtype-matched preview arrays (`f32_preview`, `u8_preview`, …) when `raw_f32_preview_max > 0`.
 - **Materialize-required ops** (`median`, `quantile`, `histogram`) — **`in_memory_materialize`** when logical size ≤ budget; **`temp_spill_materialize`** when over budget (engine temp file under cache allowlist, removed after the op). Requires `--tet` (or explicit **`SpillPathAllowlist`**) so temp paths are allowed.
 - **Export spill** — **`mmap_spill`** when **`spill`** is set and no reduction key. Preview is read from the spilled file (single full decode; dtype-native bytes).
+- **Transform** — **`transform_ram`** when logical size ≤ budget; **`transform_spill`** when over budget or `write.target = spill`. Pass-1 fold stats in `operation_*`; pass-2 output in RAM or caller spill path (`f32`/`f64` only).
 
-Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) — `f32` = 1, `f64` = 2, `i32` = 3, `i64` = 4, `u8` = 5, `u16` = 6, `i16` = 7, `u32` = 8, `f16` = 9, `u64` = 10 (see [`layout_v1.md`](layout_v1.md)). Tier-A/B aggregates promote integers to **`f64`** in `operation_*`. The preview cap does **not** truncate `operation_*` aggregates. **`f16` partial-axis** fold is still rejected at dispatch (scalar tier-A/B only).
+Supported dtypes: wire tags in [`DATASET_DTYPE_TAG_V1`](../src/catalog/mod.rs) — see table above and [`layout_v1.md`](layout_v1.md). Tier-A/B aggregates promote integers to **`f64`** in `operation_*`. The preview cap does **not** truncate `operation_*` aggregates.
 
 ## Operations roadmap (planned)
 
@@ -689,7 +714,6 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 
 - Canonical JSON / duplicate-key rejection (depends on `serde_json` behavior).
 - Rate limiting and authentication on any HTTP wrapper around `tet query`.
-- Spill path allowlist / sandbox directory policy.
 
 ### Output protections (today)
 
@@ -731,12 +755,16 @@ Implemented in [`document.rs`](../src/query/document.rs) and planning:
 ## Robustness (catalog index)
 
 - Catalog robustness and index property tests: [`src/tests/catalog.rs`](../src/tests/catalog.rs).
-- Query planning, materialize, operations, memory budget, all dtype paths, tier-C stats: [`src/tests/query.rs`](../src/tests/query.rs).
+- Query planning, materialize, operations, memory budget, all dtype paths, tier-C stats, transform: [`src/tests/query.rs`](../src/tests/query.rs).
 - Fold I/O policy and contiguous-span detection: [`src/tests/fold.rs`](../src/tests/fold.rs).
 - SIMD bulk folds vs scalar reference: [`src/tests/variance_simd.rs`](../src/tests/variance_simd.rs).
 - Bulk variance vs Welford reference: [`src/tests/reduction.rs`](../src/tests/reduction.rs).
+- Device routing + GPU smoke: [`src/tests/device.rs`](../src/tests/device.rs).
+- Cross-volume publish helpers: [`src/tests/fs_device.rs`](../src/tests/fs_device.rs).
+- CLI output / info / history: [`src/tests/cli_output.rs`](../src/tests/cli_output.rs), [`src/tests/cli_info.rs`](../src/tests/cli_info.rs), [`src/tests/cli_history.rs`](../src/tests/cli_history.rs).
 - File health: [`src/verify/`](../src/verify/), [`src/tests/verify.rs`](../src/tests/verify.rs), [`src/tests/repair.rs`](../src/tests/repair.rs), [`src/tests/verify_fixtures.rs`](../src/tests/verify_fixtures.rs), committed CLI smoke [`fixtures/small/tet/`](../fixtures/small/tet/README.md).
-- Phase 9 ops + export: [`src/tests/resolve_axes.rs`](../src/tests/resolve_axes.rs), [`resolve_selection.rs`](../src/tests/resolve_selection.rs), [`covariance.rs`](../src/tests/covariance.rs), [`export.rs`](../src/tests/export.rs).
+- Phase 9 ops + export + metadata: [`src/tests/resolve_axes.rs`](../src/tests/resolve_axes.rs), [`src/tests/resolve_selection.rs`](../src/tests/resolve_selection.rs), [`src/tests/covariance.rs`](../src/tests/covariance.rs), [`src/tests/export.rs`](../src/tests/export.rs), [`src/tests/metadata.rs`](../src/tests/metadata.rs).
+- C ABI (feature `tetration-ffi`): [`src/tests/ffi.rs`](../src/tests/ffi.rs).
 - Payload decode uses [`src/utils/le_pod.rs`](../src/utils/le_pod.rs) (`f32_le` / `f64_le` / …; bytemuck; aligned cast when possible).
 
 ## Intentional gaps (v1)

@@ -86,7 +86,9 @@ Records are concatenated in catalog order; `dataset_id` in the chunk index is th
 
 ### Axis metadata (Phase 7 baseline)
 
-v1 dataset records carry **`shape`** and **`chunk_shape`** only — no axis names or per-index labels on disk yet. Planned metadata (file header blob, dataset attrs, or sidecar regions) distinguishes two **separate** layers:
+v1 **dataset records** carry **`shape`** and **`chunk_shape`** only. **Dimension names**, **coordinate labels**, and **CF-style attrs** live in the optional **`THST` footer** under `metadata.datasets[<name>]` (see [Optional history footer](#optional-history-footer-v1-extension)). Convert and [`TetWriterSession`](../src/catalog/session.rs) populate this on write; the query engine resolves `"mean": "time"` and `selection` `start_label` / `stop_label` from footer metadata at plan time.
+
+Two **separate** layers:
 
 | Layer                 | What it names                               | Count                 | Example (3D weather)                 | Example (2D table)                |
 | --------------------- | ------------------------------------------- | --------------------- | ------------------------------------ | --------------------------------- |
@@ -100,27 +102,28 @@ Do **not** conflate them:
 
 **Analogues:** NetCDF dimension name vs coordinate variable; pandas `Index.name` vs `Index` values; xarray `dims` vs `coords`.
 
-**Planned storage sketch** (informative, not wire-final):
+**Storage (shipped):** footer JSON `metadata` (inline or `metadata_spill` when &gt; 64 KiB inline budget). Per-dataset shape:
 
 ```json
 {
-  "dim_names": ["time", "station"],
-  "coords": {
-    "time": {
-      "dtype": "i64",
-      "storage": "inline | dataset_ref | payload_offset"
-    },
-    "station": { "dtype": "string", "storage": "…" }
-  },
-  "attrs": { "units": "K", "long_name": "surface temperature" }
+  "datasets": {
+    "temperature": {
+      "dim_names": ["time", "station"],
+      "coords": {
+        "time": { "labels": ["2024-01-01", "2024-01-02"] },
+        "station": { "labels": ["A", "B"] }
+      },
+      "attrs": { "units": "K", "long_name": "surface temperature" }
+    }
+  }
 }
 ```
 
-- **`dim_names`** — small, always safe in header/catalog attrs.
-- **`coords`** — may be **O(n)** along an axis; large coordinate vectors may live as a **1D dataset** in the same file, a metadata chunk, or inline when small.
-- **`attrs`** — CF-style scalar metadata (units, `long_name`); not an index.
+- **`dim_names`** — O(`ndim`) strings; enables `"mean": "time"` in query JSON/TOML.
+- **`coords`** — O(`shape[d]`) inline label vectors per axis (limits in [`MetadataLimitsV1`](../src/catalog/metadata.rs)); large coords may spill via `metadata_spill`.
+- **`attrs`** — scalar metadata (`units`, `_FillValue`, `missing_value`, …); used by `null_count` and `tet info`.
 
-**Coordinate labels ≠ a query index by default.** Storing labels enables **name → integer index** resolution at plan time. Fast **filter / group-by** on high-cardinality keys may additionally need an auxiliary lookup structure (sorted coords, hash map, optional on-disk index) — a separate layout/query decision, not automatic from storing strings.
+**Coordinate labels ≠ a query index by default.** Storing labels enables **name → integer index** resolution at plan time. Fast **filter / group-by** on high-cardinality keys may additionally need an auxiliary lookup structure — a separate layout/query decision.
 
 See [query engine — dimension names vs coordinates](query_engine.md#dimension-names-vs-coordinate-labels).
 
@@ -190,10 +193,10 @@ Reference writers (`write_raw_array_file`) append payloads sequentially, so conv
 
 ### Per-chunk payload codecs
 
-| Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                                                  |
-| ---------- | ------------------------------------------- | -------------------------------------------------------------- |
-| **0** raw  | must be equal                               | tensor payload (LE **`f32`** or **`f64`** per dataset `dtype`) |
-| **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes                     |
+| Codec      | `stored_byte_len` vs `raw_byte_len`         | On-disk bytes                                                |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------ |
+| **0** raw  | must be equal                               | tensor payload (LE bytes for dataset `dtype`, tags `1`–`10`) |
+| **1** zstd | `stored` = compressed, `raw` = decoded size | zstd frame; decode to `raw_byte_len` bytes                   |
 
 See also [`query_engine.md`](query_engine.md) for how the query engine materializes planned chunks.
 
@@ -213,7 +216,7 @@ Chunk payload validation uses **`file_len − footer_suffix`** (footer JSON + ta
 
 **`history` rows** — each entry is a JSON object `{ "op", "source", "at", "parents"?, "params"? }`. Legacy files may use a three-element array `[op, source, at]`; readers accept both. New writers emit objects only.
 
-**`metadata`** — inline object when small (see [`MetadataLimitsV1`](../src/catalog/metadata.rs)). When too large, writers spill UTF-8 JSON to `metadata_spill` and set `"metadata_ref": { "offset", "len" }` in `history_json` (mutually exclusive with inline `metadata`).
+**`metadata`** — inline object when small (see [`MetadataLimitsV1`](../src/catalog/metadata.rs)). Shape: optional `file` attrs plus `datasets` map keyed by catalog name; each entry may include `dim_names`, `coords` (per-axis `labels`), and `attrs`. When too large, writers spill UTF-8 JSON to `metadata_spill` and set `"metadata_ref": { "offset", "len" }` in `history_json` (mutually exclusive with inline `metadata`).
 
 ## Reference subset (current Rust writer)
 

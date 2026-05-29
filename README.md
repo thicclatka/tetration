@@ -131,7 +131,7 @@ Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrenc
 
 ```toml
 [dependencies]
-tetration = "0.1.6"
+tetration = "0.1.7"
 ```
 
 ```rust
