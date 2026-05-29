@@ -44,6 +44,7 @@ Foreign file ──convert──► .tet file ◄──mmap── TetFile / veri
 
 - On-disk bytes: [`docs/layout_v1.md`](../docs/layout_v1.md)
 - Query wire + execution: [`docs/query_engine.md`](../docs/query_engine.md)
+- `tet` CLI: [`docs/cli.md`](../docs/cli.md)
 - C ABI: [`docs/ffi.md`](../docs/ffi.md)
 - Published Rust API: [docs.rs/tetration](https://docs.rs/tetration)
 

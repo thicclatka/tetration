@@ -2,6 +2,8 @@
 
 The default binary (`cargo run`, `default-run = "tet"`). Entry: [`tet.rs`](tet.rs). Subcommand bodies live under [`tet/`](tet/) as `#[path = …]` modules (Cargo only compiles `tet.rs` as the bin target).
 
+Full flag reference: [`docs/cli.md`](../../docs/cli.md).
+
 ## Commands
 
 | Module           | Command                  | Library API                       |
