@@ -10,6 +10,7 @@ mod concurrent_query;
 mod convert;
 mod covariance;
 mod device;
+mod embed_materialize;
 mod export;
 #[cfg(feature = "tetration-ffi")]
 mod ffi;

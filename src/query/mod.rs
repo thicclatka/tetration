@@ -9,6 +9,7 @@ mod dispatch;
 mod document;
 mod document_toml;
 mod document_wire;
+pub mod embed_materialize;
 pub(crate) mod engine;
 mod execute;
 pub(crate) mod fold;
@@ -41,18 +42,22 @@ pub use document::{
     validate_query,
 };
 pub use document_toml::parse_query_toml;
+pub use embed_materialize::{
+    DenseBuffer, DenseMaterializeOutcome, materialize_query_selection,
+    materialize_query_transform_ram,
+};
 #[doc(hidden)]
 pub use engine::TempSpillFile;
 pub use engine::{
     DEFAULT_MEMORY_BUDGET_BYTES, ExecutionBudget, MaterializeReadPlanF32IntoOutcome,
-    MemoryStrategy, SpillPathAllowlist, materialize_read_plan_f32_le,
+    MemoryStrategy, PlannedRead, SpillPathAllowlist, materialize_read_plan_f32_le,
     materialize_read_plan_f32_le_into, materialize_read_plan_f32_le_into_parallel,
     materialize_read_plan_f32_le_parallel, materialize_read_plan_f64_le,
     materialize_read_plan_i16_le, materialize_read_plan_i32_le, materialize_read_plan_i64_le,
     materialize_read_plan_u8_le, materialize_read_plan_u16_le, plan_query_empty,
-    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, planned_chunk_mmap_slices,
-    spill_read_plan_f32_le, spill_read_plan_i16_le, spill_read_plan_i32_le, spill_read_plan_i64_le,
-    spill_read_plan_u8_le, spill_read_plan_u16_le,
+    plan_query_with_tet_mmap, plan_query_with_tet_mmap_ex, plan_read_for_document,
+    planned_chunk_mmap_slices, spill_read_plan_f32_le, spill_read_plan_i16_le,
+    spill_read_plan_i32_le, spill_read_plan_i64_le, spill_read_plan_u8_le, spill_read_plan_u16_le,
 };
 pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_json};
 pub use types::{

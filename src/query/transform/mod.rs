@@ -278,6 +278,68 @@ fn sidecar_context<'a>(
     }))
 }
 
+/// Full dense RAM buffer from transform pass-2 (no preview cap).
+#[derive(Debug, Clone)]
+pub enum TransformDenseBuffer {
+    F32(Vec<f32>),
+    F64(Vec<f64>),
+}
+
+/// Decode and transform the full logical selection into an in-memory buffer (`write: ram` only).
+///
+/// # Errors
+///
+/// Same as [`run_transform`], plus validation when `write` is not RAM or the selection exceeds
+/// [`ExecutionBudget`].
+pub(crate) fn materialize_transform_dense_ram(
+    input: &TransformRunInput<'_>,
+) -> Result<TransformDenseBuffer, TetError> {
+    let sidecar = sidecar_context(input)?;
+    let (output, _) = target::resolve_transform_output(
+        input.write,
+        &input.budget,
+        input.plan,
+        input.dtype,
+        input.spill_allowlist,
+        sidecar,
+    )?;
+    if !matches!(output, target::ResolvedTransformOutput::Ram) {
+        return Err(TetError::Validation(
+            "materialize_transform_dense_ram requires `write`: `ram`".into(),
+        ));
+    }
+    let (stats, _, _) = stats::collect_transform_stats(
+        input.mmap,
+        input.plan,
+        input.op,
+        input.dtype,
+        &input.fold_policy,
+        input.tet_path,
+    )?;
+    let mut warnings = warnings::TransformWarnings::default();
+    match input.dtype {
+        ElementDtype::F32 => {
+            let (values, _) = apply::transform_read_plan_f32_le_ram(
+                input.mmap,
+                input.plan,
+                &stats,
+                &mut warnings,
+            )?;
+            Ok(TransformDenseBuffer::F32(values))
+        }
+        ElementDtype::F64 => {
+            let (values, _) = apply::transform_read_plan_f64_le_ram(
+                input.mmap,
+                input.plan,
+                &stats,
+                &mut warnings,
+            )?;
+            Ok(TransformDenseBuffer::F64(values))
+        }
+        _ => Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
+    }
+}
+
 /// Run pass-1 stats collection and pass-2 transform apply.
 ///
 /// # Errors
