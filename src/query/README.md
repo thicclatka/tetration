@@ -15,19 +15,23 @@ QueryDocument (JSON/TOML)
          → decode chunks (decode/)
          → materialize logical buffer OR spill OR streaming fold (materialize/, fold/)
          → optional GPU (gpu/, device.rs)
-         → optional transform two-pass (transform/)
+         → optional transform two-pass (transform/) — ram, spill, or sidecar `.tet` publish
     → QueryResponse + CLI format (cli/)
+         OR embedder dense export (embed_materialize.rs) — full buffers without preview cap
 ```
 
 ## Public API (library)
 
-| Entry                                                        | Role                                         |
-| ------------------------------------------------------------ | -------------------------------------------- |
-| `parse_query_json` / `parse_query_toml` / `parse_query_text` | Parse + limits                               |
-| `validate_query`                                             | Schema / policy checks                       |
-| `plan_query_with_tet_mmap_ex`                                | Attach catalog + `ReadPlan`                  |
-| `execute_query_document` / `execute_query_json`              | Plan + run operation                         |
-| `format_query_response`                                      | CLI-oriented stdout (also used by embedders) |
+| Entry                                                        | Role                                               |
+| ------------------------------------------------------------ | -------------------------------------------------- |
+| `parse_query_json` / `parse_query_toml` / `parse_query_text` | Parse + limits                                     |
+| `validate_query`                                             | Schema / policy checks                             |
+| `plan_query_with_tet_mmap_ex`                                | Attach catalog + `ReadPlan`                        |
+| `plan_read_for_document`                                     | Resolve `ReadPlan` only (no execution)             |
+| `execute_query_document` / `execute_query_json`              | Plan + run operation                               |
+| `materialize_query_selection`                                | Full dense decode (selection-only, no preview cap) |
+| `materialize_query_transform_ram`                            | Full dense transform (`write: ram`, `f32`/`f64`)   |
+| `format_query_response`                                      | CLI-oriented stdout (also used by embedders)       |
 
 Re-exported from [`prelude`](../lib.rs).
 
@@ -39,6 +43,7 @@ Re-exported from [`prelude`](../lib.rs).
 | `document_toml.rs`     | TOML parse (same `QueryDocument`)                              |
 | `document_wire.rs`     | Serde wire shapes for flat query keys (`mean`, `transform`, …) |
 | `execute.rs`           | `ExecuteQueryOptions`, thin wrapper over engine                |
+| `embed_materialize.rs` | Dense tensor export for embedders (no preview cap)             |
 | `dispatch.rs`          | Dtype-specific dispatch: materialize vs fold vs spill          |
 | `device.rs`            | `execution.device` routing (`cpu`, `cuda`, `metal`, `auto`, …) |
 | `resolve_selection.rs` | Index/coord-label selection → logical ranges                   |

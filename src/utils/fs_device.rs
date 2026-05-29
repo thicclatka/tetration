@@ -1,10 +1,10 @@
 //! Filesystem / volume identity helpers for atomic publish (rename vs copy).
 //!
-//! Sidecar `.tet` writes may build in platform cache then land beside the source file.
+//! Sidecar `.tet` writes build in platform cache then land beside the source file.
 //! [`same_filesystem`] picks [`publish_file`]'s strategy without relying on a failed `rename`.
 //!
-//! Production call sites (transform sidecar publish) are not wired yet; integration tests
-//! in `src/tests/fs_device.rs` exercise this module until then.
+//! Used by transform sidecar publish ([`crate::query::transform::sidecar`]) and covered by
+//! integration tests in `src/tests/fs_device.rs` and `src/tests/query.rs`.
 
 #![allow(dead_code)]
 

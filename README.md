@@ -15,7 +15,7 @@
 
 - **On-disk layout** — superblock, dataset directory, chunk index, raw or zstd payloads ([`docs/layout_v1.md`](docs/layout_v1.md)).
 - **Mmap + read planning** — logical slices → chunk coordinates → [`ReadPlan`](https://docs.rs/tetration/latest/tetration/query/struct.ReadPlan.html).
-- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export, **`transform`** (zscore, minmax, l1/l2, center, scale, log1p, sqrt, softmax) and **`nan_mean`** / **`nan_std`**; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`, `any_inf`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
+- **JSON / TOML query + execute** — flat query documents (paired examples in [`fixtures/queries/`](fixtures/queries/)), streaming reductions, tier-C stats, spill export, **`transform`** (zscore, minmax, l1/l2, center, scale, log1p, sqrt, softmax) with **`write`** routing (`ram`, `spill`, `switch`, **`sidecar`** `.tet` publish), **`nan_mean`** / **`nan_std`**; **named axes**, **coord label** selection, QC counts (`nan_count`, `null_count`, `inf_count`, `any_inf`), **covariance** / **correlation** ([`docs/query_engine.md`](docs/query_engine.md)).
 - **Import / export** — `tet convert` from HDF5, NetCDF, Zarr v3; **`tet export`** back to Zarr v3 (stored chunk bytes, nested groups).
 - **File health** — `tet verify` (quick scan; **`--deep`** decodes every chunk), `tet repair` (plan / `--apply` safe fixes).
 - **CLI** — `tet info`, `tet verify`, `tet repair`, `tet query`, `tet qhist`, `tet convert`, `tet export`.
@@ -85,6 +85,7 @@ tet query fixtures/queries/mean_temperature.toml -t data.tet -x -q
 tet query q.json -t data.tet -x --format stats              # slim JSON (no chunk list)
 tet query q.toml -t data.tet -x --format table --preview 6  # ASCII tables + slice grid
 tet query q.json -t data.tet --format plan                  # catalog + read_plan only
+tet query '{"dataset":"a","transform":{"method":"zscore"},"write":{"target":"sidecar","timestamp":false}}' -t data.tet -x -q
 ```
 
 Query documents are **flat** JSON or TOML (e.g. `"mean": []` / `mean = []`, `"spill": "slice.bin"`); nested `"operation"` objects are rejected. Details: [query document](docs/query_engine.md#query-document-json-and-toml).
@@ -131,7 +132,7 @@ Wire details: [`docs/layout_v1.md` — Concurrency](docs/layout_v1.md#concurrenc
 
 ```toml
 [dependencies]
-tetration = "0.1.7"
+tetration = "0.1.8"
 ```
 
 ```rust
@@ -143,6 +144,7 @@ use tetration::prelude::*;
 
 1. **Write** — `TetWriterSession::create` → `push_dataset` → `commit()` (or `commit_with_fill` for streaming).
 2. **Read / aggregate** — `TetFile::open` → `execute_query_json` → [`QueryResponse`](https://docs.rs/tetration/latest/tetration/query/struct.QueryResponse.html).
+3. **Dense tensors (no preview cap)** — mmap the `.tet`, then [`materialize_query_selection`](https://docs.rs/tetration/latest/tetration/query/fn.materialize_query_selection.html) (selection-only) or [`materialize_query_transform_ram`](https://docs.rs/tetration/latest/tetration/query/fn.materialize_query_transform_ram.html) (`transform` + `write: ram`) → [`DenseMaterializeOutcome`](https://docs.rs/tetration/latest/tetration/query/struct.DenseMaterializeOutcome.html). See [query engine — embedder dense export](docs/query_engine.md#embedder-dense-export).
 
 ```bash
 cargo run --example create_and_query

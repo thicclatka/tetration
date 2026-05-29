@@ -4,12 +4,12 @@ Glue between planning, materialization, folding, transforms, and spill export. P
 
 ## Files
 
-| File              | Role                                                                    |
-| ----------------- | ----------------------------------------------------------------------- |
-| `run.rs`          | `plan_query_with_tet_mmap_ex`, main execute path                        |
-| `operations.rs`   | Match `Operation` variant → fold / materialize / transform / covariance |
-| `budget.rs`       | `ExecutionBudget`, `MemoryStrategy` (in-core vs spill vs streaming)     |
-| `spill_policy.rs` | Temp spill files, path allowlist (`--spill-allow`)                      |
+| File              | Role                                                                       |
+| ----------------- | -------------------------------------------------------------------------- |
+| `run.rs`          | `plan_query_with_tet_mmap_ex`, `plan_read_for_document`, main execute path |
+| `operations.rs`   | Match `Operation` variant → fold / materialize / transform / covariance    |
+| `budget.rs`       | `ExecutionBudget`, `MemoryStrategy` (in-core vs spill vs streaming)        |
+| `spill_policy.rs` | Temp spill files, sidecar draft paths, path allowlist (`--spill-allow`)    |
 
 ## Memory strategies
 
@@ -25,7 +25,7 @@ See [`docs/query_engine.md`](../../../docs/query_engine.md#memory-budget-and-exe
 
 ## Key exports
 
-- `plan_query_empty`, `plan_query_with_tet_mmap`, `plan_query_with_tet_mmap_ex`
+- `plan_query_empty`, `plan_query_with_tet_mmap`, `plan_query_with_tet_mmap_ex`, `plan_read_for_document`
 - `materialize_read_plan_*` (re-exported from `materialize`)
 - `SpillPathAllowlist`, `ExecutionBudget`, `DEFAULT_MEMORY_BUDGET_BYTES`
 

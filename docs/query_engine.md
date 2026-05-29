@@ -193,7 +193,8 @@ Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_quer
 | **`decode/`**                                     | `chunk_decode.rs`, `indexing.rs`                                                                                                 | Mmap slice bounds, codec decode (raw **0**, zstd **1**), scatter; row-major index ↔ coords.                                                                                                                |
 | **`materialize/`**                                | `mod.rs`, `parallel.rs`, `f32.rs`, `f64.rs`, `f16.rs`, `int/`, `stats.rs`, `covariance.rs`, …                                    | Full/capped materialize (all wire dtypes), export spill, parallel fill, tier-C stats.                                                                                                                      |
 | **`fold/`**                                       | `fold_policy.rs`, `linear_scan.rs`, `shared.rs`, `reduction/`, `variance_simd/` (`float`, `integer`), `parallel/`, `partial/`, … | `FoldIoPolicy` / I/O regime; out-of-core **linear scan**; `FoldPlanOutcome`, `ReductionKind`; SIMD bulk sum/var/min-max on tier-A/B slabs (float + integer tags); parallel + partial-axis streaming folds. |
-| **`transform/`**                                  | `pass1.rs`, `pass2.rs`, `target.rs`, `warnings.rs`, …                                                                            | Shape-preserving transforms (`zscore`, `softmax`, …); pass-1 fold stats + pass-2 rewrite; `transform_ram` / `transform_spill` routing.                                                                     |
+| **`transform/`**                                  | `mod.rs`, `stats.rs`, `apply.rs`, `target.rs`, `sidecar.rs`, `warnings.rs`, …                                                    | Shape-preserving transforms (`zscore`, `softmax`, …); pass-1 fold stats + pass-2 rewrite; `transform_ram` / `transform_spill` / `transform_sidecar` routing.                                               |
+| **`embed_materialize.rs`**                        | —                                                                                                                                | Public dense export for embedders: `materialize_query_selection`, `materialize_query_transform_ram` (no JSON preview cap).                                                                                 |
 | **`gpu/`**                                        | `streaming_fold.rs`, `scalar_fold.rs`, `multi.rs`, …                                                                             | Optional CUDA/Metal/ROCm tier-A/B paths; per-chunk device partials + host merge; multi-GPU sharding.                                                                                                       |
 | **`device.rs`**                                   | —                                                                                                                                | `ExecutionDeviceHint`, host-RAM gate, `resolve_device_route`.                                                                                                                                              |
 | **`dispatch.rs`**                                 | —                                                                                                                                | Dtype routing for materialize, spill, scalar/partial fold.                                                                                                                                                 |
@@ -203,7 +204,7 @@ Integration test: [`src/tests/concurrent_query.rs`](../src/tests/concurrent_quer
 | **`document_wire.rs`**, **`document_toml.rs`**    | —                                                                                                                                | Wire JSON parse; TOML → JSON conversion.                                                                                                                                                                   |
 | **`cli/`**                                        | `history.rs`, `info.rs`, `output/` (`mod.rs`, `plan.rs`, `quiet.rs`, `stats.rs`, …)                                              | Platform query history JSONL; `tet info` formatters; `QueryOutputFormat`, `format_query_response`.                                                                                                         |
 
-Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `execute_query_json`, `materialize_read_plan_f32_le`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
+Public re-exports are wired in [`engine/mod.rs`](../src/query/engine/mod.rs) and [`query/mod.rs`](../src/query/mod.rs) (`tetration::query::plan_query_empty`, `format_query_response`, `QueryOutputFormat`, `execute_query_json`, `materialize_read_plan_f32_le`, `materialize_query_selection`, `materialize_query_transform_ram`, `plan_read_for_document`, `ExecutionBudget`, `spill_read_plan_f32_le`, …). Crate root exposes modules plus [`prelude`](../src/lib.rs).
 
 ## CLI query output
 
@@ -225,6 +226,22 @@ From `QueryDocument` + catalog metadata:
 4. **`plan/read_plan.rs`** — `build_read_plan` → `ReadPlan` (chunk I/O rows + `logical_selection_shape`).
 
 Each `ReadPlan.chunks` entry names one on-disk tile that intersects the selection. Chunk iteration order follows the catalog writer (last axis fastest); **decoded values** are **not** in chunk order—they are scattered into logical row-major selection order during materialization.
+
+## Embedder dense export
+
+For Python bindings and other hosts that need a **full logical tensor** (not capped `*_preview` arrays), use the helpers in [`embed_materialize.rs`](../src/query/embed_materialize.rs):
+
+| API                                                                    | Query shape                         | Returns                                                                                    |
+| ---------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`plan_read_for_document`](../src/query/engine/run.rs)                 | Any valid document                  | `PlannedRead` (`read_plan` + wire `dtype`) — planning only, no decode                      |
+| [`materialize_query_selection`](../src/query/embed_materialize.rs)     | Selection-only (no `operation` key) | [`DenseMaterializeOutcome`](../src/query/embed_materialize.rs) — all supported wire dtypes |
+| [`materialize_query_transform_ram`](../src/query/embed_materialize.rs) | `transform` + **`write: ram`**      | Transformed dense buffer (`f32` / `f64` only)                                              |
+
+`DenseMaterializeOutcome` carries `dtype`, `logical_selection_shape`, and a [`DenseBuffer`](../src/query/embed_materialize.rs) enum (`F32`, `F64`, `I32`, …). These paths bypass the JSON preview cap; they still require a buffer sized to the logical selection (same RAM contract as `transform_ram`).
+
+**Transform sidecar** (`write.target: sidecar`) is **not** exposed through `materialize_query_transform_ram` — use `execute_query_json` / `tet query -x` so the engine can draft a `.tet` in platform cache and [`publish_file`](../src/utils/fs_device.rs) beside the source. Requires a source `.tet` path (`-t` / `tet_path`) and an allowlisted destination (default: beside the source file). Sidecar pass-2 currently materializes the full transformed selection in RAM before writing the one-chunk `.tet` (no streaming sidecar yet).
+
+Tests: [`src/tests/embed_materialize.rs`](../src/tests/embed_materialize.rs).
 
 ## Memory budget and execution strategies
 
@@ -271,6 +288,8 @@ Default allowed roots (via [`SpillPathAllowlist::default_for_tet`](../src/query/
 **`--spill-allow DIR`** (repeatable) **adds** extra roots to that default set.
 
 Example relative spill beside the dataset: `"spill": "slice.bin"` → next to `data.tet`. Example cache spill: `"spill": "/home/you/.cache/tetration/job-42.bin"` (or any path under an allowed root).
+
+**Transform `write.path`** (for `spill` or `sidecar`) uses the same allowlist and relative-to-`.tet`-parent resolution. **Sidecar drafts** are allocated under platform cache (`sidecar-draft-{pid}-{nanos}.tet`) before publish to the final path.
 
 ### Adaptive fold I/O
 
@@ -599,6 +618,18 @@ Spill example (full logical tensor to disk, no JSON preview floats required):
 }
 ```
 
+Transform sidecar example (publish a one-chunk `.tet` beside the source; published path in `execution.spill_f32_path`):
+
+```json
+{
+  "dataset": "temperature",
+  "transform": { "method": "zscore" },
+  "write": { "target": "sidecar", "timestamp": false }
+}
+```
+
+Auto filename when `path` is omitted: `{stem}.{method}[.{UTC timestamp}].tet` (`timestamp` defaults **true**). Catalog dataset name: `{source}-{method}` (e.g. `temperature-zscore`).
+
 **Execution paths today:**
 
 - **Preview only** (no `operation`, no spill) — **`capped_in_memory`** when logical size ≤ budget.
@@ -626,7 +657,7 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 
 **Done:** tier-A/B streaming ops (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `any_inf`, `arg_min`, `arg_max`) — scalar + partial axes.
 
-**Done (v1):** element-wise **`transform`** — methods above; pass-1 fold stats, pass-2 rewrite; **`write`**: `switch` (default), `ram`, `spill`; `f32`/`f64` only; zero denominator → **NaN** plus capped `transform_div_by_zero_indices` in the execution response.
+**Done (v1):** element-wise **`transform`** — methods above; pass-1 fold stats, pass-2 rewrite; **`write`**: `switch` (default), `ram`, `spill`, **`sidecar`**; `f32`/`f64` only; zero denominator → **NaN** plus capped `transform_div_by_zero_indices` in the execution response.
 
 ### Tier 2 — tensor stats (shipped)
 
@@ -658,17 +689,17 @@ See [README — Library use](../README.md#library-use) and Phase 9 notes in this
 
 These match the product vision but belong **beside** the reduction enum:
 
-| Capability                                | Why separate                                                                                                                                                                 |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)); **`.tet` → Zarr v3** via `tet export` ([`export`](../src/export/mod.rs)). |
-| **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                                          |
-| **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                                              |
-| **Coordinate labels / filter-by-value**   | **Slice by label** shipped (`start_label` / `stop_label`); filter-by-value / group-by and optional lookup index remain later.                                                |
-| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                                            |
-| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                                           |
-| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                                              |
-| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                                                              |
-| **CLI query history**                     | **Done** — platform cache JSONL (`tet qhist list` / `run`; `hist` alias); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer via `tet info --history`.                          |
+| Capability                                | Why separate                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Read / export**                         | Plan + materialize or `output.spill` ([`OutputHint::SpillArray`](../src/query/types/document.rs)); **`.tet` → Zarr v3** via `tet export` ([`export`](../src/export/mod.rs)); **transform sidecar** publishes a derived `.tet` beside the source ([`transform/sidecar.rs`](../src/query/transform/sidecar.rs)). |
+| **`cast` / integer dtypes**               | **`i32` / `i64`** on disk and in materialize/query fold (**done**).                                                                                                                                                                                                                                            |
+| **Named axis labels**                     | **Done** — footer `dim_names` resolves `"time"` to axis index at plan time ([`resolve_axes.rs`](../src/query/resolve_axes.rs)).                                                                                                                                                                                |
+| **Coordinate labels / filter-by-value**   | **Slice by label** shipped (`start_label` / `stop_label`); filter-by-value / group-by and optional lookup index remain later.                                                                                                                                                                                  |
+| **`rechunk` / resample**                  | Writer / transform path, not read-time aggregate.                                                                                                                                                                                                                                                              |
+| **Linear algebra** (`matmul`, `einsum`)   | Belongs in caller libraries on materialized slabs.                                                                                                                                                                                                                                                             |
+| **Spectral / ML** (FFT, CWT, conv, train) | Same: materialize or spill, then NumPy / SciPy / PyTorch / JAX — not chunk-local in the engine.                                                                                                                                                                                                                |
+| **SQL / joins**                           | Explicit non-goal (see [README](../README.md)).                                                                                                                                                                                                                                                                |
+| **CLI query history**                     | **Done** — platform cache JSONL (`tet qhist list` / `run`; `hist` alias); `TET_QUERY_HISTORY_MAX` rotation; `.tet` footer via `tet info --history`.                                                                                                                                                            |
 
 ### Non-goals for the JSON `operation` field
 

@@ -60,6 +60,14 @@ Exit code **1** when verification fails (CI-friendly). Manual smoke fixtures: [`
 | `--device DEVICE`   | Tier-A/B device routing (`cpu`, `auto`, `metal`, `cuda`, `cuda:N`, `rocm`, `rocm:N`, `cuda:multi`, `rocm:multi`); overrides query `execution.device`; needs `-x` |
 | `--spill-allow DIR` | Extra spill roots (repeatable; needs `-x` and `-t`)                                                                                                              |
 
+**Transform `write` targets** (with `-x` and `-t`): `ram` / `switch` / `spill` / **`sidecar`**. Sidecar publishes a one-chunk `.tet` beside the source (default filename `{stem}.{method}.{timestamp}.tet`; set `"timestamp": false` for a stable name). Published path appears in `execution.spill_f32_path`. Example:
+
+```bash
+tet query '{"dataset":"temperature","transform":{"method":"zscore"},"write":{"target":"sidecar","timestamp":false}}' -t data.tet -x -q
+```
+
+See [query engine — transform sidecar](query_engine.md#embedder-dense-export) and [JSON examples](query_engine.md#json-examples).
+
 ## `tet qhist`
 
 Stored under the platform cache (`query_history.jsonl`), not in the `.tet` file. Env: `TET_NO_QUERY_HISTORY`, `TET_QUERY_HISTORY_FILE`, `TET_QUERY_HISTORY_MAX`. Details: [query engine — end-to-end flow](query_engine.md#end-to-end-flow) (`tet qhist`); roadmap row under [operations](query_engine.md#operations-roadmap-planned).
