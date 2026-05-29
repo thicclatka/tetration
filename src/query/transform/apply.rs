@@ -1,4 +1,8 @@
 //! Pass-2 apply transforms while decoding the logical selection.
+//!
+//! Each element is rewritten using pass-1 stats ([`TransformStats`]). Non-finite inputs
+//! are preserved; invalid divides and negative `sqrt` shifts become **NaN** and append
+//! to [`TransformWarnings`].
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -14,15 +18,18 @@ use crate::utils::{f32_le, f64_le};
 use super::stats::TransformStats;
 use super::warnings::TransformWarnings;
 
-fn stat_cell_index(li: usize, shape: &[u64], stats: &TransformStats) -> Result<usize, TetError> {
-    if let Some(layout) = &stats.layout {
-        let (oi, _) = partial_geometry::reduced_cell_index(li, shape, layout)?;
-        Ok(oi)
-    } else {
-        Ok(0)
-    }
+/// Run scatter-fill with a shared [`RefCell`] so chunk visitors can record warnings.
+fn with_warnings_cell<R>(
+    warnings: &mut TransformWarnings,
+    f: impl FnOnce(&RefCell<TransformWarnings>) -> Result<R, TetError>,
+) -> Result<R, TetError> {
+    let cell = RefCell::new(std::mem::take(warnings));
+    let out = f(&cell)?;
+    *warnings = cell.into_inner();
+    Ok(out)
 }
 
+/// Divide when `denom` is finite and non-zero; otherwise record the logical index and return NaN.
 fn div_or_nan(numer: f64, denom: f64, li: usize, warnings: &mut TransformWarnings) -> f64 {
     if denom == 0.0 || !denom.is_finite() {
         warnings.record_div_by_zero(li as u64);
@@ -31,6 +38,7 @@ fn div_or_nan(numer: f64, denom: f64, li: usize, warnings: &mut TransformWarning
     numer / denom
 }
 
+/// Apply `stats.method` to one finite `f64` sample at logical index `li`.
 fn transform_f64(
     x: f64,
     li: usize,
@@ -41,7 +49,7 @@ fn transform_f64(
     if !x.is_finite() {
         return Ok(x);
     }
-    let cell = stat_cell_index(li, shape, stats)?;
+    let cell = partial_geometry::reduced_cell_index_or_global(li, shape, stats.layout.as_ref())?;
     Ok(match stats.method {
         TransformMethod::Center => x - stats.mean[cell],
         TransformMethod::Zscore => {
@@ -125,12 +133,12 @@ pub(crate) fn transform_read_plan_f32_le_ram(
     stats: &TransformStats,
     warnings: &mut TransformWarnings,
 ) -> Result<(Vec<f32>, u64), TetError> {
-    let cell = RefCell::new(std::mem::take(warnings));
-    let n = plan.logical_f32_element_count;
-    let mut out = vec![f32::NAN; n];
-    let bytes = transform_scatter_fill_f32(mmap, plan, &mut out, stats, &cell)?;
-    *warnings = cell.into_inner();
-    Ok((out, bytes))
+    with_warnings_cell(warnings, |cell| {
+        let n = plan.logical_f32_element_count;
+        let mut out = vec![f32::NAN; n];
+        let bytes = transform_scatter_fill_f32(mmap, plan, &mut out, stats, cell)?;
+        Ok((out, bytes))
+    })
 }
 
 /// Materialize the transformed logical selection into a dense `f64` vector.
@@ -144,12 +152,12 @@ pub(crate) fn transform_read_plan_f64_le_ram(
     stats: &TransformStats,
     warnings: &mut TransformWarnings,
 ) -> Result<(Vec<f64>, u64), TetError> {
-    let cell = RefCell::new(std::mem::take(warnings));
-    let n = plan.logical_f32_element_count;
-    let mut out = vec![f64::NAN; n];
-    let bytes = transform_scatter_fill_f64(mmap, plan, &mut out, stats, &cell)?;
-    *warnings = cell.into_inner();
-    Ok((out, bytes))
+    with_warnings_cell(warnings, |cell| {
+        let n = plan.logical_f32_element_count;
+        let mut out = vec![f64::NAN; n];
+        let bytes = transform_scatter_fill_f64(mmap, plan, &mut out, stats, cell)?;
+        Ok((out, bytes))
+    })
 }
 
 /// Spill the transformed logical selection as row-major little-endian POD to `path`.
@@ -164,21 +172,20 @@ pub(crate) fn transform_spill_f32_le(
     stats: &TransformStats,
     warnings: &mut TransformWarnings,
 ) -> Result<u64, TetError> {
-    let cell = RefCell::new(std::mem::take(warnings));
-    let byte_len = spill_byte_len_from_elem_count(
-        plan.logical_f32_element_count,
-        f32_le::bytes_from_elem_count,
-    )?;
-    let bytes = spill_read_plan_pod_le_impl(
-        mmap,
-        plan,
-        path,
-        byte_len,
-        |mmap, plan, out| transform_scatter_fill_f32(mmap, plan, out, stats, &cell),
-        None,
-    )?;
-    *warnings = cell.into_inner();
-    Ok(bytes)
+    with_warnings_cell(warnings, |cell| {
+        let byte_len = spill_byte_len_from_elem_count(
+            plan.logical_f32_element_count,
+            f32_le::bytes_from_elem_count,
+        )?;
+        spill_read_plan_pod_le_impl(
+            mmap,
+            plan,
+            path,
+            byte_len,
+            |mmap, plan, out| transform_scatter_fill_f32(mmap, plan, out, stats, cell),
+            None, // intentional NaNs from div-by-zero; skip materialized completeness check
+        )
+    })
 }
 
 /// Spill the transformed logical selection as row-major `f64` LE to `path`.
@@ -193,19 +200,18 @@ pub(crate) fn transform_spill_f64_le(
     stats: &TransformStats,
     warnings: &mut TransformWarnings,
 ) -> Result<u64, TetError> {
-    let cell = RefCell::new(std::mem::take(warnings));
-    let byte_len = spill_byte_len_from_elem_count(
-        plan.logical_f32_element_count,
-        f64_le::bytes_from_elem_count,
-    )?;
-    let bytes = spill_read_plan_pod_le_impl(
-        mmap,
-        plan,
-        path,
-        byte_len,
-        |mmap, plan, out| transform_scatter_fill_f64(mmap, plan, out, stats, &cell),
-        None,
-    )?;
-    *warnings = cell.into_inner();
-    Ok(bytes)
+    with_warnings_cell(warnings, |cell| {
+        let byte_len = spill_byte_len_from_elem_count(
+            plan.logical_f32_element_count,
+            f64_le::bytes_from_elem_count,
+        )?;
+        spill_read_plan_pod_le_impl(
+            mmap,
+            plan,
+            path,
+            byte_len,
+            |mmap, plan, out| transform_scatter_fill_f64(mmap, plan, out, stats, cell),
+            None, // intentional NaNs from div-by-zero; skip materialized completeness check
+        )
+    })
 }

@@ -1,4 +1,9 @@
 //! Two-pass element-wise transforms (`transform` wire key).
+//!
+//! Pass 1 ([`stats`]) folds statistics over the logical selection. Pass 2 ([`apply`])
+//! decodes chunks again and rewrites each element in place (RAM or spill). Division by
+//! zero (or an invalid `sqrt` shift) yields **NaN** and is recorded in
+//! [`warnings::TransformWarnings`] for the execution preview.
 
 mod apply;
 mod stats;
@@ -19,6 +24,7 @@ use crate::query::materialize::DecodePreviewBundle;
 use crate::query::types::{Operation, OperationPreviewFields, ReadPlan, TetError, WriteHints};
 use crate::utils::dtype::ElementDtype;
 
+/// Result of [`run_transform`]: decode preview, pass-1 stats, spill metadata, and warnings.
 pub(crate) struct TransformOutcome {
     pub total_bytes_read_from_disk: u64,
     pub strategy: MemoryStrategy,
@@ -28,6 +34,7 @@ pub(crate) struct TransformOutcome {
     pub operation: OperationPreviewFields,
 }
 
+/// Inputs shared by pass 1 and pass 2 of a transform operation.
 pub(crate) struct TransformRunInput<'a> {
     pub mmap: &'a [u8],
     pub plan: &'a ReadPlan,
@@ -50,6 +57,8 @@ struct Pass2Outcome {
     warnings: warnings::TransformWarnings,
 }
 
+const ERR_TRANSFORM_FLOAT: &str = "transform requires f32 or f64 datasets";
+
 fn capped_preview<T: Copy>(values: &[T], max_preview: usize, logical_len: usize) -> (Vec<T>, bool) {
     let truncated = logical_len > max_preview;
     let preview = if max_preview == 0 {
@@ -58,6 +67,21 @@ fn capped_preview<T: Copy>(values: &[T], max_preview: usize, logical_len: usize)
         values[..max_preview.min(logical_len)].to_vec()
     };
     (preview, truncated)
+}
+
+fn transform_ram_outcome(
+    bundle: DecodePreviewBundle,
+    bytes: u64,
+    warnings: warnings::TransformWarnings,
+) -> Pass2Outcome {
+    Pass2Outcome {
+        strategy: MemoryStrategy::TransformRam,
+        spill_path: None,
+        spill_bytes: None,
+        bundle,
+        pass2_bytes: bytes,
+        warnings,
+    }
 }
 
 fn run_pass2(
@@ -76,14 +100,11 @@ fn run_pass2(
                 &mut warnings,
             )?;
             let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
-            Ok(Pass2Outcome {
-                strategy: MemoryStrategy::TransformRam,
-                spill_path: None,
-                spill_bytes: None,
-                bundle: DecodePreviewBundle::f32_preview(preview, truncated),
-                pass2_bytes: bytes,
+            Ok(transform_ram_outcome(
+                DecodePreviewBundle::f32_preview(preview, truncated),
+                bytes,
                 warnings,
-            })
+            ))
         }
         (ElementDtype::F64, target::ResolvedTransformOutput::Ram) => {
             let (values, bytes) = apply::transform_read_plan_f64_le_ram(
@@ -93,21 +114,16 @@ fn run_pass2(
                 &mut warnings,
             )?;
             let (preview, truncated) = capped_preview(&values, input.max_preview, logical_len);
-            Ok(Pass2Outcome {
-                strategy: MemoryStrategy::TransformRam,
-                spill_path: None,
-                spill_bytes: None,
-                bundle: DecodePreviewBundle::f64_preview(preview, truncated),
-                pass2_bytes: bytes,
+            Ok(transform_ram_outcome(
+                DecodePreviewBundle::f64_preview(preview, truncated),
+                bytes,
                 warnings,
-            })
+            ))
         }
         (ElementDtype::F32 | ElementDtype::F64, target::ResolvedTransformOutput::Spill(path)) => {
             spill_pass2(input, stats, &path)
         }
-        _ => Err(TetError::Validation(
-            "transform requires f32 or f64 datasets".into(),
-        )),
+        _ => Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
     }
 }
 
@@ -125,9 +141,7 @@ fn spill_pass2(
             apply::transform_spill_f64_le(input.mmap, input.plan, path, stats, &mut warnings)?
         }
         _ => {
-            return Err(TetError::Validation(
-                "transform requires f32 or f64 datasets".into(),
-            ));
+            return Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into()));
         }
     };
     let spill_bytes = input

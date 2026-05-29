@@ -401,6 +401,7 @@ fn require_spill_allowlist<'a>(
     })
 }
 
+/// Run a two-pass transform and assemble the execution preview.
 fn build_transform_operation_preview(
     input: &OperationPreviewInput<'_>,
 ) -> Result<types::QueryExecutionPreview, types::TetError> {

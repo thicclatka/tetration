@@ -110,3 +110,17 @@ pub(crate) fn reduced_cell_index(
     let fi = fiber_linear_index(&coords, &layout.axis_indices, shape)? as u64;
     Ok((oi, fi))
 }
+
+/// Reduced output cell index for partial-axis transforms, or `0` when `layout` is `None` (global stats).
+pub(crate) fn reduced_cell_index_or_global(
+    li: usize,
+    shape: &[u64],
+    layout: Option<&PartialAxisLayout>,
+) -> Result<usize, TetError> {
+    if let Some(layout) = layout {
+        let (oi, _) = reduced_cell_index(li, shape, layout)?;
+        Ok(oi)
+    } else {
+        Ok(0)
+    }
+}

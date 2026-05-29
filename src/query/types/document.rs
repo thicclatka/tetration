@@ -123,6 +123,7 @@ pub enum Operation {
         axes: Vec<String>,
     },
     /// Two-pass shape-preserving transform (`transform` wire key); see [`TransformMethod`].
+    /// Empty `axes` applies one global stat set; non-empty `axes` fold per reduced cell.
     Transform {
         method: TransformMethod,
         axes: Vec<String>,
@@ -265,7 +266,7 @@ impl WriteTarget {
     }
 }
 
-/// Output routing for transform operations (`zscore`, `min_max_normalize`).
+/// Output routing for [`Operation::Transform`] (`write` wire key).
 #[derive(Debug, Clone, Default)]
 pub struct WriteHints {
     pub target: WriteTarget,
@@ -304,7 +305,7 @@ pub struct QueryDocument {
     pub operation: Option<Operation>,
     /// Optional export spill (`spill` wire key); not used with transform ops.
     pub output: Option<OutputHints>,
-    /// Transform output routing (`write` wire key); used with `zscore` / `min_max_normalize`.
+    /// Transform output routing (`write` wire key); see [`WriteHints`] and [`TransformMethod`].
     pub write: Option<WriteHints>,
     /// Host-side memory budget overrides for execution.
     pub execution: Option<ExecutionHints>,

@@ -3,6 +3,8 @@
 use super::TetError;
 
 /// Shape-preserving element-wise transform (pass-1 fold stats, pass-2 rewrite).
+///
+/// Wire methods: `zscore`, `minmax`, `l1`, `l2`, `center`, `scale`, `log1p`, `sqrt`, `softmax`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransformMethod {

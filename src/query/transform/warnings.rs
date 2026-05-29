@@ -1,4 +1,4 @@
-//! Div-by-zero (and similar) warnings recorded during transform pass 2.
+//! Div-by-zero and invalid-shift warnings recorded during transform pass 2.
 
 /// Cap of logical indices listed in the execution response (total count is unbounded).
 pub(crate) const MAX_LISTED_DIV_BY_ZERO_INDICES: usize = 256;
@@ -11,6 +11,7 @@ pub(crate) struct TransformWarnings {
 }
 
 impl TransformWarnings {
+    /// Increment the total count and append `logical_index` when under [`MAX_LISTED_DIV_BY_ZERO_INDICES`].
     pub(crate) fn record_div_by_zero(&mut self, logical_index: u64) {
         self.div_by_zero_count += 1;
         if self.div_by_zero_indices.len() < MAX_LISTED_DIV_BY_ZERO_INDICES {

@@ -410,67 +410,118 @@ pub(super) fn scalar_operation_display(
     }
 }
 
-fn transform_scalar_stats_line(ex: &QueryExecutionPreview) -> Result<String, String> {
+/// Format one pass-1 stat from scalar or partial-axis preview fields.
+fn transform_stat_value(
+    partial: bool,
+    scalar_field: &'static str,
+    reduced_field: &'static str,
+    scalar: Option<f64>,
+    reduced: Option<&Vec<f64>>,
+) -> Result<String, String> {
+    if partial {
+        quiet_reduced_f64(reduced_field, reduced)
+    } else {
+        scalar
+            .map(fmt_f64)
+            .ok_or_else(|| missing_field(scalar_field))
+    }
+}
+
+/// Quiet-footer pass-1 stats for transform ops (`partial` selects `operation_reduced_*` fields).
+fn transform_stats_line(ex: &QueryExecutionPreview, partial: bool) -> Result<String, String> {
     match ex.transform_method.as_deref() {
         Some("zscore") => {
-            let mean = ex
-                .operation_mean
-                .ok_or_else(|| missing_field("operation_mean"))?;
-            let std = ex
-                .operation_std
-                .ok_or_else(|| missing_field("operation_std"))?;
-            Ok(format!("mean={} std={}", fmt_f64(mean), fmt_f64(std)))
+            let mean = transform_stat_value(
+                partial,
+                "operation_mean",
+                "operation_reduced_mean",
+                ex.operation_mean,
+                ex.operation_reduced_mean.as_ref(),
+            )?;
+            let std = transform_stat_value(
+                partial,
+                "operation_std",
+                "operation_reduced_std",
+                ex.operation_std,
+                ex.operation_reduced_std.as_ref(),
+            )?;
+            Ok(format!("mean={mean} std={std}"))
         }
         Some("minmax") => {
-            let min = ex
-                .operation_min
-                .ok_or_else(|| missing_field("operation_min"))?;
-            let max = ex
-                .operation_max
-                .ok_or_else(|| missing_field("operation_max"))?;
-            Ok(format!("min={} max={}", fmt_f64(min), fmt_f64(max)))
+            let min = transform_stat_value(
+                partial,
+                "operation_min",
+                "operation_reduced_min",
+                ex.operation_min,
+                ex.operation_reduced_min.as_ref(),
+            )?;
+            let max = transform_stat_value(
+                partial,
+                "operation_max",
+                "operation_reduced_max",
+                ex.operation_max,
+                ex.operation_reduced_max.as_ref(),
+            )?;
+            Ok(format!("min={min} max={max}"))
         }
-        Some("center") => {
-            let mean = ex
-                .operation_mean
-                .ok_or_else(|| missing_field("operation_mean"))?;
-            Ok(format!("mean={}", fmt_f64(mean)))
-        }
-        Some("scale") => {
-            let std = ex
-                .operation_std
-                .ok_or_else(|| missing_field("operation_std"))?;
-            Ok(format!("std={}", fmt_f64(std)))
-        }
-        Some("l1") => {
-            let n1 = ex
-                .operation_norm_l1
-                .ok_or_else(|| missing_field("operation_norm_l1"))?;
-            Ok(format!("norm_l1={}", fmt_f64(n1)))
-        }
-        Some("l2") => {
-            let n2 = ex
-                .operation_norm_l2
-                .ok_or_else(|| missing_field("operation_norm_l2"))?;
-            Ok(format!("norm_l2={}", fmt_f64(n2)))
-        }
-        Some("log1p" | "sqrt") => {
-            let min = ex
-                .operation_min
-                .ok_or_else(|| missing_field("operation_min"))?;
-            Ok(format!("min={}", fmt_f64(min)))
-        }
-        Some("softmax") => {
-            let max = ex
-                .operation_max
-                .ok_or_else(|| missing_field("operation_max"))?;
-            Ok(format!("max={}", fmt_f64(max)))
-        }
+        Some("center") => transform_stat_value(
+            partial,
+            "operation_mean",
+            "operation_reduced_mean",
+            ex.operation_mean,
+            ex.operation_reduced_mean.as_ref(),
+        )
+        .map(|mean| format!("mean={mean}")),
+        Some("scale") => transform_stat_value(
+            partial,
+            "operation_std",
+            "operation_reduced_std",
+            ex.operation_std,
+            ex.operation_reduced_std.as_ref(),
+        )
+        .map(|std| format!("std={std}")),
+        Some("l1") => transform_stat_value(
+            partial,
+            "operation_norm_l1",
+            "operation_reduced_norm_l1",
+            ex.operation_norm_l1,
+            ex.operation_reduced_norm_l1.as_ref(),
+        )
+        .map(|n1| format!("norm_l1={n1}")),
+        Some("l2") => transform_stat_value(
+            partial,
+            "operation_norm_l2",
+            "operation_reduced_norm_l2",
+            ex.operation_norm_l2,
+            ex.operation_reduced_norm_l2.as_ref(),
+        )
+        .map(|n2| format!("norm_l2={n2}")),
+        Some("log1p" | "sqrt") => transform_stat_value(
+            partial,
+            "operation_min",
+            "operation_reduced_min",
+            ex.operation_min,
+            ex.operation_reduced_min.as_ref(),
+        )
+        .map(|min| format!("min={min}")),
+        Some("softmax") => transform_stat_value(
+            partial,
+            "operation_max",
+            "operation_reduced_max",
+            ex.operation_max,
+            ex.operation_reduced_max.as_ref(),
+        )
+        .map(|max| format!("max={max}")),
         Some(method) => Ok(format!("method={method}")),
         None => Ok("method=transform".to_string()),
     }
 }
 
+fn transform_scalar_stats_line(ex: &QueryExecutionPreview) -> Result<String, String> {
+    transform_stats_line(ex, false)
+}
+
+/// Append `transform_div_by_zero_*` tags when pass 2 recorded NaN-producing divides.
 fn transform_warning_tags(ex: &QueryExecutionPreview) -> Vec<String> {
     let mut tags = Vec::new();
     if let Some(count) = ex.transform_div_by_zero_count {
@@ -478,7 +529,7 @@ fn transform_warning_tags(ex: &QueryExecutionPreview) -> Vec<String> {
         if let Some(indices) = ex.transform_div_by_zero_indices.as_ref() {
             let listed = indices
                 .iter()
-                .map(|i| i.to_string())
+                .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(",");
             tags.push(format!("transform_div_by_zero_indices=[{listed}]"));
@@ -735,42 +786,5 @@ pub(super) fn partial_operation_values(
 }
 
 fn transform_partial_stats_line(ex: &QueryExecutionPreview) -> Result<String, String> {
-    match ex.transform_method.as_deref() {
-        Some("zscore") => {
-            let mean =
-                quiet_reduced_f64("operation_reduced_mean", ex.operation_reduced_mean.as_ref())?;
-            let std =
-                quiet_reduced_f64("operation_reduced_std", ex.operation_reduced_std.as_ref())?;
-            Ok(format!("mean={mean} std={std}"))
-        }
-        Some("minmax") => {
-            let min =
-                quiet_reduced_f64("operation_reduced_min", ex.operation_reduced_min.as_ref())?;
-            let max =
-                quiet_reduced_f64("operation_reduced_max", ex.operation_reduced_max.as_ref())?;
-            Ok(format!("min={min} max={max}"))
-        }
-        Some("center") => {
-            quiet_reduced_f64("operation_reduced_mean", ex.operation_reduced_mean.as_ref())
-        }
-        Some("scale") => {
-            quiet_reduced_f64("operation_reduced_std", ex.operation_reduced_std.as_ref())
-        }
-        Some("l1") => quiet_reduced_f64(
-            "operation_reduced_norm_l1",
-            ex.operation_reduced_norm_l1.as_ref(),
-        ),
-        Some("l2") => quiet_reduced_f64(
-            "operation_reduced_norm_l2",
-            ex.operation_reduced_norm_l2.as_ref(),
-        ),
-        Some("log1p" | "sqrt") => {
-            quiet_reduced_f64("operation_reduced_min", ex.operation_reduced_min.as_ref())
-        }
-        Some("softmax") => {
-            quiet_reduced_f64("operation_reduced_max", ex.operation_reduced_max.as_ref())
-        }
-        Some(method) => Ok(format!("method={method}")),
-        None => Ok("method=transform".to_string()),
-    }
+    transform_stats_line(ex, true)
 }

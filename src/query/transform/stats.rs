@@ -1,9 +1,14 @@
-//! Pass-1 fold stats for element-wise transforms.
+//! Pass-1 statistics for element-wise transforms.
+//!
+//! [`collect_transform_stats`] streams planned chunks (or dispatches standard fold
+//! reductions) to build per-cell stat vectors used in pass 2 ([`super::apply`]).
+//! Global transforms (`axes: []`) use length-1 vectors; partial-axis transforms
+//! use one entry per reduced output cell (`layout.out_len`).
 
 use std::path::Path;
 
 use crate::query::decode::chunk_decode::{visit_planned_chunk, visit_planned_chunk_f64};
-use crate::query::dispatch;
+use crate::query::dispatch::{self, accumulate_chunk_read_bytes};
 use crate::query::fold::{
     fold_policy::FoldIoPolicy,
     partial_geometry::{self, PartialAxisLayout},
@@ -14,17 +19,27 @@ use crate::utils::dtype::ElementDtype;
 
 use super::TransformMethod;
 
-/// Per reduced-cell statistics gathered in pass 1.
+const ERR_TRANSFORM_FLOAT: &str = "transform requires f32 or f64 datasets";
+
+/// Per-cell statistics gathered in pass 1 (indexed via [`partial_geometry::reduced_cell_index_or_global`]).
 #[derive(Debug, Clone)]
 pub(crate) struct TransformStats {
     pub method: TransformMethod,
+    /// Set after layout resolution; `None` for global (`axes: []`) transforms.
     pub layout: Option<PartialAxisLayout>,
+    /// Mean per cell (`center`, `zscore`).
     pub mean: Vec<f64>,
+    /// Population std per cell (`zscore`, `scale`), `ddof = 0`.
     pub std: Vec<f64>,
+    /// Min per cell (`minmax`, `log1p`, `sqrt` shift).
     pub min: Vec<f64>,
+    /// Max per cell (`minmax`, `softmax` stabilization).
     pub max: Vec<f64>,
+    /// L1 norm per cell (`l1`).
     pub norm_l1: Vec<f64>,
+    /// L2 norm per cell (`l2`).
     pub norm_l2: Vec<f64>,
+    /// `sum(exp(x - max))` per cell after pass-1 max fold (`softmax`).
     pub sum_exp: Vec<f64>,
 }
 
@@ -53,61 +68,29 @@ pub(crate) fn collect_transform_stats(
         ));
     };
     if !matches!(dtype, ElementDtype::F32 | ElementDtype::F64) {
-        return Err(TetError::Validation(
-            "transform requires f32 or f64 datasets".into(),
-        ));
+        return Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into()));
     }
-    if axes.is_empty() {
-        collect_scalar_stats(mmap, plan, *method, dtype, policy, tet_path)
+
+    let layout = if axes.is_empty() {
+        None
     } else {
-        collect_partial_stats(mmap, plan, *method, dtype, policy, axes)
-    }
-}
-
-fn collect_scalar_stats(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    method: TransformMethod,
-    dtype: ElementDtype,
-    policy: &FoldIoPolicy,
-    tet_path: Option<&Path>,
-) -> Result<(TransformStats, OperationPreviewFields, u64), TetError> {
-    let (stats, mut fields, bytes) = collect_stats_for_method(&CollectStatsInput {
-        mmap,
-        plan,
-        method,
-        dtype,
-        policy,
-        tet_path,
-        layout: None,
-        axes: &[],
-    })?;
-    stamp_preview_fields(&mut fields, method, &stats, None);
-    Ok((stats, fields, bytes))
-}
-
-fn collect_partial_stats(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    method: TransformMethod,
-    dtype: ElementDtype,
-    policy: &FoldIoPolicy,
-    axes: &[String],
-) -> Result<(TransformStats, OperationPreviewFields, u64), TetError> {
-    let layout = partial_geometry::partial_axis_layout(plan, axes)?;
+        Some(partial_geometry::partial_axis_layout(plan, axes)?)
+    };
     let (mut stats, mut fields, bytes) = collect_stats_for_method(&CollectStatsInput {
         mmap,
         plan,
-        method,
+        method: *method,
         dtype,
         policy,
-        tet_path: None,
-        layout: Some(&layout),
+        tet_path,
+        layout: layout.as_ref(),
         axes,
     })?;
-    stats.layout = Some(layout.clone());
-    stamp_preview_fields(&mut fields, method, &stats, Some(&layout));
-    fields.reduced_shape = Some(layout.out_shape);
+    if let Some(ref layout) = layout {
+        stats.layout = Some(layout.clone());
+        fields.reduced_shape = Some(layout.out_shape.clone());
+    }
+    stamp_preview_fields(&mut fields, *method, &stats, layout.as_ref());
     Ok((stats, fields, bytes))
 }
 
@@ -118,8 +101,7 @@ fn stamp_preview_fields(
     layout: Option<&PartialAxisLayout>,
 ) {
     fields.transform_method = Some(method.as_str().to_owned());
-    let partial = layout.is_some();
-    if partial {
+    if layout.is_some() {
         fields.reduced_mean = Some(stats.mean.clone());
         fields.reduced_std = Some(stats.std.clone());
         fields.reduced_min = Some(stats.min.clone());
@@ -127,57 +109,43 @@ fn stamp_preview_fields(
         fields.reduced_norm_l1 = Some(stats.norm_l1.clone());
         fields.reduced_norm_l2 = Some(stats.norm_l2.clone());
     } else {
-        if let Some(&m) = stats.mean.first() {
-            fields.mean = Some(m);
-        }
-        if let Some(&s) = stats.std.first() {
-            fields.std = Some(s);
-        }
-        if let Some(&mn) = stats.min.first() {
-            fields.min = Some(mn);
-        }
-        if let Some(&mx) = stats.max.first() {
-            fields.max = Some(mx);
-        }
-        if let Some(&n1) = stats.norm_l1.first() {
-            fields.norm_l1 = Some(n1);
-        }
-        if let Some(&n2) = stats.norm_l2.first() {
-            fields.norm_l2 = Some(n2);
-        }
+        assign_first_scalar(&mut fields.mean, &stats.mean);
+        assign_first_scalar(&mut fields.std, &stats.std);
+        assign_first_scalar(&mut fields.min, &stats.min);
+        assign_first_scalar(&mut fields.max, &stats.max);
+        assign_first_scalar(&mut fields.norm_l1, &stats.norm_l1);
+        assign_first_scalar(&mut fields.norm_l2, &stats.norm_l2);
     }
 }
 
-fn scalar_fold_stat(
-    total_bytes: &mut u64,
-    mmap: &[u8],
-    plan: &ReadPlan,
-    kind: ReductionKind,
-    dtype: ElementDtype,
-    policy: &FoldIoPolicy,
-    tet_path: Option<&Path>,
-) -> Result<f64, TetError> {
-    let folded = dispatch::scalar_fold(mmap, plan, 0, kind, dtype, policy, tet_path)?;
-    *total_bytes = total_bytes
-        .checked_add(folded.total_bytes_read_from_disk)
-        .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
-    Ok(extract_scalar(&folded.operation, kind))
+fn assign_first_scalar(target: &mut Option<f64>, values: &[f64]) {
+    if let Some(&v) = values.first() {
+        *target = Some(v);
+    }
 }
 
-fn partial_fold_stat(
-    total_bytes: &mut u64,
+/// Visit every finite logical element in `plan`, promoting `f32` to `f64` for the callback.
+fn fold_transform_chunks<F>(
     mmap: &[u8],
     plan: &ReadPlan,
-    kind: ReductionKind,
-    axes: &[String],
     dtype: ElementDtype,
-    policy: &FoldIoPolicy,
-) -> Result<Vec<f64>, TetError> {
-    let folded = dispatch::partial_fold(mmap, plan, 0, kind, axes, dtype, policy)?;
-    *total_bytes = total_bytes
-        .checked_add(folded.total_bytes_read_from_disk)
-        .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
-    Ok(extract_partial(&folded.operation, kind))
+    mut visit: F,
+) -> Result<u64, TetError>
+where
+    F: FnMut(usize, f64) -> Result<(), TetError>,
+{
+    let mut total = 0u64;
+    for c in &plan.chunks {
+        let n = match dtype {
+            ElementDtype::F32 => {
+                visit_planned_chunk(mmap, plan, c, |li, v| visit(li, f64::from(v)))?
+            }
+            ElementDtype::F64 => visit_planned_chunk_f64(mmap, plan, c, &mut visit)?,
+            _ => return Err(TetError::Validation(ERR_TRANSFORM_FLOAT.into())),
+        };
+        accumulate_chunk_read_bytes(&mut total, n)?;
+    }
+    Ok(total)
 }
 
 #[derive(Copy, Clone)]
@@ -199,25 +167,34 @@ fn fold_stat_vec(
     partial: bool,
 ) -> Result<Vec<f64>, TetError> {
     if partial {
-        partial_fold_stat(
-            total_bytes,
+        let folded = dispatch::partial_fold(
             input.mmap,
             input.plan,
+            0,
             kind,
             input.axes,
             input.dtype,
             input.policy,
-        )
+        )?;
+        accumulate_chunk_read_bytes(total_bytes, folded.total_bytes_read_from_disk)?;
+        Ok(extract_folded_values(&folded.operation, kind, true))
     } else {
-        Ok(vec![scalar_fold_stat(
-            total_bytes,
+        let folded = dispatch::scalar_fold(
             input.mmap,
             input.plan,
+            0,
             kind,
             input.dtype,
             input.policy,
             input.tet_path,
-        )?])
+        )?;
+        accumulate_chunk_read_bytes(total_bytes, folded.total_bytes_read_from_disk)?;
+        Ok(vec![
+            extract_folded_values(&folded.operation, kind, false)
+                .into_iter()
+                .next()
+                .unwrap_or(0.0),
+        ])
     }
 }
 
@@ -229,10 +206,8 @@ fn collect_stats_for_method(
         plan,
         method,
         dtype,
-        policy: _,
-        tet_path: _,
         layout,
-        axes: _,
+        ..
     } = *input;
     let partial = layout.is_some();
     let mut stats = TransformStats {
@@ -270,142 +245,72 @@ fn collect_stats_for_method(
         }
         TransformMethod::Log1p | TransformMethod::Sqrt => {
             let ncells = layout.map_or(1, |l| l.out_len);
-            stats.min = vec![f64::INFINITY; ncells];
-            let bytes = fold_finite_min(mmap, plan, dtype, layout, &mut stats.min)?;
-            total_bytes = total_bytes
-                .checked_add(bytes)
-                .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+            let mut out_min = vec![f64::INFINITY; ncells];
+            let shape = &plan.logical_selection_shape;
+            let bytes = fold_transform_chunks(mmap, plan, dtype, |li, v| {
+                if !v.is_finite() {
+                    return Ok(());
+                }
+                let cell = partial_geometry::reduced_cell_index_or_global(li, shape, layout)?;
+                out_min[cell] = out_min[cell].min(v);
+                Ok(())
+            })?;
+            accumulate_chunk_read_bytes(&mut total_bytes, bytes)?;
+            for m in &mut out_min {
+                if !m.is_finite() {
+                    *m = 0.0;
+                }
+            }
+            stats.min = out_min;
         }
         TransformMethod::Softmax => {
             stats.max = fold_stat_vec(&mut total_bytes, input, ReductionKind::Max, partial)?;
             let ncells = stats.cell_len();
-            stats.sum_exp = vec![0.0; ncells];
-            let bytes =
-                fold_softmax_sum_exp(mmap, plan, dtype, layout, &stats.max, &mut stats.sum_exp)?;
-            total_bytes = total_bytes
-                .checked_add(bytes)
-                .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+            let mut sum_exp = vec![0.0; ncells];
+            let shape = &plan.logical_selection_shape;
+            let max = stats.max.clone();
+            let bytes = fold_transform_chunks(mmap, plan, dtype, |li, v| {
+                if !v.is_finite() {
+                    return Ok(());
+                }
+                let cell = partial_geometry::reduced_cell_index_or_global(li, shape, layout)?;
+                sum_exp[cell] += (v - max[cell]).exp();
+                Ok(())
+            })?;
+            accumulate_chunk_read_bytes(&mut total_bytes, bytes)?;
+            stats.sum_exp = sum_exp;
         }
     }
 
     Ok((stats, OperationPreviewFields::default(), total_bytes))
 }
 
-fn extract_scalar(fields: &OperationPreviewFields, kind: ReductionKind) -> f64 {
-    match kind {
-        ReductionKind::Mean => fields.mean.unwrap_or(0.0),
-        ReductionKind::Std => fields.std.unwrap_or(0.0),
-        ReductionKind::Min => fields.min.unwrap_or(0.0),
-        ReductionKind::Max => fields.max.unwrap_or(0.0),
-        ReductionKind::NormL1 => fields.norm_l1.unwrap_or(0.0),
-        ReductionKind::NormL2 => fields.norm_l2.unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
-fn extract_partial(fields: &OperationPreviewFields, kind: ReductionKind) -> Vec<f64> {
-    match kind {
-        ReductionKind::Mean => fields.reduced_mean.clone().unwrap_or_default(),
-        ReductionKind::Std => fields.reduced_std.clone().unwrap_or_default(),
-        ReductionKind::Min => fields.reduced_min.clone().unwrap_or_default(),
-        ReductionKind::Max => fields.reduced_max.clone().unwrap_or_default(),
-        ReductionKind::NormL1 => fields.reduced_norm_l1.clone().unwrap_or_default(),
-        ReductionKind::NormL2 => fields.reduced_norm_l2.clone().unwrap_or_default(),
-        _ => Vec::new(),
-    }
-}
-
-fn fold_finite_min(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    dtype: ElementDtype,
-    layout: Option<&PartialAxisLayout>,
-    out_min: &mut [f64],
-) -> Result<u64, TetError> {
-    let shape = &plan.logical_selection_shape;
-    let visit = |li: usize, v: f64, mins: &mut [f64]| -> Result<(), TetError> {
-        if !v.is_finite() {
-            return Ok(());
+/// Pull scalar or per-cell values from a completed fold into a `Vec` (one element when global).
+fn extract_folded_values(
+    fields: &OperationPreviewFields,
+    kind: ReductionKind,
+    partial: bool,
+) -> Vec<f64> {
+    if partial {
+        match kind {
+            ReductionKind::Mean => fields.reduced_mean.clone().unwrap_or_default(),
+            ReductionKind::Std => fields.reduced_std.clone().unwrap_or_default(),
+            ReductionKind::Min => fields.reduced_min.clone().unwrap_or_default(),
+            ReductionKind::Max => fields.reduced_max.clone().unwrap_or_default(),
+            ReductionKind::NormL1 => fields.reduced_norm_l1.clone().unwrap_or_default(),
+            ReductionKind::NormL2 => fields.reduced_norm_l2.clone().unwrap_or_default(),
+            _ => Vec::new(),
         }
-        let cell = if let Some(layout) = layout {
-            let (oi, _) = partial_geometry::reduced_cell_index(li, shape, layout)?;
-            oi
-        } else {
-            0
+    } else {
+        let scalar = match kind {
+            ReductionKind::Mean => fields.mean,
+            ReductionKind::Std => fields.std,
+            ReductionKind::Min => fields.min,
+            ReductionKind::Max => fields.max,
+            ReductionKind::NormL1 => fields.norm_l1,
+            ReductionKind::NormL2 => fields.norm_l2,
+            _ => None,
         };
-        mins[cell] = mins[cell].min(v);
-        Ok(())
-    };
-
-    let mut total = 0u64;
-    for c in &plan.chunks {
-        let n = match dtype {
-            ElementDtype::F32 => {
-                visit_planned_chunk(mmap, plan, c, |li, v| visit(li, f64::from(v), out_min))?
-            }
-            ElementDtype::F64 => {
-                visit_planned_chunk_f64(mmap, plan, c, |li, v| visit(li, v, out_min))?
-            }
-            _ => {
-                return Err(TetError::Validation(
-                    "transform requires f32 or f64 datasets".into(),
-                ));
-            }
-        };
-        total = total
-            .checked_add(n)
-            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
+        scalar.map_or_else(Vec::new, |v| vec![v])
     }
-    for m in out_min.iter_mut() {
-        if !m.is_finite() {
-            *m = 0.0;
-        }
-    }
-    Ok(total)
-}
-
-fn fold_softmax_sum_exp(
-    mmap: &[u8],
-    plan: &ReadPlan,
-    dtype: ElementDtype,
-    layout: Option<&PartialAxisLayout>,
-    max: &[f64],
-    sum_exp: &mut [f64],
-) -> Result<u64, TetError> {
-    let shape = &plan.logical_selection_shape;
-    let visit = |li: usize, v: f64, sums: &mut [f64]| -> Result<(), TetError> {
-        if !v.is_finite() {
-            return Ok(());
-        }
-        let cell = if let Some(layout) = layout {
-            let (oi, _) = partial_geometry::reduced_cell_index(li, shape, layout)?;
-            oi
-        } else {
-            0
-        };
-        let shifted = v - max[cell];
-        sums[cell] += shifted.exp();
-        Ok(())
-    };
-
-    let mut total = 0u64;
-    for c in &plan.chunks {
-        let n = match dtype {
-            ElementDtype::F32 => {
-                visit_planned_chunk(mmap, plan, c, |li, v| visit(li, f64::from(v), sum_exp))?
-            }
-            ElementDtype::F64 => {
-                visit_planned_chunk_f64(mmap, plan, c, |li, v| visit(li, v, sum_exp))?
-            }
-            _ => {
-                return Err(TetError::Validation(
-                    "transform requires f32 or f64 datasets".into(),
-                ));
-            }
-        };
-        total = total
-            .checked_add(n)
-            .ok_or_else(|| TetError::Validation("total bytes read overflow".into()))?;
-    }
-    Ok(total)
 }

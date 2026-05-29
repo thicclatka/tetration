@@ -1,4 +1,4 @@
-//! Resolve transform `write` hints to RAM or a spill path.
+//! Resolve transform `write` hints to an in-memory buffer or spill file path.
 
 use std::path::{Path, PathBuf};
 
@@ -6,11 +6,18 @@ use crate::query::engine::{budget::ExecutionBudget, spill_policy::SpillPathAllow
 use crate::query::types::{ReadPlan, TetError, WriteHints, WriteTarget};
 use crate::utils::dtype::ElementDtype;
 
+/// Where pass 2 should materialize the transformed logical selection.
 pub(crate) enum ResolvedTransformOutput {
     Ram,
     Spill(PathBuf),
 }
 
+/// Map [`WriteHints`] and the memory budget to RAM or a validated spill path.
+///
+/// # Errors
+///
+/// Returns [`TetError::Validation`] for unimplemented sidecar output, budget
+/// overflow with `write: ram`, or spill path allowlist failures.
 pub(crate) fn resolve_transform_output(
     write: Option<&WriteHints>,
     budget: &ExecutionBudget,
