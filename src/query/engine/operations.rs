@@ -254,6 +254,7 @@ pub(super) struct ExecutionPreviewInput<'a> {
     pub dtype: u32,
     pub operation: Option<&'a types::Operation>,
     pub output: Option<&'a types::OutputHints>,
+    pub write: Option<&'a types::WriteHints>,
     pub max_f32: usize,
     pub budget: budget::ExecutionBudget,
     pub execution: Option<&'a types::ExecutionHints>,
@@ -270,6 +271,7 @@ pub(super) fn build_execution_preview(
         dtype,
         operation,
         output,
+        write,
         max_f32,
         budget,
         execution,
@@ -293,6 +295,7 @@ pub(super) fn build_execution_preview(
             mmap,
             plan,
             op,
+            write,
             max_preview: max_f32,
             budget,
             execution,
@@ -307,6 +310,7 @@ struct OperationPreviewInput<'a> {
     mmap: &'a [u8],
     plan: &'a types::ReadPlan,
     op: &'a types::Operation,
+    write: Option<&'a types::WriteHints>,
     max_preview: usize,
     budget: budget::ExecutionBudget,
     execution: Option<&'a types::ExecutionHints>,
@@ -393,6 +397,7 @@ fn build_operation_preview(
         mmap,
         plan,
         op,
+        write,
         max_preview,
         budget,
         execution,
@@ -400,6 +405,41 @@ fn build_operation_preview(
         dtype,
         tet_path,
     } = *input;
+    if op.requires_transform() {
+        let policy = spill_allowlist.ok_or_else(|| {
+            types::TetError::Validation(
+                "transform operation needs a spill path allowlist (pass `--tet` so defaults apply)"
+                    .into(),
+            )
+        })?;
+        let fold_policy =
+            fold::fold_policy::FoldIoPolicy::resolve(plan, &budget, execution, dtype)?;
+        let transform_input = crate::query::transform::TransformRunInput {
+            mmap,
+            plan,
+            op,
+            write,
+            max_preview,
+            budget,
+            dtype,
+            spill_allowlist: policy,
+            tet_path,
+            fold_policy,
+        };
+        let outcome = crate::query::transform::run_transform(&transform_input)?;
+        let mut preview = preview_from_bundle(
+            outcome.total_bytes_read_from_disk,
+            outcome.bundle,
+            outcome.operation,
+            Some(outcome.strategy.as_str()),
+            outcome.spill_path,
+            outcome.spill_bytes,
+        );
+        attach_budget_fields(&mut preview, budget, plan, dtype, Some(fold_policy));
+        let device_route = device::resolve_device_route(execution, plan, dtype, Some(op));
+        stamp_device_route(&mut preview, device_route);
+        return Ok(preview);
+    }
     if op.requires_materialize() {
         let policy = spill_allowlist.ok_or_else(|| {
             types::TetError::Validation(

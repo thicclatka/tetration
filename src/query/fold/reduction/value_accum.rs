@@ -242,9 +242,9 @@ impl ValueAccum {
                     self.norm_l2_sq += vd * vd;
                 }
             }
-            ReductionKind::AllFinite => self.push_all_finite_slice(vals, |v| v.is_finite()),
-            ReductionKind::AnyNan => self.push_any_nan_slice(vals, |v| v.is_nan()),
-            ReductionKind::AnyInf => self.push_any_inf_slice(vals, |v| v.is_infinite()),
+            ReductionKind::AllFinite => self.push_all_finite_slice(vals, f32::is_finite),
+            ReductionKind::AnyNan => self.push_any_nan_slice(vals, f32::is_nan),
+            ReductionKind::AnyInf => self.push_any_inf_slice(vals, f32::is_infinite),
             ReductionKind::NanCount => {
                 self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count());
             }
@@ -304,9 +304,9 @@ impl ValueAccum {
                     self.norm_l2_sq += v * v;
                 }
             }
-            ReductionKind::AllFinite => self.push_all_finite_slice(vals, |v| v.is_finite()),
-            ReductionKind::AnyNan => self.push_any_nan_slice(vals, |v| v.is_nan()),
-            ReductionKind::AnyInf => self.push_any_inf_slice(vals, |v| v.is_infinite()),
+            ReductionKind::AllFinite => self.push_all_finite_slice(vals, f64::is_finite),
+            ReductionKind::AnyNan => self.push_any_nan_slice(vals, f64::is_nan),
+            ReductionKind::AnyInf => self.push_any_inf_slice(vals, f64::is_infinite),
             ReductionKind::NanCount => {
                 self.push_match_count_slice(vals.len(), vals.iter().filter(|v| v.is_nan()).count());
             }

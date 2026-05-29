@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use super::document::QueryLimits;
 use super::types::{
     AxisSlice, ExecutionDeviceHint, ExecutionHints, Operation, OutputHint, OutputHints,
-    QueryDocument, TetError,
+    QueryDocument, TetError, WriteHints, WriteTarget,
 };
 
 const OP_KEYS: &[&str] = &[
@@ -38,6 +38,8 @@ const OP_KEYS: &[&str] = &[
     "null_count",
     "covariance",
     "correlation",
+    "zscore",
+    "min_max_normalize",
 ];
 
 const RESERVED_KEYS: &[&str] = &[
@@ -45,6 +47,7 @@ const RESERVED_KEYS: &[&str] = &[
     "dataset",
     "selection",
     "spill",
+    "write",
     "execution",
 ];
 
@@ -98,6 +101,11 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         Some(v) => Some(parse_spill(v)?),
     };
 
+    let write = match obj.get("write") {
+        None => None,
+        Some(v) => Some(parse_write(v)?),
+    };
+
     let execution = match obj.get("execution") {
         None => None,
         Some(v) => Some(parse_execution(v)?),
@@ -121,6 +129,7 @@ pub fn parse_query_value(value_ref: &Value) -> Result<QueryDocument, TetError> {
         selection,
         operation,
         output,
+        write,
         execution,
     })
 }
@@ -152,6 +161,74 @@ fn parse_spill(v: &Value) -> Result<OutputHints, TetError> {
             handle: handle.to_owned(),
         }),
     })
+}
+
+fn parse_write(v: &Value) -> Result<WriteHints, TetError> {
+    match v {
+        Value::String(s) => Ok(WriteHints {
+            target: parse_write_target_token(s)?,
+            path: None,
+        }),
+        Value::Object(obj) => {
+            for key in obj.keys() {
+                if !matches!(key.as_str(), "target" | "path") {
+                    return Err(TetError::Validation(format!(
+                        "unknown field `write.{key}`"
+                    )));
+                }
+            }
+            let target = match obj.get("target") {
+                None => WriteTarget::Switch,
+                Some(v) => parse_write_target_value(v)?,
+            };
+            let path = match obj.get("path") {
+                None => None,
+                Some(v) => Some(parse_write_path(v)?),
+            };
+            Ok(WriteHints { target, path })
+        }
+        _ => Err(TetError::Validation(
+            "`write` must be a target string (`switch`, `spill`, `sidecar`, `ram`) or an object with `target` / `path`".into(),
+        )),
+    }
+}
+
+fn parse_write_target_value(v: &Value) -> Result<WriteTarget, TetError> {
+    let s = v
+        .as_str()
+        .ok_or_else(|| TetError::Validation("`write.target` must be a string".into()))?;
+    parse_write_target_token(s)
+}
+
+fn parse_write_target_token(s: &str) -> Result<WriteTarget, TetError> {
+    match s {
+        "switch" => Ok(WriteTarget::Switch),
+        "spill" => Ok(WriteTarget::Spill),
+        "sidecar" => Ok(WriteTarget::Sidecar),
+        "ram" => Ok(WriteTarget::Ram),
+        _ => Err(TetError::Validation(format!(
+            "unknown write target `{s}` (expected switch, spill, sidecar, or ram)"
+        ))),
+    }
+}
+
+fn parse_write_path(v: &Value) -> Result<String, TetError> {
+    let handle = v
+        .as_str()
+        .ok_or_else(|| TetError::Validation("`write.path` must be a string".into()))?;
+    if handle.is_empty() {
+        return Err(TetError::Validation(
+            "`write.path` must not be empty".into(),
+        ));
+    }
+    if handle.len() > QueryLimits::DEFAULT.max_dataset_name_len {
+        return Err(TetError::Validation(format!(
+            "`write.path` exceeds maximum length ({} > {})",
+            handle.len(),
+            QueryLimits::DEFAULT.max_dataset_name_len
+        )));
+    }
+    Ok(handle.to_owned())
 }
 
 fn parse_selection(v: &Value) -> Result<Vec<AxisSlice>, TetError> {
@@ -383,6 +460,8 @@ fn operation_from_axes(name: &str, axes: Vec<String>) -> Operation {
         "arg_min" => Operation::ArgMin { axes },
         "arg_max" => Operation::ArgMax { axes },
         "median" => Operation::Median { axes },
+        "zscore" => Operation::Zscore { axes },
+        "min_max_normalize" => Operation::MinMaxNormalize { axes },
         _ => unreachable!("operation_from_axes: {name}"),
     }
 }
@@ -482,6 +561,9 @@ impl Serialize for QueryDocumentWire<'_> {
         if let Some(out) = &doc.output {
             serialize_output(&mut map, out)?;
         }
+        if let Some(w) = &doc.write {
+            serialize_write(&mut map, w)?;
+        }
         if let Some(ex) = &doc.execution {
             serialize_execution(&mut map, ex)?;
         }
@@ -499,6 +581,25 @@ where
             map.serialize_entry("spill", handle)?;
         }
     }
+    Ok(())
+}
+
+fn serialize_write<S>(map: &mut S, write: &WriteHints) -> Result<(), S::Error>
+where
+    S: SerializeMap,
+{
+    if write.path.is_none() && write.target == WriteTarget::Switch {
+        return Ok(());
+    }
+    if write.path.is_none() {
+        map.serialize_entry("write", write.target.as_wire_str())?;
+        return Ok(());
+    }
+    let obj = serde_json::json!({
+        "target": write.target.as_wire_str(),
+        "path": write.path,
+    });
+    map.serialize_entry("write", &obj)?;
     Ok(())
 }
 
@@ -591,6 +692,12 @@ where
         }
         Operation::Correlation { axes } => {
             map.serialize_entry("correlation", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::Zscore { axes } => {
+            map.serialize_entry("zscore", &AxisSpecWire::from_axes(axes))?;
+        }
+        Operation::MinMaxNormalize { axes } => {
+            map.serialize_entry("min_max_normalize", &AxisSpecWire::from_axes(axes))?;
         }
     }
     Ok(())

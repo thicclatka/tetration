@@ -1488,6 +1488,129 @@ fn temp_spill_file_deleted_on_drop() {
     assert!(!file_path.exists());
 }
 
+fn pop_std_1_to_6() -> f64 {
+    let mean = 3.5;
+    let var = (1..=6)
+        .map(|n| {
+            let d = f64::from(n) - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / 6.0;
+    var.sqrt()
+}
+
+#[test]
+fn parses_zscore_and_write_roundtrip() {
+    let json = r#"{"dataset":"a","zscore":[],"write":"ram"}"#;
+    let doc = parse_query_json(json).unwrap();
+    validate_query(&doc).unwrap();
+    assert!(matches!(doc.operation, Some(Operation::Zscore { .. })));
+    assert_eq!(
+        doc.write.as_ref().unwrap().target,
+        crate::query::WriteTarget::Ram
+    );
+    let roundtrip = serde_json::to_string(&doc).unwrap();
+    assert!(roundtrip.contains(r#""zscore":[]"#));
+    assert!(roundtrip.contains(r#""write":"ram""#));
+}
+
+#[test]
+fn rejects_spill_and_write_together() {
+    let json = r#"{"dataset":"a","zscore":[],"spill":"out.bin","write":"ram"}"#;
+    let doc = parse_query_json(json).unwrap();
+    let err = validate_query(&doc).unwrap_err();
+    assert!(err.to_string().contains("spill"), "{err}");
+}
+
+#[test]
+fn plan_query_zscore_scalar_ram() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zscore.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a","zscore":[],"write":"ram"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let policy =
+        SpillPathAllowlist::from_roots(dir.path().to_path_buf(), [dir.path().to_path_buf()]);
+    let plan = plan_query_with_tet_mmap_ex(
+        &doc,
+        Some(path.to_str().unwrap()),
+        &mmap,
+        Some(6),
+        Some(&policy),
+    )
+    .unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    assert_eq!(ex.memory_strategy, Some("transform_ram"));
+    assert!((ex.operation_mean.unwrap() - 3.5).abs() < 1e-5);
+    let std = pop_std_1_to_6();
+    assert!((ex.operation_std.unwrap() - std).abs() < 1e-5);
+    assert_eq!(ex.f32_preview.len(), 6);
+    for (i, &v) in ex.f32_preview.iter().enumerate() {
+        let raw = f64::from((i + 1) as f32);
+        let expected = ((raw - 3.5) / std) as f32;
+        assert!(
+            (v - expected).abs() < 1e-4,
+            "index {i}: got {v}, expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn plan_query_min_max_normalize_scalar_ram() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("minmax.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(r#"{"dataset":"a","min_max_normalize":[],"write":"ram"}"#).unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let policy =
+        SpillPathAllowlist::from_roots(dir.path().to_path_buf(), [dir.path().to_path_buf()]);
+    let plan = plan_query_with_tet_mmap_ex(
+        &doc,
+        Some(path.to_str().unwrap()),
+        &mmap,
+        Some(6),
+        Some(&policy),
+    )
+    .unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    assert_eq!(ex.memory_strategy, Some("transform_ram"));
+    assert_eq!(ex.operation_min, Some(1.0));
+    assert_eq!(ex.operation_max, Some(6.0));
+    assert!((ex.f32_preview[0] - 0.0).abs() < 1e-5);
+    assert!((ex.f32_preview[5] - 1.0).abs() < 1e-5);
+    assert!((ex.f32_preview[3] - 0.6).abs() < 1e-5); // value 4 → (4-1)/5
+}
+
+#[test]
+fn plan_query_zscore_switch_spills_when_over_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zscore_spill.tet");
+    write_multichunk_2x3_tiles(&path, "a");
+    let doc = parse_query_json(
+        r#"{"dataset":"a","zscore":[],"write":"switch","execution":{"memory_budget_bytes":1}}"#,
+    )
+    .unwrap();
+    validate_query(&doc).unwrap();
+    let mmap = mmap_file_read(&path).unwrap();
+    let policy =
+        SpillPathAllowlist::from_roots(dir.path().to_path_buf(), [dir.path().to_path_buf()]);
+    let plan = plan_query_with_tet_mmap_ex(
+        &doc,
+        Some(path.to_str().unwrap()),
+        &mmap,
+        Some(2),
+        Some(&policy),
+    )
+    .unwrap();
+    let ex = plan.execution.as_ref().unwrap();
+    assert_eq!(ex.memory_strategy, Some("transform_spill"));
+    assert!(ex.spill_f32_path.is_some());
+    assert_eq!(ex.spill_f32_bytes, Some(24));
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 128,

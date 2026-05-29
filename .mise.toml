@@ -118,3 +118,17 @@ run = "cargo build --release && uv run --directory fixtures bench-large netcdf -
 description = "Benchmark large + extra_large Zarr only (device auto)"
 depends = ["fixtures:sync"]
 run = "cargo build --release && uv run --directory fixtures bench-large zarr --tet-device auto"
+
+[tasks.clip]
+description = "cargo clippy -D warnings (CI feature set for this OS)"
+run = '''
+FEAT="tetration-netcdf,tetration-hdf5,tetration-gpu"
+case "$(uname -s)" in
+  Darwin) FEAT="${FEAT},tetration-metal" ;;
+esac
+cargo clippy --features "$FEAT" -- -D warnings
+'''
+
+[tasks."clip-featx"]
+description = "cargo clippy -D warnings for each optional feature (and CI bundles)"
+run = "bash scripts/clip-featx.sh"

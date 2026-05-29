@@ -53,8 +53,10 @@ impl From<&Operation> for ReductionKind {
             | Operation::Quantile { .. }
             | Operation::Histogram { .. }
             | Operation::Covariance { .. }
-            | Operation::Correlation { .. } => {
-                unreachable!("tier-C stats use materialize-required execution path")
+            | Operation::Correlation { .. }
+            | Operation::Zscore { .. }
+            | Operation::MinMaxNormalize { .. } => {
+                unreachable!("tier-C stats and transforms use dedicated execution paths")
             }
         }
     }

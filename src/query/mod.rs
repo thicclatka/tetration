@@ -17,6 +17,7 @@ pub(crate) mod materialize;
 mod plan;
 pub(crate) mod resolve_axes;
 pub(crate) mod resolve_selection;
+pub(crate) mod transform;
 pub(crate) mod types;
 
 pub use crate::catalog::DEFAULT_MEMORY_BUDGET_PERCENT_BPS;
@@ -57,5 +58,5 @@ pub use execute::{ExecuteQueryOptions, execute_query_document, execute_query_jso
 pub use types::{
     AxisSlice, CHUNK_TOUCH_POLICY, ChunkTouchPolicy, DatasetResolution, ExecutionDeviceHint,
     ExecutionHints, Operation, OutputHint, OutputHints, PlannedChunkIo, QueryDocument,
-    QueryExecutionPreview, QueryResponse, ReadPlan, TetError,
+    QueryExecutionPreview, QueryResponse, ReadPlan, TetError, WriteHints, WriteTarget,
 };

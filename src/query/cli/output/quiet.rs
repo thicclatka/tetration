@@ -398,6 +398,45 @@ pub(super) fn scalar_operation_display(
         | Operation::Histogram { .. }
         | Operation::Covariance { .. }
         | Operation::Correlation { .. } => scalar_operation_display_special(op, ex),
+        Operation::Zscore { .. } | Operation::MinMaxNormalize { .. } => {
+            transform_operation_display(op, ex)
+        }
+    }
+}
+
+fn transform_operation_display(
+    op: &Operation,
+    ex: &QueryExecutionPreview,
+) -> Result<(&'static str, String), String> {
+    match op {
+        Operation::Zscore { axes, .. } if axes.is_empty() => {
+            let mean = ex
+                .operation_mean
+                .ok_or_else(|| missing_field("operation_mean"))?;
+            let std = ex
+                .operation_std
+                .ok_or_else(|| missing_field("operation_std"))?;
+            Ok((
+                "zscore",
+                format!("mean={} std={}", fmt_f64(mean), fmt_f64(std)),
+            ))
+        }
+        Operation::MinMaxNormalize { axes, .. } if axes.is_empty() => {
+            let min = ex
+                .operation_min
+                .ok_or_else(|| missing_field("operation_min"))?;
+            let max = ex
+                .operation_max
+                .ok_or_else(|| missing_field("operation_max"))?;
+            Ok((
+                "min_max_normalize",
+                format!("min={} max={}", fmt_f64(min), fmt_f64(max)),
+            ))
+        }
+        Operation::Zscore { .. } | Operation::MinMaxNormalize { .. } => {
+            Ok((op.wire_key(), partial_operation_values(op, ex)?))
+        }
+        _ => unreachable!("transform_operation_display"),
     }
 }
 
@@ -616,5 +655,19 @@ pub(super) fn partial_operation_values(
             "covariance/correlation are not partial-axis reductions (use rank-2 selection)"
                 .to_string(),
         ),
+        Operation::Zscore { .. } => {
+            let mean =
+                quiet_reduced_f64("operation_reduced_mean", ex.operation_reduced_mean.as_ref())?;
+            let std =
+                quiet_reduced_f64("operation_reduced_std", ex.operation_reduced_std.as_ref())?;
+            Ok(format!("mean={mean} std={std}"))
+        }
+        Operation::MinMaxNormalize { .. } => {
+            let min =
+                quiet_reduced_f64("operation_reduced_min", ex.operation_reduced_min.as_ref())?;
+            let max =
+                quiet_reduced_f64("operation_reduced_max", ex.operation_reduced_max.as_ref())?;
+            Ok(format!("min={min} max={max}"))
+        }
     }
 }

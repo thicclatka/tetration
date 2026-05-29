@@ -239,6 +239,8 @@ Host RAM is read best-effort via **`utils::host_memory`** (Linux `MemAvailable`,
 | **`in_memory_materialize`**  | Tier-C **`operation`** when logical size ≤ budget                  | Full logical decode into RAM; op runs on buffer; preview from same buffer.                                                                                                               |
 | **`temp_spill_materialize`** | Tier-C **`operation`** when logical size > budget                  | Full decode to engine temp file under cache allowlist; op via mmap; file deleted when execution finishes.                                                                                |
 | **`mmap_spill`**             | Top-level **`"spill": "path"`** and no reduction key               | Full logical selection written row-major **dtype-native LE** to caller path; preview read from spilled file (one decode).                                                                |
+| **`transform_ram`**          | **`zscore`** / **`min_max_normalize`** with **`write`**: `ram` or `switch` when selection ≤ budget | Pass-1 fold stats (mean/std or min/max), pass-2 element-wise transform; dense output in RAM; preview from transformed buffer. |
+| **`transform_spill`**        | Same transforms with **`write`**: `spill` or `switch` when selection > budget | Pass-1 stats in RAM, pass-2 writes transformed tensor to caller path or cache temp; preview mmap’d from spill file. |
 | **`capped_in_memory`**       | Preview-only (no `operation`, no spill) when logical size ≤ budget | Capped materialize into **`execution.f32_preview`** or **`execution.f64_preview`** only.                                                                                                 |
 
 When logical selection exceeds the budget and neither **`operation`** nor spill is requested, execution fails with a validation error suggesting a higher budget, an **`operation`**, or spill output.
@@ -462,6 +464,9 @@ The wire format is **flat**: one top-level reduction key per document (`mean`, `
 | `"null_count": []` or `{ "fill": 99, "axis": 0 }`               | Count of fill-missing values (fill from query or dataset attrs)                   |
 | `"selection": [{ "start_label": "r0", "stop_label": "r1" }, …]` | Half-open slice by coordinate label (requires footer `coords`)                    |
 | `"covariance": { "axis": 0 }` / `"correlation": 0`              | Rank-2 only; `axis` = observation dimension; `operation_*_order` = variable count |
+| `"zscore": []` / `"zscore": 0`                                  | Z-score using population mean/std (`ddof=0`); pass-1 stats in `operation_mean` / `operation_std` (or `operation_reduced_*`) |
+| `"min_max_normalize": []` / `"min_max_normalize": 0`            | Scale to `[0, 1]` from pass-1 min/max; stats in `operation_min` / `operation_max` (or `operation_reduced_*`) |
+| `"write": "switch"` / `{ "target": "spill", "path": "out.bin" }`  | Transform output routing (`ram`, `spill`, `switch`; `sidecar` reserved). Mutually exclusive with top-level **`spill`**. |
 | `"execution": { "memory_budget_percent": 40 }`                  | **40%** of host RAM (`memory_budget_percent_bps` = 4000 internally)               |
 | `"execution": { "fold_parallel": false }`                       | Force sequential chunk visits (not linear scan); default is policy-driven         |
 | `"spill": "slice.bin"`                                          | Full logical tensor export beside the `.tet` parent (allowlist applies)           |
@@ -594,6 +599,8 @@ New ops should declare which **implementation tier** they use. That keeps “hug
 ### Tier 1 — shipped (v1)
 
 **Done:** tier-A/B streaming ops (`sum`, `mean`, `min`, `max`, `count`, `var`, `std`, `product`, `norm_l1`, `norm_l2`, `all_finite`, `any_nan`, `any_inf`, `arg_min`, `arg_max`) — scalar + partial axes.
+
+**Done (v1):** element-wise transforms **`zscore`**, **`min_max_normalize`** — pass-1 fold stats, pass-2 rewrite; **`write`**: `switch` (default), `ram`, `spill`; `f32`/`f64` only; zero-range (`std==0` or `max==min`) maps finite inputs to **0**.
 
 ### Tier 2 — tensor stats (shipped)
 

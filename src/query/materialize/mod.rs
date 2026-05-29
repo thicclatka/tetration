@@ -8,7 +8,7 @@ pub mod int;
 mod logical;
 pub mod parallel;
 mod selection;
-mod shared;
+pub(crate) mod shared;
 pub mod stats;
 mod types;
 mod validate;

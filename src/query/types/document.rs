@@ -114,6 +114,14 @@ pub enum Operation {
     Correlation {
         axes: Vec<String>,
     },
+    /// Per-element z-score using population mean and std (`ddof = 0`) from pass-1 fold stats.
+    Zscore {
+        axes: Vec<String>,
+    },
+    /// Per-element min–max normalization to `[0, 1]` from pass-1 fold stats.
+    MinMaxNormalize {
+        axes: Vec<String>,
+    },
 }
 
 macro_rules! operation_axes_match {
@@ -141,7 +149,9 @@ macro_rules! operation_axes_match {
             | Operation::InfCount { axes }
             | Operation::NullCount { axes, .. }
             | Operation::Covariance { axes }
-            | Operation::Correlation { axes } => axes,
+            | Operation::Correlation { axes }
+            | Operation::Zscore { axes }
+            | Operation::MinMaxNormalize { axes } => axes,
         }
     };
 }
@@ -185,6 +195,8 @@ impl Operation {
             Self::Histogram { .. } => "histogram",
             Self::Covariance { .. } => "covariance",
             Self::Correlation { .. } => "correlation",
+            Self::Zscore { .. } => "zscore",
+            Self::MinMaxNormalize { .. } => "min_max_normalize",
         }
     }
 
@@ -200,6 +212,47 @@ impl Operation {
                 | Self::Correlation { .. }
         )
     }
+
+    /// Two-pass element-wise transforms (pass-1 fold stats, pass-2 rewrite).
+    #[must_use]
+    pub fn requires_transform(&self) -> bool {
+        matches!(self, Self::Zscore { .. } | Self::MinMaxNormalize { .. })
+    }
+}
+
+/// Where a transform operation should write its dense output tensor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteTarget {
+    /// RAM when the selection fits the memory budget; otherwise a cache spill file.
+    #[default]
+    Switch,
+    /// Always spill to `path` or an engine temp file under platform cache.
+    Spill,
+    /// Publish a `.tet` sidecar beside the source file (explicit only).
+    Sidecar,
+    /// Dense in-process buffer (errors when the selection exceeds the memory budget).
+    Ram,
+}
+
+impl WriteTarget {
+    /// Stable wire token for JSON `write` fields.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Switch => "switch",
+            Self::Spill => "spill",
+            Self::Sidecar => "sidecar",
+            Self::Ram => "ram",
+        }
+    }
+}
+
+/// Output routing for transform operations (`zscore`, `min_max_normalize`).
+#[derive(Debug, Clone, Default)]
+pub struct WriteHints {
+    pub target: WriteTarget,
+    /// Override spill/sidecar path (relative to `.tet` parent when relative).
+    pub path: Option<String>,
 }
 
 /// Caller preference for where large query results should land.
@@ -231,8 +284,10 @@ pub struct QueryDocument {
     pub selection: Option<Vec<AxisSlice>>,
     /// Optional reduction over the logical selection.
     pub operation: Option<Operation>,
-    /// Optional output routing hints.
+    /// Optional export spill (`spill` wire key); not used with transform ops.
     pub output: Option<OutputHints>,
+    /// Transform output routing (`write` wire key); used with `zscore` / `min_max_normalize`.
+    pub write: Option<WriteHints>,
     /// Host-side memory budget overrides for execution.
     pub execution: Option<ExecutionHints>,
 }

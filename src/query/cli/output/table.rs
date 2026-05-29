@@ -208,6 +208,12 @@ fn partial_f64_values(op: &Operation, ex: &QueryExecutionPreview) -> Result<Vec<
                 "table format: covariance/correlation matrices use --format stats or full".into(),
             );
         }
+        Operation::Zscore { .. } | Operation::MinMaxNormalize { .. } => {
+            return Err(
+                "table format: transforms use the slice preview (see f32_preview / f64_preview)"
+                    .into(),
+            );
+        }
     };
     values
         .cloned()
